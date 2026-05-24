@@ -8,8 +8,13 @@
 
 -- Extensões
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgvector";
-CREATE EXTENSION IF NOT EXISTS "pg_trgm"; -- busca textual
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+-- pgvector: instalado na Fase IV (RAG). Ignorar erro se não disponível.
+DO $$ BEGIN
+  CREATE EXTENSION IF NOT EXISTS "vector";
+EXCEPTION WHEN OTHERS THEN
+  RAISE NOTICE 'pgvector não disponível — instalar na Fase IV';
+END $$;
 
 -- ─────────────────────────────────────────────
 --  USUÁRIOS
