@@ -1,0 +1,102 @@
+import { Router } from 'express';
+import bcrypt      from 'bcrypt';
+import { db }      from '../db/index.js';
+import { apenasMaster } from '../middleware/auth.js';
+import { registrarAuditoria } from '../middleware/auditoria.js';
+
+export const usuariosRouter = Router();
+
+// GET /api/usuarios — lista usuários do mesmo Master (ou todos, se Master 01)
+usuariosRouter.get('/', async (req, res) => {
+  const { id, perfil, pode_marcar_restrito } = req.user;
+
+  let rows;
+  if (pode_marcar_restrito) {
+    // Master 01 vê todos
+    rows = await db.query(
+      `SELECT id, nome, email, perfil, master_id, pode_marcar_restrito, ativo, criado_em, ultimo_acesso
+       FROM usuarios ORDER BY perfil, nome`
+    );
+  } else if (perfil === 'master') {
+    // Master 02 vê a si mesmo e seus juniors
+    rows = await db.query(
+      `SELECT id, nome, email, perfil, master_id, pode_marcar_restrito, ativo, criado_em, ultimo_acesso
+       FROM usuarios WHERE id = $1 OR master_id = $1 ORDER BY perfil, nome`,
+      [id]
+    );
+  } else {
+    // Junior vê apenas a si mesmo
+    rows = await db.query(
+      `SELECT id, nome, email, perfil, master_id, pode_marcar_restrito, ativo, criado_em, ultimo_acesso
+       FROM usuarios WHERE id = $1`,
+      [id]
+    );
+  }
+
+  res.json({ ok: true, usuarios: rows });
+});
+
+// POST /api/usuarios — cria novo usuário (apenas Master)
+usuariosRouter.post('/', apenasMaster, async (req, res) => {
+  const { nome, email, senha, perfil, master_id } = req.body;
+
+  if (!nome || !email || !senha || !perfil) {
+    return res.status(400).json({ ok: false, erro: 'nome, email, senha e perfil são obrigatórios.' });
+  }
+
+  if (!['master', 'junior'].includes(perfil)) {
+    return res.status(400).json({ ok: false, erro: 'Perfil inválido.' });
+  }
+
+  // Junior deve ter master_id
+  if (perfil === 'junior' && !master_id) {
+    return res.status(400).json({ ok: false, erro: 'Junior precisa de master_id.' });
+  }
+
+  const hash = await bcrypt.hash(senha, 12);
+
+  try {
+    const [novo] = await db.query(
+      `INSERT INTO usuarios (nome, email, senha_hash, perfil, master_id)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, nome, email, perfil, master_id`,
+      [nome.trim(), email.toLowerCase().trim(), hash, perfil, master_id ?? null]
+    );
+
+    await registrarAuditoria({
+      usuarioId: req.user.id, acao: 'criar', entidade: 'usuario',
+      entidadeId: novo.id, valorDepois: novo, ip: req._ip,
+    });
+
+    res.status(201).json({ ok: true, usuario: novo });
+  } catch (e) {
+    if (e.code === '23505') return res.status(409).json({ ok: false, erro: 'Email já cadastrado.' });
+    throw e;
+  }
+});
+
+// PATCH /api/usuarios/:id — atualiza nome, email ou ativo
+usuariosRouter.patch('/:id', apenasMaster, async (req, res) => {
+  const { id } = req.params;
+  const { nome, email, ativo } = req.body;
+
+  const antes = await db.queryOne('SELECT * FROM usuarios WHERE id = $1', [id]);
+  if (!antes) return res.status(404).json({ ok: false, erro: 'Usuário não encontrado.' });
+
+  const novoNome  = nome  ?? antes.nome;
+  const novoEmail = email ? email.toLowerCase().trim() : antes.email;
+  const novoAtivo = ativo !== undefined ? ativo : antes.ativo;
+
+  await db.execute(
+    'UPDATE usuarios SET nome = $1, email = $2, ativo = $3 WHERE id = $4',
+    [novoNome, novoEmail, novoAtivo, id]
+  );
+
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'editar', entidade: 'usuario',
+    entidadeId: id, valorAntes: antes, valorDepois: { nome: novoNome, email: novoEmail, ativo: novoAtivo },
+    ip: req._ip,
+  });
+
+  res.json({ ok: true });
+});
