@@ -5,12 +5,16 @@ import { conectarRedis }  from './cache/redis.js';
 import { iniciarWorkers } from './workers/index.js';
 
 // Rotas
-import { authRouter }      from './routes/auth.js';
-import { usuariosRouter }  from './routes/usuarios.js';
-import { processosRouter } from './routes/processos.js';
+import { authRouter }          from './routes/auth.js';
+import { usuariosRouter }      from './routes/usuarios.js';
+import { processosRouter }     from './routes/processos.js';
 import { movimentacoesRouter } from './routes/movimentacoes.js';
 import { credenciaisRouter }   from './routes/credenciais.js';
 import { configAiRouter }      from './routes/config.ai.js';
+import { clientesRouter }      from './routes/clientes.js';
+import { agendaRouter }        from './routes/agenda.js';
+import { tarefasRouter }       from './routes/tarefas.js';
+import { financeiroRouter }    from './routes/financeiro.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -31,6 +35,10 @@ app.use('/api/processos',     autenticar, processosRouter);
 app.use('/api/movimentacoes', autenticar, movimentacoesRouter);
 app.use('/api/credenciais',   autenticar, credenciaisRouter);
 app.use('/api/config/ai',     autenticar, configAiRouter);
+app.use('/api/clientes',      autenticar, clientesRouter);
+app.use('/api/agenda',        autenticar, agendaRouter);
+app.use('/api/tarefas',       autenticar, tarefasRouter);
+app.use('/api/financeiro',    autenticar, financeiroRouter);
 
 app.get('/health', (_req, res) => res.json({ ok: true, env: process.env.NODE_ENV }));
 
