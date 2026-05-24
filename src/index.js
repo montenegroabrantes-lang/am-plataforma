@@ -35,20 +35,37 @@ app.use('/api/config/ai',     autenticar, configAiRouter);
 app.get('/health', (_req, res) => res.json({ ok: true, env: process.env.NODE_ENV }));
 
 async function iniciar() {
+  console.log('[BOOT] Iniciando AM Plataforma...');
+  console.log('[BOOT] NODE_ENV:', process.env.NODE_ENV);
+  console.log('[BOOT] PORT:', process.env.PORT);
+  console.log('[BOOT] DATABASE_URL:', process.env.DATABASE_URL ? 'definida' : 'AUSENTE');
+  console.log('[BOOT] REDIS_URL:', process.env.REDIS_URL ? 'definida' : 'AUSENTE');
+
   try {
     await db.query('SELECT 1');
     console.log('[DB] PostgreSQL conectado.');
-
-    await conectarRedis();
-    await iniciarWorkers();
-
-    app.listen(PORT, () => {
-      console.log(`[API] AM Plataforma rodando na porta ${PORT}`);
-    });
   } catch (err) {
-    console.error('[FATAL] Falha ao iniciar:', err.message);
+    console.error('[FATAL] PostgreSQL falhou:', err.stack || err);
     process.exit(1);
   }
+
+  try {
+    await conectarRedis();
+  } catch (err) {
+    console.error('[FATAL] Redis falhou:', err.stack || err);
+    process.exit(1);
+  }
+
+  try {
+    await iniciarWorkers();
+  } catch (err) {
+    console.error('[FATAL] Workers falharam:', err.stack || err);
+    process.exit(1);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`[API] AM Plataforma rodando na porta ${PORT}`);
+  });
 }
 
 iniciar();
