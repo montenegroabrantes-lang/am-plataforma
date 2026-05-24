@@ -16,7 +16,7 @@
     "express": "^4.19.2",
     "pg": "^8.11.5",
     "pgvector": "^0.1.8",
-    "redis": "^5.0.0",
+    "ioredis": "^5.3.2",
     "bullmq": "^5.7.0",
     "googleapis": "^140.0.0",
     "puppeteer": "^22.10.0",

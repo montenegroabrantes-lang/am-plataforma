@@ -1,20 +1,22 @@
 import 'dotenv/config';
-import { createClient } from 'redis';
+import Redis from 'ioredis';
 
-const client = createClient({
-  url: process.env.REDIS_URL || 'redis://localhost:6379',
+const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
+
+export const redis = new Redis(redisUrl, {
+  maxRetriesPerRequest: null, // obrigatório para BullMQ
+  enableReadyCheck: false,
 });
 
-client.on('error', (err) => console.error('[Redis] Erro:', err.message));
-
-let connected = false;
+redis.on('connect', () => console.log('[Redis] Conectado.'));
+redis.on('error',   (err) => console.error('[Redis] Erro:', err.message));
 
 export async function conectarRedis() {
-  if (!connected) {
-    await client.connect();
-    connected = true;
-    console.log('[Redis] Conectado.');
-  }
+  // ioredis conecta automaticamente — aguarda o evento ready
+  await new Promise((resolve, reject) => {
+    if (redis.status === 'ready') return resolve();
+    redis.once('ready', resolve);
+    redis.once('error', reject);
+    setTimeout(resolve, 3000); // timeout de segurança
+  });
 }
-
-export const redis = client;
