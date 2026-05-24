@@ -15,6 +15,8 @@ import { clientesRouter }      from './routes/clientes.js';
 import { agendaRouter }        from './routes/agenda.js';
 import { tarefasRouter }       from './routes/tarefas.js';
 import { financeiroRouter }    from './routes/financeiro.js';
+import { pipelineRouter }      from './routes/pipeline.js';
+import { relatorioRouter }     from './routes/relatorio.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -39,6 +41,8 @@ app.use('/api/clientes',      autenticar, clientesRouter);
 app.use('/api/agenda',        autenticar, agendaRouter);
 app.use('/api/tarefas',       autenticar, tarefasRouter);
 app.use('/api/financeiro',    autenticar, financeiroRouter);
+app.use('/api/pipeline',      autenticar, pipelineRouter);
+app.use('/api/relatorio',     autenticar, relatorioRouter);
 
 app.get('/health', (_req, res) => res.json({ ok: true, env: process.env.NODE_ENV }));
 

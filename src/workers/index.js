@@ -2,7 +2,8 @@ import { Queue }        from 'bullmq';
 import { redis }        from '../cache/redis.js';
 import { criarSyncWorker }      from './sync.worker.js';
 import { criarBackupWorker }    from './backup.worker.js';
-import { criarAudienciaWorker } from './audiencia.worker.js';
+import { criarAudienciaWorker }        from './audiencia.worker.js';
+import { criarSACWorker, agendarSACWorker } from './sac.worker.js';
 
 let syncQueue;
 let backupQueue;
@@ -14,6 +15,8 @@ export async function iniciarWorkers() {
   criarSyncWorker();
   criarBackupWorker();
   criarAudienciaWorker();
+  criarSACWorker();
+  await agendarSACWorker();
 
   // Agenda sync de todos os processos a cada hora
   await syncQueue.add(
