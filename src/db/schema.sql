@@ -137,6 +137,7 @@ CREATE TABLE processos (
   numero                TEXT NOT NULL UNIQUE,  -- 0001234-56.2023.8.15.0001
   tribunal              TEXT NOT NULL,
   sistema               TEXT NOT NULL CHECK (sistema IN ('pje','eproc')),
+  grau                  TEXT NOT NULL DEFAULT '1' CHECK (grau IN ('1','2')),
   vara                  TEXT,
   juiz                  TEXT,
   cliente_id            UUID REFERENCES clientes(id),

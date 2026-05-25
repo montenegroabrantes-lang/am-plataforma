@@ -85,10 +85,14 @@ processosRouter.get('/:id', async (req, res) => {
 
 // POST /api/processos — cadastro manual por número
 processosRouter.post('/', async (req, res) => {
-  const { numero, tribunal, sistema, cliente_id, produto_id, master_responsavel_id } = req.body;
+  const { numero, tribunal, sistema, grau = '1', cliente_id, produto_id, master_responsavel_id,
+          vara, acao, polo_ativo, polo_passivo } = req.body;
 
   if (!numero || !tribunal || !sistema) {
     return res.status(400).json({ ok: false, erro: 'numero, tribunal e sistema são obrigatórios.' });
+  }
+  if (!['1','2'].includes(grau)) {
+    return res.status(400).json({ ok: false, erro: 'grau deve ser 1 ou 2.' });
   }
 
   // Master responsável: quem cadastrou (ou o informado, se Master 01)
@@ -98,10 +102,13 @@ processosRouter.post('/', async (req, res) => {
 
   try {
     const [novo] = await db.query(
-      `INSERT INTO processos (numero, tribunal, sistema, cliente_id, produto_id, master_responsavel_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, numero, tribunal, sistema`,
-      [numero.trim(), tribunal, sistema, cliente_id ?? null, produto_id ?? null, masterId]
+      `INSERT INTO processos (numero, tribunal, sistema, grau, vara, acao, polo_ativo, polo_passivo,
+                              cliente_id, produto_id, master_responsavel_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+       RETURNING id, numero, tribunal, sistema, grau`,
+      [numero.trim(), tribunal, sistema, grau, vara ?? null, acao ?? null,
+       polo_ativo ?? null, polo_passivo ?? null,
+       cliente_id ?? null, produto_id ?? null, masterId]
     );
 
     await registrarAuditoria({
@@ -149,6 +156,18 @@ processosRouter.patch('/:id', async (req, res) => {
   );
 
   res.json({ ok: true });
+});
+
+// POST /api/processos/importar-painel — importa todos os processos do painel PJe/eProc
+processosRouter.post('/importar-painel', apenasMaster, async (req, res) => {
+  const { importarDosPaineis } = await import('../services/tribunal/sync.js');
+  try {
+    const importados = await importarDosPaineis(req.user.id);
+    res.json({ ok: true, importados: importados.length, processos: importados });
+  } catch (err) {
+    console.error('[Importar Painel]', err.message);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
 });
 
 // DELETE /api/processos/:id — apenas Master

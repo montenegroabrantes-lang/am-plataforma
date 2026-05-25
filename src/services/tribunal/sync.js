@@ -1,68 +1,99 @@
-import { db }     from '../../db/index.js';
-import { lerCredencial } from '../../routes/credenciais.js';
-import * as pje   from './pje.js';
-import * as eproc from './eproc.js';
+import { db }            from '../../db/index.js';
+import { lerCredencial }  from '../../routes/credenciais.js';
+import * as pje           from './pje.js';
+import * as eproc         from './eproc.js';
 
+// URLs separadas por tribunal e grau
+// Configurar as 10 variáveis no Railway
 const URL_TRIBUNAL = {
-  TJPB: process.env.PJE_TJPB_URL,
-  TJRN: process.env.PJE_TJRN_URL,
-  TJPE: process.env.PJE_TJPE_URL,
-  TRF1: process.env.PJE_TRF1_URL,
-  TRF5: process.env.EPROC_TRF5_URL,
-  TRF3: process.env.EPROC_TRF3_URL,
-  TRF4: process.env.EPROC_TRF4_URL,
-  TRF6: process.env.EPROC_TRF6_URL,
+  TJPB: {
+    '1': process.env.PJE_TJPB_1G_URL,   // https://pje.tjpb.jus.br/pje/login.seam
+    '2': process.env.PJE_TJPB_2G_URL,   // https://pje.tjpb.jus.br/pje2g/login.seam
+  },
+  TJRN: {
+    '1': process.env.PJE_TJRN_1G_URL,   // https://pje1g.tjrn.jus.br/pje/login.seam
+    '2': process.env.PJE_TJRN_2G_URL,   // https://pje2g.tjrn.jus.br/pje/login.seam
+  },
+  TJPE: {
+    '1': process.env.PJE_TJPE_1G_URL,   // https://pje.cloud.tjpe.jus.br/1g/login.seam
+    '2': process.env.PJE_TJPE_2G_URL,   // https://pje.cloud.tjpe.jus.br/2g/login.seam
+  },
+  TRF1: {
+    '1': process.env.PJE_TRF1_1G_URL,   // https://pje1g.trf1.jus.br/pje/login.seam
+    '2': process.env.PJE_TRF1_2G_URL,   // https://pje2g.trf1.jus.br/pje/login.seam
+  },
+  TRF5: {
+    '1': process.env.EPROC_TRF5_URL,    // https://eproc.trf5.jus.br/eproc/
+    '2': process.env.EPROC_TRF5_URL,    // mesmo host, grau controlado por prefixo na URL
+  },
+  TRF3: {
+    '1': process.env.EPROC_TRF3_URL,
+    '2': process.env.EPROC_TRF3_URL,
+  },
+  TRF4: {
+    '1': process.env.EPROC_TRF4_URL,
+    '2': process.env.EPROC_TRF4_URL,
+  },
+  TRF6: {
+    '1': process.env.EPROC_TRF6_URL,
+    '2': process.env.EPROC_TRF6_URL,
+  },
 };
 
-// Sincroniza um processo específico
+// ─────────────────────────────────────────────
+//  SINCRONIZAR PROCESSO INDIVIDUAL
+// ─────────────────────────────────────────────
 export async function sincronizarProcesso(processoId) {
   const processo = await db.queryOne(
-    `SELECT p.*, c.nome AS cliente_nome, pr.nome AS produto
+    `SELECT p.*, c.nome AS cliente_nome
      FROM processos p
-     LEFT JOIN clientes c  ON c.id = p.cliente_id
-     LEFT JOIN produtos  pr ON pr.id = p.produto_id
+     LEFT JOIN clientes c ON c.id = p.cliente_id
      WHERE p.id = $1`,
     [processoId]
   );
 
   if (!processo) throw new Error(`Processo ${processoId} não encontrado.`);
 
+  const grau = processo.grau || '1';
   const cred = await lerCredencial(processo.master_responsavel_id, processo.tribunal);
   if (!cred) throw new Error(`Credencial não encontrada para ${processo.tribunal}.`);
 
-  const url = URL_TRIBUNAL[processo.tribunal];
-  if (!url) throw new Error(`URL não configurada para ${processo.tribunal}.`);
+  const url = URL_TRIBUNAL[processo.tribunal]?.[grau];
+  if (!url) throw new Error(`URL não configurada para ${processo.tribunal} grau ${grau}.`);
 
+  let dados = {};
   let movimentacoesBrutas = [];
-  let dadosProcesso       = {};
 
   if (processo.sistema === 'pje') {
-    [movimentacoesBrutas, dadosProcesso] = await Promise.all([
-      pje.buscarMovimentacoes(url, cred.cpf, cred.senha, processo.numero),
-      pje.buscarDadosProcesso(url, cred.cpf, cred.senha, processo.numero),
-    ]);
+    // PJe: busca tudo em uma sessão — totp_secret necessário se tribunal exigir 2FA (ex: TJPB Keycloak)
+    const resultado = await pje.buscarProcessoCompleto(url, cred.cpf, cred.senha, cred.totp_secret, processo.numero);
+    dados               = resultado.dados;
+    movimentacoesBrutas = resultado.movimentacoes;
   } else {
-    [movimentacoesBrutas, dadosProcesso] = await Promise.all([
-      eproc.buscarMovimentacoes(url, cred.cpf, cred.senha, cred.totp_secret, processo.numero),
-      eproc.buscarDadosProcesso(url, cred.cpf, cred.senha, cred.totp_secret, processo.numero),
-    ]);
+    // eProc: busca tudo em uma sessão com suporte a grau
+    const resultado = await eproc.buscarProcessoCompleto(url, cred.cpf, cred.senha, cred.totp_secret, processo.numero, grau);
+    dados               = resultado.dados;
+    movimentacoesBrutas = resultado.movimentacoes;
   }
 
-  // Atualiza dados do processo
-  if (dadosProcesso.vara || dadosProcesso.juiz) {
+  // Atualiza dados básicos do processo
+  if (dados.vara || dados.habilitados?.length) {
     await db.execute(
-      `UPDATE processos SET vara = COALESCE($1, vara), juiz = COALESCE($2, juiz),
-              polo_passivo = COALESCE($3, polo_passivo), habilitados_pje = COALESCE($4, habilitados_pje),
-              importado_pje = true, atualizado_em = NOW()
+      `UPDATE processos
+       SET vara              = COALESCE($1, vara),
+           juiz              = COALESCE($2, juiz),
+           polo_passivo      = COALESCE($3, polo_passivo),
+           habilitados_pje   = COALESCE($4, habilitados_pje),
+           importado_pje     = true,
+           atualizado_em     = NOW()
        WHERE id = $5`,
-      [dadosProcesso.vara, dadosProcesso.juiz, dadosProcesso.polo_passivo,
-       dadosProcesso.habilitados, processoId]
+      [dados.vara, dados.juiz, dados.polo_passivo, dados.habilitados, processoId]
     );
 
-    await resolverSeparacaoSocios(processo, dadosProcesso.habilitados || []);
+    await resolverSeparacaoSocios(processo, dados.habilitados || []);
   }
 
-  // Insere novas movimentações (ignora duplicatas pela constraint UNIQUE)
+  // Insere movimentações novas (ON CONFLICT ignora duplicatas)
   let novasMovs = 0;
   for (const mov of movimentacoesBrutas) {
     if (!mov.texto) continue;
@@ -75,38 +106,105 @@ export async function sincronizarProcesso(processoId) {
         [processoId, data, mov.tipo || null, mov.texto]
       );
       novasMovs++;
-    } catch { /* ignora */ }
+    } catch { /* ignora duplicata */ }
   }
 
+  console.log(`[Sync] Processo ${processo.numero}: ${novasMovs} novas movimentações.`);
   return { processoId, novasMovimentacoes: novasMovs };
 }
 
-// Sincroniza todos os processos ativos (chamado pelo worker)
+// ─────────────────────────────────────────────
+//  SINCRONIZAR TODOS OS PROCESSOS ATIVOS
+// ─────────────────────────────────────────────
 export async function sincronizarTodos() {
   const processos = await db.query(
-    `SELECT id FROM processos WHERE status = 'em_andamento' ORDER BY atualizado_em ASC`
+    `SELECT id, numero, tribunal, sistema, grau
+     FROM processos
+     WHERE status IN ('ativo', 'em_andamento')
+     ORDER BY atualizado_em ASC NULLS FIRST`
   );
 
+  console.log(`[Sync] Iniciando sync de ${processos.length} processos...`);
+
   const resultados = [];
-  // Sequencial — não dois robôs paralelos (decisão arquitetural)
-  for (const { id } of processos) {
+  // Sequencial — decisão arquitetural: não dois robôs paralelos
+  for (const { id, numero } of processos) {
     try {
       const r = await sincronizarProcesso(id);
       resultados.push({ ...r, ok: true });
     } catch (err) {
-      resultados.push({ processoId: id, ok: false, erro: err.message });
-      console.error(`[Sync] Processo ${id}:`, err.message);
+      resultados.push({ processoId: id, numero, ok: false, erro: err.message });
+      console.error(`[Sync] Processo ${numero} (${id}):`, err.message);
     }
   }
+
+  const ok   = resultados.filter(r => r.ok).length;
+  const fail = resultados.filter(r => !r.ok).length;
+  console.log(`[Sync] Concluído: ${ok} OK, ${fail} falhas.`);
 
   return resultados;
 }
 
-// Detecta processo compartilhado e atribui master_responsavel_id correto
+// ─────────────────────────────────────────────
+//  INSPECIONAR PAINEL — importa processos novos
+// ─────────────────────────────────────────────
+// Acessa o painel do PJe/eProc e importa números de processos ainda não cadastrados
+export async function importarDosPaineis(masterUserId) {
+  const credenciais = await db.query(
+    `SELECT * FROM credenciais_tribunal WHERE usuario_id = $1 AND ativo = true`,
+    [masterUserId]
+  );
+
+  const importados = [];
+
+  for (const cred of credenciais) {
+    const graus = ['1', '2']; // inspeciona ambos os graus
+
+    for (const grau of graus) {
+      const url = URL_TRIBUNAL[cred.tribunal]?.[grau];
+      if (!url) continue;
+
+      try {
+        let numeros = [];
+
+        if (cred.sistema === 'pje') {
+          numeros = await pje.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret);
+        } else {
+          numeros = await eproc.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret);
+        }
+
+        for (const numero of numeros) {
+          // Só importa se não existir ainda
+          const existe = await db.queryOne(`SELECT id FROM processos WHERE numero = $1`, [numero]);
+          if (existe) continue;
+
+          await db.execute(
+            `INSERT INTO processos (numero, tribunal, sistema, grau, status, master_responsavel_id, importado_pje)
+             VALUES ($1, $2, $3, $4, 'ativo', $5, false)
+             ON CONFLICT (numero) DO NOTHING`,
+            [numero, cred.tribunal, cred.sistema, grau, masterUserId]
+          );
+          importados.push({ numero, tribunal: cred.tribunal, grau });
+        }
+
+        console.log(`[Painel] ${cred.tribunal} ${grau}G: ${numeros.length} processos encontrados`);
+
+      } catch (err) {
+        console.error(`[Painel] ${cred.tribunal} ${grau}G falhou:`, err.message);
+      }
+    }
+  }
+
+  console.log(`[Painel] ${importados.length} processos novos importados.`);
+  return importados;
+}
+
+// ─────────────────────────────────────────────
+//  SEPARAÇÃO DE SÓCIOS
+// ─────────────────────────────────────────────
 async function resolverSeparacaoSocios(processo, habilitados) {
   if (!habilitados.length) return;
 
-  // Busca masters cujos CPFs/OABs batem com os habilitados
   const masters = await db.query(
     `SELECT u.id FROM usuarios u
      JOIN credenciais_tribunal ct ON ct.usuario_id = u.id AND ct.tribunal = $1
@@ -115,13 +213,11 @@ async function resolverSeparacaoSocios(processo, habilitados) {
   );
 
   if (masters.length === 1) {
-    // Um habilitado → auto-atribuição
     await db.execute(
       `UPDATE processos SET master_responsavel_id = $1, compartilhado = false WHERE id = $2`,
       [masters[0].id, processo.id]
     );
   } else if (masters.length >= 2) {
-    // Dois habilitados → compartilhado
     await db.execute(
       `UPDATE processos SET compartilhado = true WHERE id = $1`,
       [processo.id]
@@ -129,9 +225,11 @@ async function resolverSeparacaoSocios(processo, habilitados) {
   }
 }
 
+// ─────────────────────────────────────────────
+//  UTILITÁRIO
+// ─────────────────────────────────────────────
 function parsearData(str) {
   if (!str) return null;
-  // Formatos: dd/mm/aaaa ou aaaa-mm-dd
   const dmy = str.match(/(\d{2})\/(\d{2})\/(\d{4})/);
   if (dmy) return new Date(`${dmy[3]}-${dmy[2]}-${dmy[1]}`);
   const iso = str.match(/\d{4}-\d{2}-\d{2}/);
