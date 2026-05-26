@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express            from 'express';
+import cors               from 'cors';
 import { db }             from './db/index.js';
 import { conectarRedis }  from './cache/redis.js';
 import { iniciarWorkers } from './workers/index.js';
@@ -25,6 +26,10 @@ import { auditar }    from './middleware/auditoria.js';
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
+app.use(cors({
+  origin: process.env.FRONTEND_URL || '*',
+  credentials: true,
+}));
 app.use(express.json());
 app.use(auditar);
 
