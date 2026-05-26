@@ -154,7 +154,7 @@ async function login(url, cpf, senha, totpSecret) {
 //  Estratégia: Consulta de Processos (lista completa) com paginação
 //  Fallback: painel de expedientes (processos com ação pendente)
 // ─────────────────────────────────────────────
-export async function inspecionarPainel(url, cpf, senha, totpSecret) {
+export async function inspecionarPainel(url, cpf, senha, totpSecret, oab = null) {
   let browser;
   try {
     ({ browser } = await login(url, cpf, senha, totpSecret));
@@ -177,33 +177,12 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret) {
       await new Promise(r => setTimeout(r, 800));
     }
 
-    // ── FASE 1: Consulta de Processos do Advogado (todos, com paginação) ──
-    // Tenta a URL de consulta de processos — lista TODOS independente de expediente
-    const urlConsulta = `${base}/Processo/ConsultaProcesso/listView.seam`;
-    console.log(`[PJe] Acessando consulta de processos: ${urlConsulta}`);
-    await page.goto(urlConsulta, { waitUntil: 'domcontentloaded' }).catch(() => {});
-    await aguardarAJAX(8000);
-    await screenshot(page, 'consulta-processos');
-
-    // Clica em Pesquisar sem filtros para listar todos os processos do advogado
-    const btnPesquisar = await page.$(
-      'input[id*="btnPesquisar"], input[value*="Pesquisar"], input[value*="Buscar"], ' +
-      'button[id*="btnPesquisar"], a[id*="btnPesquisar"]'
-    );
-
-    if (btnPesquisar) {
-      console.log('[PJe] Clicando em Pesquisar — buscando todos os processos...');
-      await btnPesquisar.click();
-      await aguardarAJAX(10000);
-      await screenshot(page, 'resultado-consulta');
-
-      // Pagina por todos os resultados
+    async function paginarResultados(label, limite = 300) {
       let pagina = 1;
-      while (pagina <= 200) {
+      while (pagina <= limite) {
         await coletarCNJsDOM();
-        console.log(`[PJe] Consulta pág. ${pagina}: ${numerosEncontrados.size} CNJs acumulados`);
+        console.log(`[PJe] ${label} pág. ${pagina}: ${numerosEncontrados.size} CNJs acumulados`);
 
-        // Botão de próxima página
         const proxPag = await page.$(
           'a[id*="proxima"]:not([class*="dis"]), ' +
           'a[title*="Próxima"]:not([class*="dis"]), ' +
@@ -211,7 +190,6 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret) {
           'a[title="next page"]'
         );
         if (!proxPag) break;
-
         const desabilitado = await proxPag.evaluate(
           el => el.disabled || el.getAttribute('aria-disabled') === 'true' ||
                 el.className?.includes('dis') || el.className?.includes('inativo')
@@ -222,10 +200,90 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret) {
         await aguardarAJAX(6000);
         pagina++;
       }
+    }
 
-      console.log(`[PJe] Consulta concluída: ${numerosEncontrados.size} processos encontrados`);
-    } else {
-      console.warn('[PJe] Botão Pesquisar não encontrado na consulta — usando painel de expedientes como fallback');
+    // ── FASE 0: Consulta por OAB (lista TODOS os processos do advogado) ──
+    // Esta é a abordagem principal. Requer que a credencial tenha o campo oab preenchido.
+    // ex: oab = '23395PB' ou '23395' (estado assumido como PB neste caso)
+    if (oab) {
+      const numeroOab = oab.replace(/\D/g, '');       // só dígitos
+      const estadoOab = oab.replace(/\d/g, '').trim() || 'PB';  // letras = estado
+
+      const urlConsultaOab = `${base}/ConsultaProcesso/listView.seam`;
+      console.log(`[PJe] Consulta por OAB ${numeroOab}/${estadoOab}: ${urlConsultaOab}`);
+
+      await page.goto(urlConsultaOab, { waitUntil: 'domcontentloaded' }).catch(() => {});
+      await aguardarAJAX(8000);
+      await screenshot(page, 'consulta-oab');
+
+      // Localiza e preenche o campo do número da OAB
+      const campoOab = await page.$(
+        'input[id*="nroOab"], input[id*="OAB"], input[id*="oab"], ' +
+        'input[name*="nroOab"], input[name*="OAB"], input[placeholder*="OAB"]'
+      );
+
+      if (campoOab) {
+        await page.evaluate(el => { el.focus(); el.value = ''; }, campoOab);
+        await page.keyboard.type(numeroOab);
+        await screenshot(page, 'oab-preenchido');
+
+        // Localiza e preenche o campo do estado/UF da OAB
+        const campoEstado = await page.$(
+          'select[id*="estadoOab"], select[id*="ufOab"], select[id*="orgaoOab"], ' +
+          'select[name*="estadoOab"], input[id*="estadoOab"]'
+        );
+        if (campoEstado) {
+          const tagName = await campoEstado.evaluate(el => el.tagName);
+          if (tagName === 'SELECT') {
+            await page.select(
+              'select[id*="estadoOab"], select[id*="ufOab"], select[id*="orgaoOab"]',
+              estadoOab
+            ).catch(() => {});
+          } else {
+            await page.evaluate(el => { el.focus(); el.value = ''; }, campoEstado);
+            await page.keyboard.type(estadoOab);
+          }
+        }
+
+        // Clica em Pesquisar
+        const btnPesquisar = await page.$(
+          'input[id*="btnPesquisar"], input[value*="Pesquisar"], button[id*="btnPesquisar"]'
+        );
+        if (btnPesquisar) {
+          await btnPesquisar.click();
+          await aguardarAJAX(12000);
+          await screenshot(page, 'resultado-oab');
+          await paginarResultados('OAB');
+          console.log(`[PJe] Consulta OAB concluída: ${numerosEncontrados.size} processos`);
+        }
+      } else {
+        console.warn('[PJe] Campo OAB não encontrado — pulando fase de consulta por OAB');
+      }
+    }
+
+    // ── FASE 1: Consulta de Processos sem filtro (complementa busca por OAB) ──
+    if (numerosEncontrados.size === 0) {
+      const urlConsulta = `${base}/ConsultaProcesso/listView.seam`;
+      console.log(`[PJe] Consulta geral sem filtro: ${urlConsulta}`);
+      await page.goto(urlConsulta, { waitUntil: 'domcontentloaded' }).catch(() => {});
+      await aguardarAJAX(8000);
+      await screenshot(page, 'consulta-processos');
+
+      const btnPesquisar = await page.$(
+        'input[id*="btnPesquisar"], input[value*="Pesquisar"], input[value*="Buscar"], ' +
+        'button[id*="btnPesquisar"], a[id*="btnPesquisar"]'
+      );
+
+      if (btnPesquisar) {
+        console.log('[PJe] Clicando em Pesquisar sem filtros...');
+        await btnPesquisar.click();
+        await aguardarAJAX(10000);
+        await screenshot(page, 'resultado-consulta');
+        await paginarResultados('Consulta');
+        console.log(`[PJe] Consulta geral concluída: ${numerosEncontrados.size} processos`);
+      } else {
+        console.warn('[PJe] Botão Pesquisar não encontrado — usando painel como fallback');
+      }
     }
 
     // ── FASE 2 (fallback/complemento): Painel de expedientes ──

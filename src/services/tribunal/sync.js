@@ -1,7 +1,8 @@
 import { db }              from '../../db/index.js';
-import { lerCredencial, descriptografarCredencial } from '../../routes/credenciais.js';
+import { lerCredencial, lerCredencialGrau, descriptografarCredencial } from '../../routes/credenciais.js';
 import * as pje           from './pje.js';
 import * as eproc         from './eproc.js';
+import * as mni           from './mni.js';
 
 // URLs públicas dos sistemas. Env vars sobrescrevem os padrões caso necessário.
 const URL_TRIBUNAL = {
@@ -54,8 +55,8 @@ export async function sincronizarProcesso(processoId) {
   if (!processo) throw new Error(`Processo ${processoId} não encontrado.`);
 
   const grau = processo.grau || '1';
-  const cred = await lerCredencial(processo.master_responsavel_id, processo.tribunal);
-  if (!cred) throw new Error(`Credencial não encontrada para ${processo.tribunal}.`);
+  const cred = await lerCredencialGrau(processo.master_responsavel_id, processo.tribunal, grau);
+  if (!cred) throw new Error(`Credencial não encontrada para ${processo.tribunal} grau ${grau}.`);
 
   const url = URL_TRIBUNAL[processo.tribunal]?.[grau];
   if (!url) throw new Error(`URL não configurada para ${processo.tribunal} grau ${grau}.`);
@@ -64,10 +65,19 @@ export async function sincronizarProcesso(processoId) {
   let movimentacoesBrutas = [];
 
   if (processo.sistema === 'pje') {
-    // PJe: busca tudo em uma sessão — totp_secret necessário se tribunal exigir 2FA (ex: TJPB Keycloak)
-    const resultado = await pje.buscarProcessoCompleto(url, cred.cpf, cred.senha, cred.totp_secret, processo.numero);
-    dados               = resultado.dados;
-    movimentacoesBrutas = resultado.movimentacoes;
+    // PJe: tenta MNI primeiro (sem Puppeteer, muito mais rápido).
+    // Se MNI falhar (403, indisponível, etc.) usa Puppeteer como fallback.
+    try {
+      const resultado = await mni.consultarProcesso(url, cred.cpf, cred.senha, processo.numero);
+      dados               = resultado.dados;
+      movimentacoesBrutas = resultado.movimentacoes;
+      console.log(`[Sync] MNI OK para ${processo.numero}: ${movimentacoesBrutas.length} movimentações`);
+    } catch (mniErr) {
+      console.warn(`[Sync] MNI falhou (${mniErr.message}) — usando Puppeteer para ${processo.numero}`);
+      const resultado = await pje.buscarProcessoCompleto(url, cred.cpf, cred.senha, cred.totp_secret, processo.numero);
+      dados               = resultado.dados;
+      movimentacoesBrutas = resultado.movimentacoes;
+    }
   } else {
     // eProc: busca tudo em uma sessão com suporte a grau
     const resultado = await eproc.buscarProcessoCompleto(url, cred.cpf, cred.senha, cred.totp_secret, processo.numero, grau);
@@ -170,7 +180,7 @@ export async function importarDosPaineis(masterUserId) {
         let numeros = [];
 
         if (cred.sistema === 'pje') {
-          numeros = await pje.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret);
+          numeros = await pje.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret, cred.oab);
         } else {
           numeros = await eproc.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret);
         }

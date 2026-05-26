@@ -80,6 +80,12 @@ try {
       UNIQUE (usuario_id, tribunal, grau)
   `).catch(() => {});
 
+  // 5. Adiciona coluna oab em credenciais_tribunal se ainda não existir
+  await db.execute(`
+    ALTER TABLE credenciais_tribunal
+      ADD COLUMN IF NOT EXISTS oab TEXT
+  `).catch(() => {});
+
   console.log('[migrate] ✅ Migração concluída');
 } catch (err) {
   console.error('[migrate] ❌ Erro (não fatal):', err.message);

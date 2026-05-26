@@ -124,6 +124,7 @@ CREATE TABLE credenciais_tribunal (
   cpf           TEXT NOT NULL,
   senha_enc     TEXT NOT NULL,           -- AES-256
   totp_secret   TEXT,                    -- secret do TOTP do tribunal (NULL se o tribunal não usa TOTP)
+  oab           TEXT,                    -- número OAB usado para busca completa (ex: '23395PB')
   sessao_cookie TEXT,                    -- cookie de sessão ativa
   sessao_expira TIMESTAMPTZ,
   ativo         BOOLEAN NOT NULL DEFAULT true,
