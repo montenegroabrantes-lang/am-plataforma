@@ -53,35 +53,73 @@ async function login(url, cpf, senha, totpSecret) {
 
   try {
     console.log(`[PJe] Acessando login: ${url}`);
-    await page.goto(url, { waitUntil: 'networkidle2' });
+
+    // domcontentloaded evita bug do Puppeteer v22 onde eventos CDP de teclado
+    // chegam com text=undefined durante networkidle2, causando "text is not iterable"
+    await page.goto(url, { waitUntil: 'domcontentloaded' }).catch(async (err) => {
+      if (err.message?.includes('not iterable') || err.message?.includes('Navigation')) {
+        console.warn('[PJe] Aviso na navegação (continuando):', err.message);
+      } else { throw err; }
+    });
+    await page.waitForNetworkIdle({ timeout: 10_000, idleTime: 400 }).catch(() => {});
     await screenshot(page, 'login');
 
-    // PJe Keycloak: #username / #password / #kc-login
-    await page.waitForSelector('#username, input[name="username"]');
-    await page.type('#username', cpf.replace(/\D/g, ''));
-    await page.type('#password', senha);
+    // Aguarda campo CPF/username
+    await page.waitForSelector('#username, input[name="username"]', { timeout: TIMEOUT });
 
-    // Botão do Keycloak é #kc-login; fallback para outros tribunais
-    const botaoLogin = await page.$('#kc-login, #btnEntrar, #botaoLogin, [type="submit"]');
-    if (!botaoLogin) throw new Error('Botão de login não encontrado no PJe.');
-    await botaoLogin.click();
-    await page.waitForNetworkIdle({ timeout: 20_000 }).catch(() => {});
+    // Usa evaluate + keyboard.type para evitar o bug do LifecycleWatcher no page.type()
+    await page.evaluate(() => {
+      const el = document.querySelector('#username, input[name="username"]');
+      if (el) { el.focus(); el.value = ''; }
+    });
+    await page.keyboard.type(cpf.replace(/\D/g, ''));
+    await screenshot(page, 'pos-cpf');
+
+    // Keycloak TJPB pode usar fluxo em 2 passos: CPF → Avançar → aparece campo senha
+    let senhaEl = await page.$('#password, input[name="password"], input[type="password"]');
+
+    if (!senhaEl) {
+      // Senha não visível ainda — clica em Avançar
+      const btnNext = await page.$('#kc-login, button[type="submit"], input[type="submit"]');
+      if (btnNext) {
+        await btnNext.click();
+        await page.waitForNetworkIdle({ timeout: 10_000, idleTime: 400 }).catch(() => {});
+      }
+      senhaEl = await page.waitForSelector(
+        '#password, input[name="password"], input[type="password"]',
+        { timeout: 15_000 }
+      ).catch(() => null);
+    }
+
+    if (senhaEl) {
+      await page.evaluate(() => {
+        const el = document.querySelector('#password, input[name="password"], input[type="password"]');
+        if (el) { el.focus(); el.value = ''; }
+      });
+      await page.keyboard.type(senha);
+    } else {
+      console.warn('[PJe] Campo senha não encontrado — possível SSO automático.');
+    }
+
+    const btnSubmit = await page.$('#kc-login, button[type="submit"], input[type="submit"]');
+    if (btnSubmit) await btnSubmit.click();
+    await page.waitForNetworkIdle({ timeout: 20_000, idleTime: 500 }).catch(() => {});
     await screenshot(page, 'pos-senha');
 
-    // Keycloak OTP — PJe TJPB (e outros) exigem 2FA após a senha
-    const textoOtp = await page.evaluate(() => document.body.innerText);
+    // Keycloak OTP — PJe TJPB exige 2FA após a senha
+    const textoOtp = await page.evaluate(() => document.body?.innerText || '').catch(() => '');
     const precisaOtp = /autenticação|código|aplicativo/i.test(textoOtp);
 
     if (precisaOtp && totpSecret) {
       console.log('[PJe] Tela de OTP detectada — inserindo código TOTP...');
       const codigo = authenticator.generate(totpSecret.replace(/\s/g, ''));
-      const input  = await page.$('input[type="text"]');
-      if (input) {
-        await input.click({ clickCount: 3 });
-        await input.type(codigo);
+      const otpInput = await page.$('input[type="text"], input[id*="otp"], input[name*="otp"]');
+      if (otpInput) {
+        await page.evaluate(el => { el.focus(); el.value = ''; }, otpInput);
+        await page.keyboard.type(codigo);
       }
-      const btnValidar = await page.$('[type="submit"]');
-      if (btnValidar) await btnValidar.click();
+      const btnOtp = await page.$('[type="submit"]');
+      if (btnOtp) await btnOtp.click();
       await page.waitForNetworkIdle({ timeout: 20_000 }).catch(() => {});
       await screenshot(page, 'pos-otp');
     } else if (precisaOtp && !totpSecret) {
