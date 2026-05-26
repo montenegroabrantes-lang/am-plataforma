@@ -69,15 +69,23 @@ try {
         CHECK (grau IN ('1','2'))
   `).catch(() => {});
 
-  // Recria constraint única incluindo grau (DROP IF EXISTS + ADD)
+  // Recria constraint única incluindo grau (DROP IF EXISTS + ADD condicional)
   await db.execute(`
     ALTER TABLE credenciais_tribunal
       DROP CONSTRAINT IF EXISTS credenciais_tribunal_usuario_id_tribunal_key
   `).catch(() => {});
   await db.execute(`
-    ALTER TABLE credenciais_tribunal
-      ADD CONSTRAINT IF NOT EXISTS credenciais_tribunal_usuario_id_tribunal_grau_key
-      UNIQUE (usuario_id, tribunal, grau)
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'credenciais_tribunal_usuario_id_tribunal_grau_key'
+      ) THEN
+        ALTER TABLE credenciais_tribunal
+          ADD CONSTRAINT credenciais_tribunal_usuario_id_tribunal_grau_key
+          UNIQUE (usuario_id, tribunal, grau);
+      END IF;
+    END $$
   `).catch(() => {});
 
   // 5. Adiciona coluna oab em credenciais_tribunal se ainda não existir
