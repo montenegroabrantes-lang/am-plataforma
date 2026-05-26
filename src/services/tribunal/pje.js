@@ -216,48 +216,75 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret, oab = null)
       await aguardarAJAX(8000);
       await screenshot(page, 'consulta-oab');
 
-      // Localiza e preenche o campo do número da OAB
+      // Diagnóstico: lista todos os inputs/selects/buttons da página para debug
+      const elementosPagina = await page.evaluate(() => {
+        const inputs = Array.from(document.querySelectorAll('input, select, button, a[id]'))
+          .map(el => `${el.tagName}#${el.id || '-'} name=${el.name || '-'} type=${el.type || '-'} placeholder="${el.placeholder || ''}" value="${el.value || ''}"`)
+          .slice(0, 40);
+        return inputs;
+      }).catch(() => []);
+      console.log('[PJe] Elementos na página de consulta:', elementosPagina.join(' | '));
+
+      // Seletores amplos para o campo OAB — cobre diferentes versões do PJe
       const campoOab = await page.$(
-        'input[id*="nroOab"], input[id*="OAB"], input[id*="oab"], ' +
-        'input[name*="nroOab"], input[name*="OAB"], input[placeholder*="OAB"]'
+        'input[id*="nroOab"], input[id*="Oab"], input[id*="OAB"], input[id*="oab"], ' +
+        'input[name*="nroOab"], input[name*="Oab"], input[name*="OAB"], ' +
+        'input[id*="advogado"][id*="numero"], input[id*="numAdvogado"], ' +
+        'input[placeholder*="OAB"], input[placeholder*="oab"]'
       );
 
       if (campoOab) {
+        const campoId = await campoOab.evaluate(el => el.id);
+        console.log(`[PJe] Campo OAB encontrado: #${campoId}`);
         await page.evaluate(el => { el.focus(); el.value = ''; }, campoOab);
         await page.keyboard.type(numeroOab);
         await screenshot(page, 'oab-preenchido');
 
-        // Localiza e preenche o campo do estado/UF da OAB
+        // Campo UF/estado da OAB
         const campoEstado = await page.$(
           'select[id*="estadoOab"], select[id*="ufOab"], select[id*="orgaoOab"], ' +
-          'select[name*="estadoOab"], input[id*="estadoOab"]'
+          'select[id*="Oab"][id*="estado"], select[id*="Oab"][id*="uf"], ' +
+          'select[name*="estadoOab"], select[name*="ufOab"], ' +
+          'select[id*="advogado"][id*="estado"], input[id*="estadoOab"]'
         );
         if (campoEstado) {
           const tagName = await campoEstado.evaluate(el => el.tagName);
+          const campoEstadoId = await campoEstado.evaluate(el => el.id);
+          console.log(`[PJe] Campo estado OAB: ${tagName}#${campoEstadoId}`);
           if (tagName === 'SELECT') {
-            await page.select(
-              'select[id*="estadoOab"], select[id*="ufOab"], select[id*="orgaoOab"]',
-              estadoOab
-            ).catch(() => {});
+            await campoEstado.select(estadoOab).catch(async () => {
+              // Tenta por value numérico se texto não funcionar
+              await page.evaluate((el, uf) => {
+                const opt = Array.from(el.options).find(o => o.text.includes(uf) || o.value === uf);
+                if (opt) el.value = opt.value;
+              }, campoEstado, estadoOab);
+            });
           } else {
             await page.evaluate(el => { el.focus(); el.value = ''; }, campoEstado);
             await page.keyboard.type(estadoOab);
           }
         }
 
-        // Clica em Pesquisar
+        // Botão Pesquisar — seletores amplos
         const btnPesquisar = await page.$(
-          'input[id*="btnPesquisar"], input[value*="Pesquisar"], button[id*="btnPesquisar"]'
+          'input[id*="btnPesquisar"], input[id*="pesquisar"], ' +
+          'input[value="Pesquisar"], input[value="Buscar"], ' +
+          'button[id*="pesquisar"], button[id*="Pesquisar"], ' +
+          'a[id*="pesquisar"], a[id*="Pesquisar"]'
         );
         if (btnPesquisar) {
+          const btnId = await btnPesquisar.evaluate(el => el.id || el.tagName);
+          console.log(`[PJe] Clicando Pesquisar: ${btnId}`);
           await btnPesquisar.click();
           await aguardarAJAX(12000);
           await screenshot(page, 'resultado-oab');
           await paginarResultados('OAB');
           console.log(`[PJe] Consulta OAB concluída: ${numerosEncontrados.size} processos`);
+        } else {
+          console.warn('[PJe] Botão Pesquisar não encontrado após preencher OAB');
         }
       } else {
-        console.warn('[PJe] Campo OAB não encontrado — pulando fase de consulta por OAB');
+        console.warn('[PJe] Campo OAB não encontrado com nenhum seletor — veja log de elementos acima');
       }
     }
 
@@ -270,12 +297,16 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret, oab = null)
       await screenshot(page, 'consulta-processos');
 
       const btnPesquisar = await page.$(
-        'input[id*="btnPesquisar"], input[value*="Pesquisar"], input[value*="Buscar"], ' +
-        'button[id*="btnPesquisar"], a[id*="btnPesquisar"]'
+        'input[id*="btnPesquisar"], input[id*="pesquisar"], ' +
+        'input[value="Pesquisar"], input[value="Buscar"], ' +
+        'button[id*="pesquisar"], button[id*="Pesquisar"], ' +
+        'a[id*="pesquisar"], a[id*="Pesquisar"], ' +
+        'input[type="submit"], button[type="submit"]'
       );
 
       if (btnPesquisar) {
-        console.log('[PJe] Clicando em Pesquisar sem filtros...');
+        const btnId = await btnPesquisar.evaluate(el => el.id || el.tagName);
+        console.log(`[PJe] Clicando Pesquisar (geral): ${btnId}`);
         await btnPesquisar.click();
         await aguardarAJAX(10000);
         await screenshot(page, 'resultado-consulta');
