@@ -3,40 +3,39 @@ import { lerCredencial }  from '../../routes/credenciais.js';
 import * as pje           from './pje.js';
 import * as eproc         from './eproc.js';
 
-// URLs separadas por tribunal e grau
-// Configurar as 10 variáveis no Railway
+// URLs públicas dos sistemas. Env vars sobrescrevem os padrões caso necessário.
 const URL_TRIBUNAL = {
   TJPB: {
-    '1': process.env.PJE_TJPB_1G_URL,   // https://pje.tjpb.jus.br/pje/login.seam
-    '2': process.env.PJE_TJPB_2G_URL,   // https://pje.tjpb.jus.br/pje2g/login.seam
+    '1': process.env.PJE_TJPB_1G_URL || 'https://pje.tjpb.jus.br/pje/login.seam',
+    '2': process.env.PJE_TJPB_2G_URL || 'https://pje.tjpb.jus.br/pje2g/login.seam',
   },
   TJRN: {
-    '1': process.env.PJE_TJRN_1G_URL,   // https://pje1g.tjrn.jus.br/pje/login.seam
-    '2': process.env.PJE_TJRN_2G_URL,   // https://pje2g.tjrn.jus.br/pje/login.seam
+    '1': process.env.PJE_TJRN_1G_URL || 'https://pje1g.tjrn.jus.br/pje/login.seam',
+    '2': process.env.PJE_TJRN_2G_URL || 'https://pje2g.tjrn.jus.br/pje/login.seam',
   },
   TJPE: {
-    '1': process.env.PJE_TJPE_1G_URL,   // https://pje.cloud.tjpe.jus.br/1g/login.seam
-    '2': process.env.PJE_TJPE_2G_URL,   // https://pje.cloud.tjpe.jus.br/2g/login.seam
+    '1': process.env.PJE_TJPE_1G_URL || 'https://pje.cloud.tjpe.jus.br/1g/login.seam',
+    '2': process.env.PJE_TJPE_2G_URL || 'https://pje.cloud.tjpe.jus.br/2g/login.seam',
   },
   TRF1: {
-    '1': process.env.PJE_TRF1_1G_URL,   // https://pje1g.trf1.jus.br/pje/login.seam
-    '2': process.env.PJE_TRF1_2G_URL,   // https://pje2g.trf1.jus.br/pje/login.seam
+    '1': process.env.PJE_TRF1_1G_URL || 'https://pje1g.trf1.jus.br/pje/login.seam',
+    '2': process.env.PJE_TRF1_2G_URL || 'https://pje2g.trf1.jus.br/pje/login.seam',
   },
   TRF5: {
-    '1': process.env.EPROC_TRF5_URL,    // https://eproc.trf5.jus.br/eproc/
-    '2': process.env.EPROC_TRF5_URL,    // mesmo host, grau controlado por prefixo na URL
+    '1': process.env.EPROC_TRF5_URL || 'https://eproc.trf5.jus.br/eproc/',
+    '2': process.env.EPROC_TRF5_URL || 'https://eproc.trf5.jus.br/eproc/',
   },
   TRF3: {
-    '1': process.env.EPROC_TRF3_URL,
-    '2': process.env.EPROC_TRF3_URL,
+    '1': process.env.EPROC_TRF3_URL || 'https://eproc.trf3.jus.br/eproc/',
+    '2': process.env.EPROC_TRF3_URL || 'https://eproc.trf3.jus.br/eproc/',
   },
   TRF4: {
-    '1': process.env.EPROC_TRF4_URL,
-    '2': process.env.EPROC_TRF4_URL,
+    '1': process.env.EPROC_TRF4_URL || 'https://eproc.trf4.jus.br/eproc/',
+    '2': process.env.EPROC_TRF4_URL || 'https://eproc.trf4.jus.br/eproc/',
   },
   TRF6: {
-    '1': process.env.EPROC_TRF6_URL,
-    '2': process.env.EPROC_TRF6_URL,
+    '1': process.env.EPROC_TRF6_URL || 'https://eproc.trf6.jus.br/eproc/',
+    '2': process.env.EPROC_TRF6_URL || 'https://eproc.trf6.jus.br/eproc/',
   },
 };
 
@@ -163,6 +162,8 @@ export async function importarDosPaineis(masterUserId) {
     for (const grau of graus) {
       const url = URL_TRIBUNAL[cred.tribunal]?.[grau];
       if (!url) continue;
+
+      console.log(`[Painel] Acessando ${cred.tribunal} ${grau}G: ${url}`);
 
       try {
         let numeros = [];
