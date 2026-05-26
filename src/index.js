@@ -47,17 +47,24 @@ app.use('/api/financeiro',    autenticar, financeiroRouter);
 app.use('/api/pipeline',      autenticar, pipelineRouter);
 app.use('/api/relatorio',     autenticar, relatorioRouter);
 
-app.get('/health', (_req, res) => res.json({ ok: true, env: process.env.NODE_ENV }));
+let dbOk = false;
+app.get('/health', (_req, res) => res.json({ ok: true, db: dbOk, env: process.env.NODE_ENV }));
+
+// Sobe o servidor imediatamente para o healthcheck passar
+app.listen(PORT, () => {
+  console.log(`[API] AM Plataforma escutando na porta ${PORT}`);
+});
 
 async function iniciar() {
   console.log('[BOOT] Iniciando AM Plataforma...');
   console.log('[BOOT] NODE_ENV:', process.env.NODE_ENV);
-  console.log('[BOOT] PORT:', process.env.PORT);
+  console.log('[BOOT] PORT:', PORT);
   console.log('[BOOT] DATABASE_URL:', process.env.DATABASE_URL ? 'definida' : 'AUSENTE');
   console.log('[BOOT] REDIS_URL:', process.env.REDIS_URL ? 'definida' : 'AUSENTE');
 
   try {
     await db.query('SELECT 1');
+    dbOk = true;
     console.log('[DB] PostgreSQL conectado.');
   } catch (err) {
     console.error('[FATAL] PostgreSQL falhou:', err.stack || err);
@@ -76,9 +83,7 @@ async function iniciar() {
     console.log('[WARN] REDIS_URL não definida — workers desativados.');
   }
 
-  app.listen(PORT, () => {
-    console.log(`[API] AM Plataforma rodando na porta ${PORT}`);
-  });
+  console.log('[BOOT] Inicialização concluída.');
 }
 
 iniciar();
