@@ -183,13 +183,35 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret, oab = null)
         await coletarCNJsDOM();
         console.log(`[PJe] ${label} pág. ${pagina}: ${numerosEncontrados.size} CNJs acumulados`);
 
+        // Diagnóstico na primeira página: mostra elementos de paginação disponíveis
+        if (pagina === 1) {
+          const elsPag = await page.evaluate(() =>
+            Array.from(document.querySelectorAll('a, input[type="submit"], button'))
+              .filter(el => {
+                const t = (el.textContent || el.title || el.value || el.id || '').toLowerCase();
+                return t.includes('próx') || t.includes('prox') || t.includes('next') ||
+                       t.includes('>') || el.className?.includes('next') || el.className?.includes('scr');
+              })
+              .map(el => `${el.tagName}#${el.id} class="${el.className}" title="${el.title}" text="${(el.textContent||'').trim().slice(0,30)}"`)
+          ).catch(() => []);
+          console.log('[PJe] Elementos paginação:', elsPag.join(' | ') || 'NENHUM');
+        }
+
         const proxPag = await page.$(
-          'a[id*="proxima"]:not([class*="dis"]), ' +
-          'a[title*="Próxima"]:not([class*="dis"]), ' +
+          // RichFaces scroller — padrão PJe
+          'a[id*="scroller"][id*="next"], ' +
+          'a[id*="scroller"][id*="Next"], ' +
           '.rich-datascr-button-next:not(.rich-datascr-button-next-dis), ' +
-          'a[title="next page"]'
+          // Títulos e textos comuns
+          'a[title*="Próxima"], a[title*="próxima"], a[title*="next"], ' +
+          'a[title*="Next"], a[title*="Avançar"], ' +
+          // IDs contendo proxima/next
+          'a[id*="proxima"]:not([class*="dis"]), ' +
+          'a[id*="Proxima"]:not([class*="dis"]), ' +
+          'a[id*="next"]:not([class*="dis"])'
         );
         if (!proxPag) break;
+
         const desabilitado = await proxPag.evaluate(
           el => el.disabled || el.getAttribute('aria-disabled') === 'true' ||
                 el.className?.includes('dis') || el.className?.includes('inativo')
