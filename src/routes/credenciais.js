@@ -10,8 +10,8 @@ credenciaisRouter.get('/', async (req, res) => {
   const userId = req.user.perfil === 'master' ? req.user.id : req.user.master_id;
 
   const rows = await db.query(
-    `SELECT id, tribunal, sistema, cpf, sessao_expira, ativo
-     FROM credenciais_tribunal WHERE usuario_id = $1`,
+    `SELECT id, tribunal, grau, sistema, cpf, sessao_expira, ativo
+     FROM credenciais_tribunal WHERE usuario_id = $1 ORDER BY tribunal, grau`,
     [userId]
   );
 
@@ -20,23 +20,23 @@ credenciaisRouter.get('/', async (req, res) => {
 
 // POST /api/credenciais — cadastra credencial de tribunal (apenas Master)
 credenciaisRouter.post('/', apenasMaster, async (req, res) => {
-  const { tribunal, sistema, cpf, senha, totp_secret } = req.body;
+  const { tribunal, grau = '1', sistema, cpf, senha, totp_secret } = req.body;
 
   if (!tribunal || !sistema || !cpf || !senha) {
     return res.status(400).json({ ok: false, erro: 'tribunal, sistema, cpf e senha são obrigatórios.' });
   }
 
-  const senhaEnc   = encrypt(senha);
-  const totpEnc    = totp_secret ? encrypt(totp_secret) : null;
+  const senhaEnc = encrypt(senha);
+  const totpEnc  = totp_secret ? encrypt(totp_secret) : null;
 
   try {
     const [nova] = await db.query(
-      `INSERT INTO credenciais_tribunal (usuario_id, tribunal, sistema, cpf, senha_enc, totp_secret)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (usuario_id, tribunal) DO UPDATE
-         SET senha_enc = $5, totp_secret = $6, ativo = true
-       RETURNING id, tribunal, sistema, cpf, ativo`,
-      [req.user.id, tribunal, sistema, cpf, senhaEnc, totpEnc]
+      `INSERT INTO credenciais_tribunal (usuario_id, tribunal, grau, sistema, cpf, senha_enc, totp_secret)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (usuario_id, tribunal, grau) DO UPDATE
+         SET sistema = $4, cpf = $5, senha_enc = $6, totp_secret = $7, ativo = true
+       RETURNING id, tribunal, grau, sistema, cpf, ativo`,
+      [req.user.id, tribunal, grau, sistema, cpf, senhaEnc, totpEnc]
     );
     res.status(201).json({ ok: true, credencial: nova });
   } catch (e) {

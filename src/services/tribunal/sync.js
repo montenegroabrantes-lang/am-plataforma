@@ -157,9 +157,9 @@ export async function importarDosPaineis(masterUserId) {
   const importados = [];
 
   for (const cred of credenciais) {
-    const graus = ['1', '2']; // inspeciona ambos os graus
-
-    for (const grau of graus) {
+    // Usa o grau cadastrado na credencial — cada grau pode ter login diferente
+    const grau = cred.grau || '1';
+    {
       const url = URL_TRIBUNAL[cred.tribunal]?.[grau];
       if (!url) continue;
 

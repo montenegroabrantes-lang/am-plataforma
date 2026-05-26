@@ -119,6 +119,7 @@ CREATE TABLE credenciais_tribunal (
   id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   usuario_id    UUID NOT NULL REFERENCES usuarios(id),
   tribunal      TEXT NOT NULL,           -- 'TJPB' | 'TRF5' | etc.
+  grau          TEXT NOT NULL DEFAULT '1' CHECK (grau IN ('1','2')),
   sistema       TEXT NOT NULL CHECK (sistema IN ('pje','eproc')),
   cpf           TEXT NOT NULL,
   senha_enc     TEXT NOT NULL,           -- AES-256
@@ -126,7 +127,7 @@ CREATE TABLE credenciais_tribunal (
   sessao_cookie TEXT,                    -- cookie de sessão ativa
   sessao_expira TIMESTAMPTZ,
   ativo         BOOLEAN NOT NULL DEFAULT true,
-  UNIQUE (usuario_id, tribunal)
+  UNIQUE (usuario_id, tribunal, grau)
 );
 
 -- ─────────────────────────────────────────────

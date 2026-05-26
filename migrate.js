@@ -48,6 +48,24 @@ try {
     }
   }
 
+  // 3. Adiciona coluna grau em credenciais_tribunal se ainda não existir
+  await db.execute(`
+    ALTER TABLE credenciais_tribunal
+      ADD COLUMN IF NOT EXISTS grau TEXT NOT NULL DEFAULT '1'
+        CHECK (grau IN ('1','2'))
+  `).catch(() => {});
+
+  // Recria constraint única incluindo grau (DROP IF EXISTS + ADD)
+  await db.execute(`
+    ALTER TABLE credenciais_tribunal
+      DROP CONSTRAINT IF EXISTS credenciais_tribunal_usuario_id_tribunal_key
+  `).catch(() => {});
+  await db.execute(`
+    ALTER TABLE credenciais_tribunal
+      ADD CONSTRAINT IF NOT EXISTS credenciais_tribunal_usuario_id_tribunal_grau_key
+      UNIQUE (usuario_id, tribunal, grau)
+  `).catch(() => {});
+
   console.log('[migrate] ✅ Migração concluída');
 } catch (err) {
   console.error('[migrate] ❌ Erro (não fatal):', err.message);
