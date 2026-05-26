@@ -65,16 +65,15 @@ async function iniciar() {
     process.exit(1);
   }
 
-  try {
-    await conectarRedis();
-  } catch (err) {
-    console.error('[WARN] Redis indisponível — workers desativados:', err.message);
-  }
-
-  try {
-    await iniciarWorkers();
-  } catch (err) {
-    console.error('[WARN] Workers falharam — continuando sem eles:', err.message);
+  if (process.env.REDIS_URL) {
+    try {
+      await conectarRedis();
+      await iniciarWorkers();
+    } catch (err) {
+      console.error('[WARN] Redis/Workers falharam — continuando sem eles:', err.message);
+    }
+  } else {
+    console.log('[WARN] REDIS_URL não definida — workers desativados.');
   }
 
   app.listen(PORT, () => {
