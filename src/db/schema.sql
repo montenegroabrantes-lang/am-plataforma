@@ -149,8 +149,8 @@ CREATE TABLE processos (
   compartilhado         BOOLEAN NOT NULL DEFAULT false,
   visibilidade          TEXT NOT NULL DEFAULT 'normal'
                         CHECK (visibilidade IN ('normal','restrito')),
-  status          TEXT NOT NULL DEFAULT 'em_andamento'
-                  CHECK (status IN ('aprovado','aguardando_protocolo','protocolado','em_andamento','encerrado')),
+  status          TEXT NOT NULL DEFAULT 'ativo'
+                  CHECK (status IN ('ativo','suspenso','encerrado','arquivado')),
   tipo_execucao   TEXT,                  -- 'rpv' | 'precatorio' | NULL
   valor_causa     NUMERIC(14,2),
   valor_rpv       NUMERIC(14,2),

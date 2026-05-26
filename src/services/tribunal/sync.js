@@ -119,7 +119,7 @@ export async function sincronizarTodos() {
   const processos = await db.query(
     `SELECT id, numero, tribunal, sistema, grau
      FROM processos
-     WHERE status IN ('ativo', 'em_andamento')
+     WHERE status IN ('ativo', 'suspenso')
      ORDER BY atualizado_em ASC NULLS FIRST`
   );
 

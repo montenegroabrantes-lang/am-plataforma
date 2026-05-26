@@ -48,7 +48,21 @@ try {
     }
   }
 
-  // 3. Adiciona coluna grau em credenciais_tribunal se ainda não existir
+  // 3. Corrige constraint de status em processos (era aprovado/aguardando_protocolo, deve ser ativo/suspenso)
+  await db.execute(`
+    ALTER TABLE processos
+      DROP CONSTRAINT IF EXISTS processos_status_check
+  `).catch(() => {});
+  await db.execute(`
+    ALTER TABLE processos
+      ADD CONSTRAINT processos_status_check
+      CHECK (status IN ('ativo','suspenso','encerrado','arquivado'))
+  `).catch(() => {});
+  await db.execute(`
+    ALTER TABLE processos ALTER COLUMN status SET DEFAULT 'ativo'
+  `).catch(() => {});
+
+  // 4. Adiciona coluna grau em credenciais_tribunal se ainda não existir
   await db.execute(`
     ALTER TABLE credenciais_tribunal
       ADD COLUMN IF NOT EXISTS grau TEXT NOT NULL DEFAULT '1'
