@@ -1,5 +1,5 @@
-import { db }            from '../../db/index.js';
-import { lerCredencial }  from '../../routes/credenciais.js';
+import { db }              from '../../db/index.js';
+import { lerCredencial, descriptografarCredencial } from '../../routes/credenciais.js';
 import * as pje           from './pje.js';
 import * as eproc         from './eproc.js';
 
@@ -156,7 +156,8 @@ export async function importarDosPaineis(masterUserId) {
 
   const importados = [];
 
-  for (const cred of credenciais) {
+  for (const credRaw of credenciais) {
+    const cred = descriptografarCredencial(credRaw);
     // Usa o grau cadastrado na credencial — cada grau pode ter login diferente
     const grau = cred.grau || '1';
     {

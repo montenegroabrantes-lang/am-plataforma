@@ -53,16 +53,21 @@ credenciaisRouter.delete('/:id', apenasMaster, async (req, res) => {
   res.json({ ok: true });
 });
 
-// Exporta função auxiliar para serviços internos lerem credenciais descriptografadas
+// Descriptografa um row bruto do banco (usado internamente)
+export function descriptografarCredencial(cred) {
+  return {
+    ...cred,
+    senha:       decrypt(cred.senha_enc),
+    totp_secret: cred.totp_secret ? decrypt(cred.totp_secret) : null,
+  };
+}
+
+// Lê e descriptografa uma credencial por usuário + tribunal
 export async function lerCredencial(usuarioId, tribunal) {
   const cred = await db.queryOne(
     `SELECT * FROM credenciais_tribunal WHERE usuario_id = $1 AND tribunal = $2 AND ativo = true`,
     [usuarioId, tribunal]
   );
   if (!cred) return null;
-  return {
-    ...cred,
-    senha:      decrypt(cred.senha_enc),
-    totp_secret: cred.totp_secret ? decrypt(cred.totp_secret) : null,
-  };
+  return descriptografarCredencial(cred);
 }
