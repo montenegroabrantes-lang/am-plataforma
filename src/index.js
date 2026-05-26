@@ -3,7 +3,6 @@ import express            from 'express';
 import cors               from 'cors';
 import { db }             from './db/index.js';
 import { conectarRedis }  from './cache/redis.js';
-import { iniciarWorkers } from './workers/index.js';
 
 // Rotas
 import { authRouter }          from './routes/auth.js';
@@ -68,6 +67,7 @@ async function iniciar() {
   if (process.env.REDIS_URL) {
     try {
       await conectarRedis();
+      const { iniciarWorkers } = await import('./workers/index.js');
       await iniciarWorkers();
     } catch (err) {
       console.error('[WARN] Redis/Workers falharam — continuando sem eles:', err.message);
