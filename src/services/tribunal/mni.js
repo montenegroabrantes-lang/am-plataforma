@@ -1,11 +1,11 @@
 /**
  * MNI — Modelo Nacional de Interoperabilidade (SOAP 2.2.2)
- * Consulta processos diretamente via API sem Puppeteer.
- * Autenticação: HTTP Basic (CPF sem pontuação : senha).
+ * Autenticação: idConsultante + senhaConsultante NO BODY SOAP (não HTTP Basic).
  * Endpoint: <base_pje>/intercomunicacao
  */
 import axios from 'axios';
 
+// Namespace do serviço MNI no PJe CNJ
 const NS = 'http://www.cnj.jus.br/intercomunicacao-2.2.2';
 
 // ─────────────────────────────────────────────
@@ -15,7 +15,7 @@ const NS = 'http://www.cnj.jus.br/intercomunicacao-2.2.2';
 function envelope(body) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/"
-                  xmlns:mni="${NS}">
+                  xmlns:ser="${NS}">
   <soapenv:Header/>
   <soapenv:Body>${body}</soapenv:Body>
 </soapenv:Envelope>`;
@@ -57,26 +57,27 @@ function endpointDe(loginUrl) {
 // ─────────────────────────────────────────────
 export async function consultarProcesso(loginUrl, cpf, senha, numero, opts = {}) {
   const endpoint = endpointDe(loginUrl);
-  const { movimentos = true, incluirDocumentos = false, todosMovimentos = true } = opts;
+  const { movimentos = true, incluirDocumentos = false } = opts;
+  const cpfLimpo = cpf.replace(/\D/g, '');
 
+  // Credenciais vão dentro do body SOAP (padrão MNI — não usa HTTP Basic Auth)
   const body = `
-    <mni:consultarProcesso>
+    <ser:consultarProcesso>
+      <idConsultante>${cpfLimpo}</idConsultante>
+      <senhaConsultante>${senha}</senhaConsultante>
       <numeroProcesso>${numero}</numeroProcesso>
-      <dataReferencia></dataReferencia>
       <movimentos>${movimentos}</movimentos>
       <incluirCabecalho>true</incluirCabecalho>
       <incluirDocumentos>${incluirDocumentos}</incluirDocumentos>
-      <todosMovimentos>${todosMovimentos}</todosMovimentos>
-    </mni:consultarProcesso>`;
+    </ser:consultarProcesso>`;
 
-  console.log(`[MNI] consultarProcesso ${numero}`);
+  console.log(`[MNI] consultarProcesso ${numero} → ${endpoint}`);
 
   const resp = await axios.post(endpoint, envelope(body), {
     headers: {
       'Content-Type': 'text/xml; charset=utf-8',
-      'SOAPAction': `"${NS}/consultarProcesso"`,
+      'SOAPAction': '',
     },
-    auth: { username: cpf.replace(/\D/g, ''), password: senha },
     timeout: 30_000,
     validateStatus: null,
   });
@@ -155,15 +156,13 @@ function parsearProcesso(xml) {
 // ─────────────────────────────────────────────
 //  VERIFICAR DISPONIBILIDADE DO ENDPOINT
 // ─────────────────────────────────────────────
-export async function verificarEndpoint(loginUrl, cpf, senha) {
+export async function verificarEndpoint(loginUrl) {
   const endpoint = endpointDe(loginUrl);
   try {
     const resp = await axios.get(`${endpoint}?wsdl`, {
-      auth: { username: cpf.replace(/\D/g, ''), password: senha },
       timeout: 10_000,
       validateStatus: null,
     });
-    // 200 = WSDL disponível; 403 sem auth mas endpoint existe
     return resp.status < 500;
   } catch {
     return false;
