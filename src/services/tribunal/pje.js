@@ -111,17 +111,41 @@ async function login(url, cpf, senha, totpSecret) {
     const precisaOtp = /autenticação|código|aplicativo/i.test(textoOtp);
 
     if (precisaOtp && totpSecret) {
-      console.log('[PJe] Tela de OTP detectada — inserindo código TOTP...');
-      const codigo = authenticator.generate(totpSecret.replace(/\s/g, ''));
-      const otpInput = await page.$('input[type="text"], input[id*="otp"], input[name*="otp"]');
-      if (otpInput) {
-        await page.evaluate(el => { el.focus(); el.value = ''; }, otpInput);
-        await page.keyboard.type(codigo);
+      const secret = totpSecret.replace(/\s/g, '');
+
+      // Aguarda nova janela TOTP se restar menos de 5 segundos na atual
+      // (evita código expirado antes do submit)
+      const remaining = authenticator.timeRemaining();
+      if (remaining < 5) {
+        console.log(`[PJe] TOTP: aguardando nova janela (${remaining}s restantes)...`);
+        await new Promise(r => setTimeout(r, (remaining + 1) * 1000));
       }
-      const btnOtp = await page.$('[type="submit"]');
-      if (btnOtp) await btnOtp.click();
-      await page.waitForNetworkIdle({ timeout: 20_000 }).catch(() => {});
-      await screenshot(page, 'pos-otp');
+
+      for (let tentativa = 1; tentativa <= 2; tentativa++) {
+        const codigo = authenticator.generate(secret);
+        console.log(`[PJe] Tela de OTP — tentativa ${tentativa}, código gerado (${authenticator.timeRemaining()}s restantes)`);
+
+        const otpInput = await page.$('input[type="text"], input[id*="otp"], input[name*="otp"]');
+        if (otpInput) {
+          await page.evaluate(el => { el.focus(); el.value = ''; }, otpInput);
+          await page.keyboard.type(codigo);
+        }
+        const btnOtp = await page.$('[type="submit"]');
+        if (btnOtp) await btnOtp.click();
+        await page.waitForNetworkIdle({ timeout: 20_000 }).catch(() => {});
+        await screenshot(page, `pos-otp-t${tentativa}`);
+
+        // Verifica se ainda está na tela de OTP (código rejeitado)
+        const aindaOtp = await page.evaluate(() => /autenticação|código|aplicativo/i.test(document.body?.innerText || '')).catch(() => false);
+        if (!aindaOtp) break;
+
+        if (tentativa < 2) {
+          // Aguarda próxima janela TOTP completa antes de tentar de novo
+          console.log('[PJe] Código OTP rejeitado — aguardando próxima janela TOTP...');
+          const rem = authenticator.timeRemaining();
+          await new Promise(r => setTimeout(r, (rem + 1) * 1000));
+        }
+      }
     } else if (precisaOtp && !totpSecret) {
       throw new Error('PJe exige código 2FA mas nenhum totp_secret foi fornecido. Configure a credencial com o TOTP secret do PJe.');
     }
@@ -183,38 +207,96 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret, oab = null)
         await coletarCNJsDOM();
         console.log(`[PJe] ${label} pág. ${pagina}: ${numerosEncontrados.size} CNJs acumulados`);
 
-        // Diagnóstico na primeira página: mostra elementos de paginação disponíveis
-        if (pagina === 1) {
-          const elsPag = await page.evaluate(() =>
-            Array.from(document.querySelectorAll('a, input[type="submit"], button'))
-              .filter(el => {
-                const t = (el.textContent || el.title || el.value || el.id || '').toLowerCase();
-                return t.includes('próx') || t.includes('prox') || t.includes('next') ||
-                       t.includes('>') || el.className?.includes('next') || el.className?.includes('scr');
-              })
-              .map(el => `${el.tagName}#${el.id} class="${el.className}" title="${el.title}" text="${(el.textContent||'').trim().slice(0,30)}"`)
-          ).catch(() => []);
-          console.log('[PJe] Elementos paginação:', elsPag.join(' | ') || 'NENHUM');
+        // Diagnóstico de paginação em todas as páginas para ajudar depuração
+        const diagPag = await page.evaluate(() => {
+          // Todos os elementos com texto/id/class relacionado a navegação de páginas
+          const candidatos = Array.from(document.querySelectorAll('a, input[type="submit"], button, span'))
+            .filter(el => {
+              const t = (el.textContent || el.title || el.value || el.id || el.className || '').toLowerCase();
+              return t.includes('próx') || t.includes('prox') || t.includes('next') ||
+                     t.includes('scroller') || t.includes('scr') || t.includes('pager') ||
+                     t.includes('pagina') || t.includes('page') ||
+                     /^\s*[>»]\s*$/.test(el.textContent || '');
+            })
+            .map(el => ({
+              tag: el.tagName,
+              id: el.id || '',
+              cls: (el.className || '').slice(0, 60),
+              title: el.title || '',
+              text: (el.textContent || el.value || '').trim().slice(0, 20),
+              onclick: (el.getAttribute('onclick') || '').slice(0, 60),
+              href: (el.getAttribute('href') || '').slice(0, 60),
+            }));
+
+          // Total de registros (para calcular páginas esperadas)
+          const totalText = Array.from(document.querySelectorAll('span, td, div'))
+            .find(el => /\d+\s*(registro|result|processo)/i.test(el.textContent))?.textContent?.trim().slice(0,60) || '';
+
+          return { candidatos, totalText };
+        }).catch(() => ({ candidatos: [], totalText: '' }));
+
+        if (diagPag.totalText) console.log(`[PJe] ${label} total: ${diagPag.totalText}`);
+        if (diagPag.candidatos.length) {
+          console.log(`[PJe] ${label} controles paginação:`,
+            diagPag.candidatos.map(c => `${c.tag}#${c.id} cls="${c.cls}" title="${c.title}" text="${c.text}"`).join(' || '));
+        } else {
+          console.log(`[PJe] ${label} pág. ${pagina}: nenhum controle de paginação detectado`);
         }
 
-        const proxPag = await page.$(
-          // RichFaces scroller — padrão PJe
-          'a[id*="scroller"][id*="next"], ' +
-          'a[id*="scroller"][id*="Next"], ' +
-          '.rich-datascr-button-next:not(.rich-datascr-button-next-dis), ' +
-          // Títulos e textos comuns
-          'a[title*="Próxima"], a[title*="próxima"], a[title*="next"], ' +
-          'a[title*="Next"], a[title*="Avançar"], ' +
-          // IDs contendo proxima/next
-          'a[id*="proxima"]:not([class*="dis"]), ' +
-          'a[id*="Proxima"]:not([class*="dis"]), ' +
-          'a[id*="next"]:not([class*="dis"])'
-        );
-        if (!proxPag) break;
+        // Tenta encontrar botão "próxima página" — ordem de prioridade
+        const SELETORES_NEXT = [
+          // RichFaces scroller padrão PJe
+          'a[id*="scroller"][id*="next"]',
+          'a[id*="scroller"][id*="Next"]',
+          'a[id*="Scroller"][id*="next"]',
+          'a[id*="Scroller"][id*="Next"]',
+          // Classe RichFaces
+          '.rich-datascr-button-next:not(.rich-datascr-button-next-dis)',
+          // Títulos
+          'a[title*="Próxima"], a[title*="próxima"]',
+          'a[title*="next"], a[title*="Next"]',
+          'a[title*="Avançar"]',
+          // IDs genéricos
+          'a[id*="proxima"]:not([class*="dis"])',
+          'a[id*="Proxima"]:not([class*="dis"])',
+          'a[id*="next"]:not([class*="dis"])',
+          // Texto ">" ou "»"
+          'a[href*="next"], a[href*="proxima"]',
+        ];
+
+        let proxPag = null;
+        for (const sel of SELETORES_NEXT) {
+          proxPag = await page.$(sel).catch(() => null);
+          if (proxPag) { console.log(`[PJe] ${label} botão próxima via: ${sel}`); break; }
+        }
+
+        // Fallback: clica via JavaScript no primeiro elemento que pareça "próxima página"
+        if (!proxPag) {
+          const clicou = await page.evaluate(() => {
+            const el = Array.from(document.querySelectorAll('a, button, input'))
+              .find(e => {
+                const text = (e.textContent || e.value || e.title || '').trim();
+                const id = (e.id || '').toLowerCase();
+                const cls = (e.className || '').toLowerCase();
+                return (text === '>' || text === '»' || text === 'Próxima' ||
+                        id.includes('next') || id.includes('proxima') ||
+                        cls.includes('next') || cls.includes('scroller')) &&
+                       !cls.includes('-dis') && !e.disabled;
+              });
+            if (el) { el.click(); return true; }
+            return false;
+          }).catch(() => false);
+
+          if (!clicou) break;
+          console.log(`[PJe] ${label} clique JS na próxima página`);
+          await aguardarAJAX(6000);
+          pagina++;
+          continue;
+        }
 
         const desabilitado = await proxPag.evaluate(
           el => el.disabled || el.getAttribute('aria-disabled') === 'true' ||
-                el.className?.includes('dis') || el.className?.includes('inativo')
+                el.className?.includes('-dis') || el.className?.includes('inativo')
         ).catch(() => true);
         if (desabilitado) break;
 
