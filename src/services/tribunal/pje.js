@@ -150,9 +150,9 @@ async function login(url, cpf, senha, totpSecret) {
 }
 
 // ─────────────────────────────────────────────
-//  INSPECIONAR PAINEL — coletando todos os CNJs
-//  Algoritmo validado em produção (TJPB 2026-05):
-//  Grupo → Fórum → cxExItem → XML AJAX com CNJs
+//  INSPECIONAR — busca TODOS os processos do advogado
+//  Estratégia: Consulta de Processos (lista completa) com paginação
+//  Fallback: painel de expedientes (processos com ação pendente)
 // ─────────────────────────────────────────────
 export async function inspecionarPainel(url, cpf, senha, totpSecret) {
   let browser;
@@ -163,8 +163,8 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret) {
     const numerosEncontrados = new Set();
     const CNJ_RE = /\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}/g;
     const PLACEHOLDER = '9999999-99.9999.9.99.9999';
+    const base = new URL(url).origin + '/pje';
 
-    // Varre o DOM da página inteira e coleta todos os CNJs visíveis
     async function coletarCNJsDOM() {
       const texto = await page.evaluate(() => document.body.innerText || '').catch(() => '');
       for (const m of texto.matchAll(CNJ_RE)) {
@@ -172,22 +172,74 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret) {
       }
     }
 
-    // Aguarda o painel carregar completamente
-    await page.waitForNetworkIdle({ timeout: 15_000, idleTime: 500 }).catch(() => {});
-    await coletarCNJsDOM(); // captura processos já visíveis na tela inicial
-
     async function aguardarAJAX(ms = 5000) {
       await page.waitForNetworkIdle({ timeout: ms, idleTime: 400 }).catch(() => {});
       await new Promise(r => setTimeout(r, 800));
     }
 
-    // Processa todos os grupos do painel de expedientes (índices 0-6)
+    // ── FASE 1: Consulta de Processos do Advogado (todos, com paginação) ──
+    // Tenta a URL de consulta de processos — lista TODOS independente de expediente
+    const urlConsulta = `${base}/Processo/ConsultaProcesso/listView.seam`;
+    console.log(`[PJe] Acessando consulta de processos: ${urlConsulta}`);
+    await page.goto(urlConsulta, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await aguardarAJAX(8000);
+    await screenshot(page, 'consulta-processos');
+
+    // Clica em Pesquisar sem filtros para listar todos os processos do advogado
+    const btnPesquisar = await page.$(
+      'input[id*="btnPesquisar"], input[value*="Pesquisar"], input[value*="Buscar"], ' +
+      'button[id*="btnPesquisar"], a[id*="btnPesquisar"]'
+    );
+
+    if (btnPesquisar) {
+      console.log('[PJe] Clicando em Pesquisar — buscando todos os processos...');
+      await btnPesquisar.click();
+      await aguardarAJAX(10000);
+      await screenshot(page, 'resultado-consulta');
+
+      // Pagina por todos os resultados
+      let pagina = 1;
+      while (pagina <= 200) {
+        await coletarCNJsDOM();
+        console.log(`[PJe] Consulta pág. ${pagina}: ${numerosEncontrados.size} CNJs acumulados`);
+
+        // Botão de próxima página
+        const proxPag = await page.$(
+          'a[id*="proxima"]:not([class*="dis"]), ' +
+          'a[title*="Próxima"]:not([class*="dis"]), ' +
+          '.rich-datascr-button-next:not(.rich-datascr-button-next-dis), ' +
+          'a[title="next page"]'
+        );
+        if (!proxPag) break;
+
+        const desabilitado = await proxPag.evaluate(
+          el => el.disabled || el.getAttribute('aria-disabled') === 'true' ||
+                el.className?.includes('dis') || el.className?.includes('inativo')
+        ).catch(() => true);
+        if (desabilitado) break;
+
+        await proxPag.click();
+        await aguardarAJAX(6000);
+        pagina++;
+      }
+
+      console.log(`[PJe] Consulta concluída: ${numerosEncontrados.size} processos encontrados`);
+    } else {
+      console.warn('[PJe] Botão Pesquisar não encontrado na consulta — usando painel de expedientes como fallback');
+    }
+
+    // ── FASE 2 (fallback/complemento): Painel de expedientes ──
+    // Captura processos com ação pendente que possam não ter aparecido na consulta
+    const urlPainel = `${base}/Painel/painel_usuario/advogado.seam`;
+    await page.goto(urlPainel, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await aguardarAJAX(8000);
+    await coletarCNJsDOM();
+
     for (let grupoIdx = 0; grupoIdx <= 6; grupoIdx++) {
       const btnId = `formAbaExpediente:listaAgrSitExp:${grupoIdx}:j_id162`;
       const btnEl = await page.$(`[id="${btnId}"]`);
       if (!btnEl) continue;
 
-      // Verifica se o grupo está fechado e abre
       const titulo = await page.$eval(`[id="${btnId}"]`, el => el.title || '').catch(() => '');
       if (!titulo.includes('fechar')) {
         await page.click(`[id="${btnId}"]`);
@@ -195,49 +247,38 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret) {
         await coletarCNJsDOM();
       }
 
-      // Encontra os fóruns dentro deste grupo
       const forumSel = `[id*="listaAgrSitExp:${grupoIdx}:trPend:"][id$="::jNp"]`;
       const forumsEls = await page.$$(forumSel);
       if (forumsEls.length === 0) continue;
 
       const forumIds = await Promise.all(forumsEls.map(el => el.evaluate(e => e.id)));
       const forumNums = forumIds.map(id => id.match(/:trPend:(\d+)::/)?.[1]).filter(Boolean);
-
-      console.log(`[PJe] Grupo ${grupoIdx}: ${forumNums.length} fórum(ns)`);
+      console.log(`[PJe] Painel Grupo ${grupoIdx}: ${forumNums.length} fórum(ns)`);
 
       for (const forumNum of forumNums) {
-        // Expande o fórum (se ainda fechado)
         const handleId   = `formAbaExpediente:listaAgrSitExp:${grupoIdx}:trPend:${forumNum}::j_id166:handle`;
         const expandedId = `formAbaExpediente:listaAgrSitExp:${grupoIdx}:trPend:${forumNum}::j_id166NodeExpanded`;
         const expandedVal = await page.$eval(`[id="${expandedId}"]`, el => el.value).catch(() => 'false');
-
         if (expandedVal !== 'true') {
           const handleEl = await page.$(`[id="${handleId}"]`);
-          if (handleEl) {
-            await page.click(`[id="${handleId}"]`);
-            await aguardarAJAX(5000);
-            await coletarCNJsDOM();
-          }
+          if (handleEl) { await page.click(`[id="${handleId}"]`); await aguardarAJAX(5000); }
         }
 
-        // Clica em cada cxExItem (caixa de entrada / tipo de expediente) do fórum
         const cxSel = `[id*="listaAgrSitExp:${grupoIdx}:trPend:${forumNum}:"][id$="::j_id170:cxExItem"]`;
         const cxEls = await page.$$(cxSel);
-
         for (const cxEl of cxEls) {
           const cxId = await cxEl.evaluate(e => e.id);
           await page.click(`[id="${cxId}"]`).catch(() => {});
           await aguardarAJAX(5000);
-          await coletarCNJsDOM(); // coleta CNJs da lista que apareceu após o clique
+          await coletarCNJsDOM();
         }
       }
     }
 
-    // Varredura final da página completa
     await coletarCNJsDOM();
 
     const numeros = [...numerosEncontrados];
-    console.log(`[PJe] Total de processos encontrados no painel: ${numeros.length}`);
+    console.log(`[PJe] Total de processos encontrados: ${numeros.length}`);
     return numeros;
 
   } finally {
