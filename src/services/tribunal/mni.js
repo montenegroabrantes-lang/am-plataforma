@@ -73,11 +73,13 @@ export async function consultarProcesso(loginUrl, cpf, senha, numero, opts = {})
 
   console.log(`[MNI] consultarProcesso ${numero} → ${endpoint}`);
 
+  // TJPB exige HTTP Basic Auth além das credenciais no body SOAP
   const resp = await axios.post(endpoint, envelope(body), {
     headers: {
       'Content-Type': 'text/xml; charset=utf-8',
       'SOAPAction': '',
     },
+    auth: { username: cpfLimpo, password: senha },
     timeout: 30_000,
     validateStatus: null,
   });

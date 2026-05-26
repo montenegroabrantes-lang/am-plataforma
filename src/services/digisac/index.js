@@ -3,11 +3,12 @@ import { db } from '../../db/index.js';
 import { decrypt } from '../../utils/crypto.js';
 
 function client() {
-  const token = process.env.DIGISAC_TOKEN;
-  if (!token || token === 'configurar_no_railway') return null;
+  const token  = process.env.DIGISAC_TOKEN;
+  const apiUrl = process.env.DIGISAC_API_URL;
+  if (!token || !apiUrl || token === 'configurar_no_railway') return null;
 
   return axios.create({
-    baseURL: `${process.env.DIGISAC_API_URL}/v1`,
+    baseURL: apiUrl,
     headers: { Authorization: `Bearer ${token}` },
     timeout: 15_000,
   });
