@@ -209,21 +209,49 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret, oab = null)
       const numeroOab = oab.replace(/\D/g, '');       // só dígitos
       const estadoOab = oab.replace(/\d/g, '').trim() || 'PB';  // letras = estado
 
-      const urlConsultaOab = `${base}/ConsultaProcesso/listView.seam`;
-      console.log(`[PJe] Consulta por OAB ${numeroOab}/${estadoOab}: ${urlConsultaOab}`);
+      // Tenta navegar pelo menu (como o usuário faz no browser) — mais confiável que URL direta
+      // Parte do painel e busca link de "Consulta Processual" no menu de navegação
+      const urlPainelNav = `${base}/Painel/painel_usuario/advogado.seam`;
+      await page.goto(urlPainelNav, { waitUntil: 'domcontentloaded' }).catch(() => {});
+      await aguardarAJAX(5000);
 
-      await page.goto(urlConsultaOab, { waitUntil: 'domcontentloaded' }).catch(() => {});
-      await aguardarAJAX(8000);
+      // Coleta todos os links da navegação para encontrar "Consulta Processual"
+      const linksNav = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('a[href]'))
+          .map(a => ({ href: a.href, text: (a.textContent || a.title || '').trim() }))
+          .filter(l => l.text.length > 1 && !l.href.includes('javascript:void'))
+      ).catch(() => []);
+      console.log('[PJe] Links de navegação:', linksNav.slice(0, 30).map(l => `"${l.text}" → ${l.href}`).join(' | '));
+
+      // Procura link de consulta processual no menu
+      const linkConsulta = linksNav.find(l =>
+        /consulta/i.test(l.text) && /process/i.test(l.text)
+      ) || linksNav.find(l => /consulta\s*processual/i.test(l.text))
+        || linksNav.find(l => /consulta/i.test(l.text) && l.href.includes('Consulta'));
+
+      if (linkConsulta) {
+        console.log(`[PJe] Navegando para consulta via menu: ${linkConsulta.href}`);
+        await page.goto(linkConsulta.href, { waitUntil: 'domcontentloaded' }).catch(() => {});
+        await aguardarAJAX(8000);
+      } else {
+        // Fallback: URL direta com caminhos alternativos conhecidos no PJe
+        const urlsConsulta = [
+          `${base}/ConsultaProcesso/listView.seam`,
+          `${base}/Processo/ConsultaProcesso/listView.seam`,
+          `${base}/consulta/processo/listView.seam`,
+          `${base}/ConsultaPublica/listView.seam`,
+        ];
+        for (const u of urlsConsulta) {
+          await page.goto(u, { waitUntil: 'domcontentloaded' }).catch(() => {});
+          await aguardarAJAX(6000);
+          const temForm = await page.$('input:not([type="hidden"]), select').catch(() => null);
+          if (temForm) { console.log(`[PJe] Consulta encontrada em: ${u}`); break; }
+        }
+      }
+
+      const urlConsultaOab = page.url();
+      console.log(`[PJe] Página de consulta: ${urlConsultaOab}`);
       await screenshot(page, 'consulta-oab');
-
-      // Diagnóstico: lista todos os inputs/selects/buttons da página para debug
-      const elementosPagina = await page.evaluate(() => {
-        const inputs = Array.from(document.querySelectorAll('input, select, button, a[id]'))
-          .map(el => `${el.tagName}#${el.id || '-'} name=${el.name || '-'} type=${el.type || '-'} placeholder="${el.placeholder || ''}" value="${el.value || ''}"`)
-          .slice(0, 40);
-        return inputs;
-      }).catch(() => []);
-      console.log('[PJe] Elementos na página de consulta:', elementosPagina.join(' | '));
 
       // Seletores amplos para o campo OAB — cobre diferentes versões do PJe
       const campoOab = await page.$(
