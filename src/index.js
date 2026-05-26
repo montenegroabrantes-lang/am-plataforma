@@ -68,15 +68,13 @@ async function iniciar() {
   try {
     await conectarRedis();
   } catch (err) {
-    console.error('[FATAL] Redis falhou:', err.stack || err);
-    process.exit(1);
+    console.error('[WARN] Redis indisponível — workers desativados:', err.message);
   }
 
   try {
     await iniciarWorkers();
   } catch (err) {
-    console.error('[FATAL] Workers falharam:', err.stack || err);
-    process.exit(1);
+    console.error('[WARN] Workers falharam — continuando sem eles:', err.message);
   }
 
   app.listen(PORT, () => {
