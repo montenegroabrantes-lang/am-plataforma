@@ -163,27 +163,18 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret) {
     const numerosEncontrados = new Set();
     const CNJ_RE = /\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}/g;
     const PLACEHOLDER = '9999999-99.9999.9.99.9999';
-    const hostname = new URL(url).hostname;
 
-    // Captura CNJs de todas as respostas XML/HTML via CDP (mais confiável que response.text() async)
-    const cdpSession = await page.createCDPSession();
-    await cdpSession.send('Network.enable');
-    cdpSession.on('Network.responseReceived', async (event) => {
-      try {
-        const ct = event.response?.mimeType || '';
-        if (!event.response?.url?.includes(hostname)) return;
-        if (!ct.includes('xml') && !ct.includes('html') && !ct.includes('json')) return;
-        const { body } = await cdpSession.send('Network.getResponseBody', {
-          requestId: event.requestId,
-        }).catch(() => ({ body: '' }));
-        for (const m of (body || '').matchAll(CNJ_RE)) {
-          if (m[0] !== PLACEHOLDER) numerosEncontrados.add(m[0]);
-        }
-      } catch { /* ignora falhas de corpo individual */ }
-    });
+    // Varre o DOM da página inteira e coleta todos os CNJs visíveis
+    async function coletarCNJsDOM() {
+      const texto = await page.evaluate(() => document.body.innerText || '').catch(() => '');
+      for (const m of texto.matchAll(CNJ_RE)) {
+        if (m[0] !== PLACEHOLDER) numerosEncontrados.add(m[0]);
+      }
+    }
 
-    // Aguarda o painel carregar completamente (inclui AJAX inicial do painel)
+    // Aguarda o painel carregar completamente
     await page.waitForNetworkIdle({ timeout: 15_000, idleTime: 500 }).catch(() => {});
+    await coletarCNJsDOM(); // captura processos já visíveis na tela inicial
 
     async function aguardarAJAX(ms = 5000) {
       await page.waitForNetworkIdle({ timeout: ms, idleTime: 400 }).catch(() => {});
@@ -196,11 +187,12 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret) {
       const btnEl = await page.$(`[id="${btnId}"]`);
       if (!btnEl) continue;
 
-      // Verifica se o grupo está fechado (title "abrir") e abre
+      // Verifica se o grupo está fechado e abre
       const titulo = await page.$eval(`[id="${btnId}"]`, el => el.title || '').catch(() => '');
       if (!titulo.includes('fechar')) {
         await page.click(`[id="${btnId}"]`);
         await aguardarAJAX(6000);
+        await coletarCNJsDOM();
       }
 
       // Encontra os fóruns dentro deste grupo
@@ -224,6 +216,7 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret) {
           if (handleEl) {
             await page.click(`[id="${handleId}"]`);
             await aguardarAJAX(5000);
+            await coletarCNJsDOM();
           }
         }
 
@@ -235,10 +228,13 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret) {
           const cxId = await cxEl.evaluate(e => e.id);
           await page.click(`[id="${cxId}"]`).catch(() => {});
           await aguardarAJAX(5000);
-          // CNJs capturados automaticamente pelo interceptor acima
+          await coletarCNJsDOM(); // coleta CNJs da lista que apareceu após o clique
         }
       }
     }
+
+    // Varredura final da página completa
+    await coletarCNJsDOM();
 
     const numeros = [...numerosEncontrados];
     console.log(`[PJe] Total de processos encontrados no painel: ${numeros.length}`);
