@@ -359,9 +359,10 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret, oab = null)
           }
         }
 
-        // Botão Pesquisar — seletores amplos
+        // Botão Pesquisar — seletores amplos (inclui fPP:searchProcessos do TJPB)
         const btnPesquisar = await page.$(
           'input[id*="btnPesquisar"], input[id*="pesquisar"], ' +
+          'input[id*="search"], button[id*="search"], a[id*="search"], ' +
           'input[value="Pesquisar"], input[value="Buscar"], ' +
           'button[id*="pesquisar"], button[id*="Pesquisar"], ' +
           'a[id*="pesquisar"], a[id*="Pesquisar"]'
