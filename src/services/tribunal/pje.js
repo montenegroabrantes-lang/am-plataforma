@@ -207,40 +207,48 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret, oab = null)
         await coletarCNJsDOM();
         console.log(`[PJe] ${label} pág. ${pagina}: ${numerosEncontrados.size} CNJs acumulados`);
 
-        // Diagnóstico de paginação em todas as páginas para ajudar depuração
+        // Diagnóstico de paginação
         const diagPag = await page.evaluate(() => {
-          // Todos os elementos com texto/id/class relacionado a navegação de páginas
-          const candidatos = Array.from(document.querySelectorAll('a, input[type="submit"], button, span'))
+          // Elementos candidatos a controle de paginação
+          const candidatos = Array.from(document.querySelectorAll('a, input[type="submit"], button, td, span'))
             .filter(el => {
               const t = (el.textContent || el.title || el.value || el.id || el.className || '').toLowerCase();
+              const onclick = (el.getAttribute('onclick') || '').toLowerCase();
               return t.includes('próx') || t.includes('prox') || t.includes('next') ||
-                     t.includes('scroller') || t.includes('scr') || t.includes('pager') ||
-                     t.includes('pagina') || t.includes('page') ||
+                     t.includes('scr') || t.includes('pager') || t.includes('pagina') ||
+                     onclick.includes('scr') || onclick.includes('page') ||
                      /^\s*[>»]\s*$/.test(el.textContent || '');
             })
             .map(el => ({
               tag: el.tagName,
               id: el.id || '',
-              cls: (el.className || '').slice(0, 60),
+              cls: (el.className || '').slice(0, 80),
               title: el.title || '',
-              text: (el.textContent || el.value || '').trim().slice(0, 20),
-              onclick: (el.getAttribute('onclick') || '').slice(0, 60),
-              href: (el.getAttribute('href') || '').slice(0, 60),
+              text: (el.textContent || el.value || '').trim().slice(0, 30),
+              onclick: (el.getAttribute('onclick') || '').slice(0, 80),
             }));
 
-          // Total de registros (para calcular páginas esperadas)
+          // HTML bruto das tabelas de paginação RichFaces
+          const scraHtml = Array.from(document.querySelectorAll(
+            '.rich-datascr, table[id*="scr"], table[class*="scr"], ' +
+            '[class*="datascr"], [id*="scroller"], [class*="pager"]'
+          )).map(el => el.outerHTML.slice(0, 500)).join('\n---\n');
+
+          // Total de registros
           const totalText = Array.from(document.querySelectorAll('span, td, div'))
-            .find(el => /\d+\s*(registro|result|processo)/i.test(el.textContent))?.textContent?.trim().slice(0,60) || '';
+            .find(el => /\d+\s*(registro|result|processo|total)/i.test(el.textContent?.trim() || ''))
+            ?.textContent?.trim().slice(0, 80) || '';
 
-          return { candidatos, totalText };
-        }).catch(() => ({ candidatos: [], totalText: '' }));
+          return { candidatos, scraHtml, totalText };
+        }).catch(() => ({ candidatos: [], scraHtml: '', totalText: '' }));
 
-        if (diagPag.totalText) console.log(`[PJe] ${label} total: ${diagPag.totalText}`);
+        if (diagPag.totalText) console.log(`[PJe] ${label} total encontrado: "${diagPag.totalText}"`);
+        if (diagPag.scraHtml)  console.log(`[PJe] ${label} HTML paginação:\n${diagPag.scraHtml}`);
         if (diagPag.candidatos.length) {
-          console.log(`[PJe] ${label} controles paginação:`,
-            diagPag.candidatos.map(c => `${c.tag}#${c.id} cls="${c.cls}" title="${c.title}" text="${c.text}"`).join(' || '));
+          console.log(`[PJe] ${label} controles candidatos:`,
+            diagPag.candidatos.map(c => `${c.tag}#${c.id} cls="${c.cls}" text="${c.text}" onclick="${c.onclick}"`).join('\n  '));
         } else {
-          console.log(`[PJe] ${label} pág. ${pagina}: nenhum controle de paginação detectado`);
+          console.log(`[PJe] ${label} pág.${pagina}: zero controles de paginação na página`);
         }
 
         // Tenta encontrar botão "próxima página" — ordem de prioridade
