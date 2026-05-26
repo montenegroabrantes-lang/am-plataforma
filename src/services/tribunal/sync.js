@@ -192,6 +192,7 @@ export async function importarDosPaineis(masterUserId) {
 
       } catch (err) {
         console.error(`[Painel] ${cred.tribunal} ${grau}G falhou:`, err.message);
+        console.error(`[Painel] Stack:`, err.stack);
       }
     }
   }

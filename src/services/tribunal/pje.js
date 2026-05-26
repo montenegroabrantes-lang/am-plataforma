@@ -123,17 +123,25 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret) {
     const page = (await browser.pages()).pop();
 
     const numerosEncontrados = new Set();
-
-    // Intercepta TODAS as respostas XML do painel (AJAX RichFaces retorna text/xml com CNJs)
+    const CNJ_RE = /\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}/g;
     const PLACEHOLDER = '9999999-99.9999.9.99.9999';
-    page.on('response', async (response) => {
-      const ct = response.headers()['content-type'] || '';
-      if (response.url().includes(new URL(url).hostname) && (ct.includes('xml') || ct.includes('html'))) {
-        const body = await response.text().catch(() => '');
-        for (const m of body.matchAll(/\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}/g)) {
+    const hostname = new URL(url).hostname;
+
+    // Captura CNJs de todas as respostas XML/HTML via CDP (mais confiável que response.text() async)
+    const cdpSession = await page.createCDPSession();
+    await cdpSession.send('Network.enable');
+    cdpSession.on('Network.responseReceived', async (event) => {
+      try {
+        const ct = event.response?.mimeType || '';
+        if (!event.response?.url?.includes(hostname)) return;
+        if (!ct.includes('xml') && !ct.includes('html') && !ct.includes('json')) return;
+        const { body } = await cdpSession.send('Network.getResponseBody', {
+          requestId: event.requestId,
+        }).catch(() => ({ body: '' }));
+        for (const m of (body || '').matchAll(CNJ_RE)) {
           if (m[0] !== PLACEHOLDER) numerosEncontrados.add(m[0]);
         }
-      }
+      } catch { /* ignora falhas de corpo individual */ }
     });
 
     // Aguarda o painel carregar completamente (inclui AJAX inicial do painel)
