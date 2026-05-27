@@ -64,8 +64,11 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
 
   let novasMovs = 0;
   const idsNovas = [];
+  const CNJ_PURO = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
   for (const mov of movimentacoesBrutas) {
-    if (!mov.texto) continue;
+    if (!mov.texto || mov.texto.length < 10) continue;
+    if (CNJ_PURO.test(mov.texto.trim())) continue;
+    if (/^[\d\s\-\/\.\:,;()]+$/.test(mov.texto)) continue;
     const data = parsearData(mov.data) || new Date();
     try {
       const [inserida] = await db.query(

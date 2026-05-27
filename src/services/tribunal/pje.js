@@ -614,7 +614,11 @@ async function extrairMovimentacoes(page) {
       rows => rows.slice(1).map(tr => {
         const cols = Array.from(tr.querySelectorAll('td'));
         const texto = cols[2]?.innerText?.trim() || cols[1]?.innerText?.trim() || '';
-        if (!texto) return null;
+        if (!texto || texto.length < 10) return null;
+        // Descarta movimentações que são apenas número de processo CNJ
+        if (/^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/.test(texto)) return null;
+        // Descarta textos compostos apenas de números, datas e símbolos
+        if (/^[\d\s\-\/\.\:,;()]+$/.test(texto)) return null;
         return {
           data:  cols[0]?.innerText?.trim() || '',
           tipo:  cols[1]?.innerText?.trim() || '',
