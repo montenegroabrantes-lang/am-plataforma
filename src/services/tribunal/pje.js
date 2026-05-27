@@ -683,6 +683,17 @@ async function extrairDados(page) {
                          txt('.polo-passivo .parte-nome') ||
                          txt('[class*="passivo"] .nome');
 
+    // Polo ativo
+    const polo_ativo = txt('[id*="parteAtiva"] .nome, [id*="parteAtiva"]') ||
+                       txt('.polo-ativo .parte-nome') ||
+                       txt('[class*="ativo"] .nome');
+
+    // Tipo de ação / classe processual
+    const acao = txt('[id*="classeProcessual"]') ||
+                 txt('[id*="classePrincipal"]') ||
+                 txt('.classe-processual') ||
+                 txt('[class*="classe"]');
+
     // Habilitados: OABs dos advogados do polo ativo
     // PJe lista advogados em tabela de partes com OAB no formato "OAB/UF 000000"
     const habilitados = Array.from(
@@ -696,7 +707,7 @@ async function extrairDados(page) {
     .filter(t => t && /OAB|^\d{3,6}$/.test(t))
     .map(t => t.replace(/[^\d\w\/]/g, ''));
 
-    return { vara, juiz, polo_passivo, habilitados };
+    return { vara, juiz, polo_ativo, polo_passivo, acao, habilitados };
   });
 }
 
@@ -781,15 +792,14 @@ export async function buscarProcessoCompletoComSessao(browser, url, numero) {
     const base = new URL(url).origin + new URL(url).pathname.replace('/login.seam', '');
     await navegarParaProcesso(page, base, numero);
 
-    const [dadosResult, movsResult] = await Promise.allSettled([
-      extrairDados(page),
-      extrairMovimentacoes(page),
-    ]);
+    // Sequencial: extrairDados e extrairMovimentacoes clicam em abas diferentes
+    // — rodar em paralelo no mesmo page causa conflito e perde os dados
+    let dados = {};
+    let movimentacoes = [];
+    try { dados = await extrairDados(page); } catch (e) { console.warn('[PJe] extrairDados falhou:', e.message); }
+    try { movimentacoes = await extrairMovimentacoes(page); } catch (e) { console.warn('[PJe] extrairMovimentacoes falhou:', e.message); }
 
-    return {
-      dados:         dadosResult.status === 'fulfilled' ? dadosResult.value : {},
-      movimentacoes: movsResult.status  === 'fulfilled' ? movsResult.value  : [],
-    };
+    return { dados, movimentacoes };
   } finally {
     await page.close().catch(() => {});
   }

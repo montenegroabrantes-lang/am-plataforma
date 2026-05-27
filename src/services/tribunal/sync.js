@@ -44,17 +44,19 @@ const URL_TRIBUNAL = {
 //  Reutilizado por sincronizarProcesso e sincronizarTodos
 // ─────────────────────────────────────────────
 async function salvarResultadoSync(processoId, processo, dados, movimentacoesBrutas) {
-  if (dados.vara || dados.habilitados?.length) {
+  if (dados.vara || dados.polo_ativo || dados.habilitados?.length) {
     await db.execute(
       `UPDATE processos
        SET vara            = COALESCE($1, vara),
            juiz            = COALESCE($2, juiz),
-           polo_passivo    = COALESCE($3, polo_passivo),
-           habilitados_pje = COALESCE($4, habilitados_pje),
+           polo_ativo      = COALESCE($3, polo_ativo),
+           polo_passivo    = COALESCE($4, polo_passivo),
+           acao            = COALESCE($5, acao),
+           habilitados_pje = COALESCE($6, habilitados_pje),
            importado_pje   = true,
            atualizado_em   = NOW()
-       WHERE id = $5`,
-      [dados.vara, dados.juiz, dados.polo_passivo, dados.habilitados, processoId]
+       WHERE id = $7`,
+      [dados.vara, dados.juiz, dados.polo_ativo, dados.polo_passivo, dados.acao, dados.habilitados, processoId]
     );
     await resolverSeparacaoSocios(processo, dados.habilitados || []);
   }
