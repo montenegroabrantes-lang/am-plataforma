@@ -63,19 +63,56 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
   }
 
   let novasMovs = 0;
+  const idsNovas = [];
   for (const mov of movimentacoesBrutas) {
     if (!mov.texto) continue;
     const data = parsearData(mov.data) || new Date();
     try {
-      await db.execute(
+      const [inserida] = await db.query(
         `INSERT INTO movimentacoes (processo_id, data_movimentacao, tipo, texto)
          VALUES ($1, $2, $3, $4)
-         ON CONFLICT (processo_id, data_movimentacao, texto) DO NOTHING`,
+         ON CONFLICT (processo_id, data_movimentacao, texto) DO NOTHING
+         RETURNING id`,
         [processoId, data, mov.tipo || null, mov.texto]
       );
-      novasMovs++;
+      if (inserida?.id) { idsNovas.push(inserida.id); novasMovs++; }
     } catch { /* ignora duplicata */ }
   }
+
+  // Dispara diagnóstico IA para cada movimentação nova (sem bloquear o sync)
+  if (idsNovas.length > 0) {
+    const { ai } = await import('../ai/index.js');
+    for (const movId of idsNovas) {
+      const mov = await db.queryOne(
+        `SELECT m.*, p.numero, p.tribunal, pr.nome AS produto
+         FROM movimentacoes m
+         JOIN processos p ON p.id = m.processo_id
+         LEFT JOIN produtos pr ON pr.id = p.produto_id
+         WHERE m.id = $1`, [movId]
+      );
+      if (!mov) continue;
+      const historico = await db.query(
+        `SELECT texto FROM movimentacoes WHERE processo_id = $1 ORDER BY data_movimentacao DESC LIMIT 5`,
+        [mov.processo_id]
+      );
+      try {
+        const diag = await ai.diagnosticar({
+          numero: mov.numero, tribunal: mov.tribunal, produto: mov.produto,
+          data: mov.data_movimentacao, texto: mov.texto,
+          historico: historico.map(h => h.texto).join('\n---\n'),
+        });
+        await db.execute(
+          `UPDATE movimentacoes SET diagnostico_significado=$1, diagnostico_proxima_acao=$2,
+           diagnostico_urgencia=$3, diagnostico_prazo_dias=$4, diagnostico_em=NOW() WHERE id=$5`,
+          [diag.significado, diag.proximaAcao, diag.urgencia, diag.prazoDiasUteis ?? null, movId]
+        );
+        console.log(`[IA] Diagnóstico gerado: ${mov.numero} — urgência ${diag.urgencia}`);
+      } catch (e) {
+        console.warn(`[IA] Diagnóstico falhou para movimentação ${movId}:`, e.message);
+      }
+    }
+  }
+
   return novasMovs;
 }
 
