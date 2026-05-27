@@ -3,7 +3,7 @@ import { authenticator }  from 'otplib';
 import path               from 'path';
 import fs                 from 'fs';
 
-const TIMEOUT     = 45_000;
+const TIMEOUT     = 90_000; // 90s — PJe pode ser lento, especialmente em Railway
 const AJAX_WAIT   = 3_000;   // tempo para AJAX do RichFaces estabilizar
 const DEBUG_SHOTS = process.env.PJE_DEBUG_SCREENSHOTS === 'true';
 
@@ -23,7 +23,7 @@ async function abrirBrowser() {
     args: browserArgs(),
     executablePath: process.env.CHROMIUM_PATH || undefined,
     defaultViewport: { width: 1280, height: 900 },
-    protocolTimeout: 120_000, // 2 min — PJe pode demorar ao avaliar JS em páginas pesadas
+    protocolTimeout: 180_000, // 3 min — PJe pode demorar ao avaliar JS em páginas pesadas
   });
 }
 
