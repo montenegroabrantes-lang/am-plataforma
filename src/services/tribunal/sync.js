@@ -44,6 +44,7 @@ const URL_TRIBUNAL = {
 //  Reutilizado por sincronizarProcesso e sincronizarTodos
 // ─────────────────────────────────────────────
 async function salvarResultadoSync(processoId, processo, dados, movimentacoesBrutas) {
+  console.log(`[Sync] dados extraídos p/${processo.numero}:`, JSON.stringify({ vara: dados.vara, polo_ativo: dados.polo_ativo, polo_passivo: dados.polo_passivo, acao: dados.acao, movs: movimentacoesBrutas.length }));
   if (dados.vara || dados.polo_ativo || dados.habilitados?.length) {
     await db.execute(
       `UPDATE processos
