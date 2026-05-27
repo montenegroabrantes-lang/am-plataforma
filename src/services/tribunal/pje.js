@@ -666,41 +666,62 @@ async function extrairDados(page) {
   return await page.evaluate(() => {
     const txt = sel => document.querySelector(sel)?.innerText?.trim() || null;
 
-    // Vara / Órgão Julgador — várias possibilidades de seletor no PJe
+    // Busca por rótulo de texto — mais robusta para RichFaces com IDs dinâmicos
+    function porRotulo(rotulos) {
+      const allEls = Array.from(document.querySelectorAll('td, span, label, th, div'));
+      for (const el of allEls) {
+        const t = el.innerText?.trim() || '';
+        if (rotulos.some(r => t === r || t.startsWith(r + ':'))) {
+          // Tenta irmão seguinte ou td irmão
+          const next = el.nextElementSibling || el.parentElement?.nextElementSibling?.querySelector('td,span,div');
+          const val = next?.innerText?.trim();
+          if (val && val.length > 1) return val;
+        }
+      }
+      return null;
+    }
+
+    // Vara / Órgão Julgador
     const vara = txt('[id*="orgaoJulgador"]') ||
                  txt('[id*="OrgaoJulgador"]') ||
+                 txt('[id*="orgao-julgador"]') ||
                  txt('.orgao-julgador') ||
-                 txt('[class*="vara"]') ||
-                 txt('td[title*="Órgão"]');
+                 porRotulo(['Órgão julgador', 'Vara', 'Órgão Julgador']);
 
     // Juiz
     const juiz = txt('[id*="magistrado"]') ||
                  txt('[id*="Magistrado"]') ||
-                 txt('.magistrado') ||
-                 txt('[class*="juiz"]');
-
-    // Polo passivo
-    const polo_passivo = txt('[id*="partePassiva"] .nome, [id*="partePassiva"]') ||
-                         txt('.polo-passivo .parte-nome') ||
-                         txt('[class*="passivo"] .nome');
-
-    // Polo ativo
-    const polo_ativo = txt('[id*="parteAtiva"] .nome, [id*="parteAtiva"]') ||
-                       txt('.polo-ativo .parte-nome') ||
-                       txt('[class*="ativo"] .nome');
+                 porRotulo(['Magistrado', 'Juiz', 'Juíza']);
 
     // Tipo de ação / classe processual
     const acao = txt('[id*="classeProcessual"]') ||
                  txt('[id*="classePrincipal"]') ||
-                 txt('.classe-processual') ||
-                 txt('[class*="classe"]');
+                 txt('[id*="classe"]') ||
+                 porRotulo(['Classe', 'Classe processual', 'Tipo de ação']);
 
-    // Habilitados: OABs dos advogados do polo ativo
-    // PJe lista advogados em tabela de partes com OAB no formato "OAB/UF 000000"
+    // Polo ativo — tenta seletores específicos do PJe TJPB depois rótulo
+    const polo_ativo = txt('[id*="autor"] .nome') ||
+                       txt('[id*="Autor"] .nome') ||
+                       txt('[id*="requerente"] .nome') ||
+                       txt('[id*="reclamante"] .nome') ||
+                       txt('[id*="parteAtiva"] .nome') ||
+                       txt('[id*="parteAtiva"]') ||
+                       porRotulo(['Polo ativo', 'Requerente', 'Autor', 'Reclamante']);
+
+    // Polo passivo
+    const polo_passivo = txt('[id*="reu"] .nome') ||
+                         txt('[id*="Reu"] .nome') ||
+                         txt('[id*="requerido"] .nome') ||
+                         txt('[id*="reclamado"] .nome') ||
+                         txt('[id*="partePassiva"] .nome') ||
+                         txt('[id*="partePassiva"]') ||
+                         porRotulo(['Polo passivo', 'Requerido', 'Réu', 'Reclamado']);
+
+    // Habilitados: OABs dos advogados
     const habilitados = Array.from(
       document.querySelectorAll(
         '[id*="tabelaAdvogados"] td, [id*="advogado"] td, ' +
-        '.polo-ativo .oab, .advogado .oab, ' +
+        '[id*="Advogado"] td, .polo-ativo .oab, ' +
         '[class*="advogado"] span, td[title*="OAB"]'
       )
     )
