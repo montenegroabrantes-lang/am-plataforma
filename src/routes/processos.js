@@ -137,7 +137,7 @@ processosRouter.post('/', async (req, res) => {
 
 // PATCH /api/processos/:id
 processosRouter.patch('/:id', async (req, res) => {
-  const campos  = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo'];
+  const campos  = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas'];
   const updates = [];
   const params  = [];
 
