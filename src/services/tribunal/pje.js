@@ -251,64 +251,24 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret, oab = null)
           console.log(`[PJe] ${label} pág.${pagina}: zero controles de paginação na página`);
         }
 
-        // Tenta encontrar botão "próxima página" — ordem de prioridade
-        const SELETORES_NEXT = [
-          // RichFaces scroller padrão PJe
-          'a[id*="scroller"][id*="next"]',
-          'a[id*="scroller"][id*="Next"]',
-          'a[id*="Scroller"][id*="next"]',
-          'a[id*="Scroller"][id*="Next"]',
-          // Classe RichFaces
-          '.rich-datascr-button-next:not(.rich-datascr-button-next-dis)',
-          // Títulos
-          'a[title*="Próxima"], a[title*="próxima"]',
-          'a[title*="next"], a[title*="Next"]',
-          'a[title*="Avançar"]',
-          // IDs genéricos
-          'a[id*="proxima"]:not([class*="dis"])',
-          'a[id*="Proxima"]:not([class*="dis"])',
-          'a[id*="next"]:not([class*="dis"])',
-          // Texto ">" ou "»"
-          'a[href*="next"], a[href*="proxima"]',
-        ];
+        // RichFaces datascroller: <td onclick="Event.fire(this, 'rich:datascroller:onscroll', {'page': 'next'})">
+        const clicouNext = await page.evaluate(() => {
+          const tds = Array.from(document.querySelectorAll('td[onclick*="datascroller:onscroll"]'));
+          const nextTd = tds.find(td => {
+            const onclick = td.getAttribute('onclick') || '';
+            const cls = td.className || '';
+            return onclick.includes("'page': 'next'") && !cls.includes('dsbld');
+          });
+          if (nextTd) { nextTd.click(); return true; }
+          return false;
+        }).catch(() => false);
 
-        let proxPag = null;
-        for (const sel of SELETORES_NEXT) {
-          proxPag = await page.$(sel).catch(() => null);
-          if (proxPag) { console.log(`[PJe] ${label} botão próxima via: ${sel}`); break; }
+        if (!clicouNext) {
+          console.log(`[PJe] ${label} pág.${pagina}: última página (botão next ausente ou desabilitado)`);
+          break;
         }
 
-        // Fallback: clica via JavaScript no primeiro elemento que pareça "próxima página"
-        if (!proxPag) {
-          const clicou = await page.evaluate(() => {
-            const el = Array.from(document.querySelectorAll('a, button, input'))
-              .find(e => {
-                const text = (e.textContent || e.value || e.title || '').trim();
-                const id = (e.id || '').toLowerCase();
-                const cls = (e.className || '').toLowerCase();
-                return (text === '>' || text === '»' || text === 'Próxima' ||
-                        id.includes('next') || id.includes('proxima') ||
-                        cls.includes('next') || cls.includes('scroller')) &&
-                       !cls.includes('-dis') && !e.disabled;
-              });
-            if (el) { el.click(); return true; }
-            return false;
-          }).catch(() => false);
-
-          if (!clicou) break;
-          console.log(`[PJe] ${label} clique JS na próxima página`);
-          await aguardarAJAX(6000);
-          pagina++;
-          continue;
-        }
-
-        const desabilitado = await proxPag.evaluate(
-          el => el.disabled || el.getAttribute('aria-disabled') === 'true' ||
-                el.className?.includes('-dis') || el.className?.includes('inativo')
-        ).catch(() => true);
-        if (desabilitado) break;
-
-        await proxPag.click();
+        console.log(`[PJe] ${label} avançando para pág. ${pagina + 1}`);
         await aguardarAJAX(6000);
         pagina++;
       }
@@ -482,90 +442,142 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret, oab = null)
 //  BUSCAR PROCESSO — pesquisa por número CNJ
 // ─────────────────────────────────────────────
 async function navegarParaProcesso(page, base, numero) {
-  console.log(`[PJe] Buscando processo: ${numero}`);
+  console.log(`[PJe] Buscando processo v2: ${numero}`);
 
-  // Campo de busca do painel do advogado (validado em produção TJPB)
-  // Garante que está no painel
-  if (!page.url().includes('Painel')) {
-    const urlPainel = `${base}/Painel/painel_usuario/advogado.seam`;
-    await page.goto(urlPainel, { waitUntil: 'networkidle2', timeout: 20_000 });
-    await page.waitForNetworkIdle({ timeout: 10_000, idleTime: 500 }).catch(() => {});
-  }
+  // Abordagem 1: ConsultaProcesso preenchendo cada campo CNJ separadamente
+  // Formato CNJ: 0862224-55.2023.8.15.2001
+  //              seq(7)-dig(2).ano(4).jus(1).trib(2).orig(4)
+  try {
+    const cnj = numero.match(/^(\d{7})-(\d{2})\.(\d{4})\.(\d)\.(\d{2})\.(\d{4})$/);
+    if (!cnj) throw new Error(`Número fora do formato CNJ: ${numero}`);
+    const [, seq, dig, ano, jus, trib, orig] = cnj;
 
-  // Tenta o campo de busca da sidebar do painel (id confirmado em TJPB)
-  let campoBusca = await page.$('#txtConsultaContextoExpedientes');
-
-  // Fallback para outros seletores de busca
-  if (!campoBusca) {
-    campoBusca = await page.$(
-      'input[placeholder*="processo"], input[placeholder*="número"], ' +
-      'input[id*="numProcesso"], input[id*="numeroProcesso"]'
-    );
-  }
-
-  if (campoBusca) {
-    await campoBusca.click({ clickCount: 3 });
-    await campoBusca.type(numero);
-    await screenshot(page, 'busca-preenchida');
-
-    // Chama a função JS de busca do painel ou pressiona Enter
-    await page.evaluate((num) => {
-      if (typeof setarTextoConsultaContextoExpedientes === 'function') {
-        setarTextoConsultaContextoExpedientes(num);
-      }
-    }, numero);
-
-    await page.waitForNetworkIdle({ timeout: 10_000, idleTime: 500 }).catch(() => {});
+    const urlConsulta = `${base}/Processo/ConsultaProcesso/listView.seam`;
+    await page.goto(urlConsulta, { waitUntil: 'domcontentloaded', timeout: 20_000 });
     await new Promise(r => setTimeout(r, AJAX_WAIT));
-    await screenshot(page, 'resultado-busca');
 
-    // Procura link clicável para o processo na lista de resultados
+    // Preenche cada segmento do número CNJ no campo correspondente
+    const segmentos = [
+      { sel: '[id$=":numeroSequencial"], [id*="numeroSequencial"]', val: seq },
+      { sel: '[id$=":digitoVerificador"], [id*="digitoVerificador"]', val: dig },
+      { sel: '[id$=":anoOrigen"], [id*="anoOrigen"]', val: ano },
+      { sel: '[id$=":justica"], [id*="justica"]:not(select)', val: jus },
+      { sel: '[id$=":tribunal"], [id*="tribunal"]:not(select)', val: trib },
+      { sel: '[id$=":origem"], [id*="origem"]', val: orig },
+    ];
+
+    let preenchidos = 0;
+    for (const { sel, val } of segmentos) {
+      const el = await page.$(sel).catch(() => null);
+      if (!el) continue;
+      await page.evaluate((e, v) => { e.focus(); e.value = v; e.dispatchEvent(new Event('change', { bubbles: true })); }, el, val);
+      preenchidos++;
+    }
+    console.log(`[PJe] Campos CNJ preenchidos: ${preenchidos}/6 — ${seq}-${dig}.${ano}.${jus}.${trib}.${orig}`);
+
+    // Selects de justiça/tribunal (dropdowns)
+    for (const selId of ['[id*="justica"]', '[id*="tribunal"]']) {
+      const sel = await page.$(`select${selId}`).catch(() => null);
+      if (!sel) continue;
+      const val = selId.includes('justica') ? jus : trib;
+      await sel.select(val).catch(() =>
+        page.evaluate((e, v) => {
+          const opt = Array.from(e.options).find(o => o.value === v || o.value === v.padStart(2, '0'));
+          if (opt) { e.value = opt.value; e.dispatchEvent(new Event('change', { bubbles: true })); }
+        }, sel, val)
+      );
+    }
+
+    const btnPesquisar = await page.$(
+      'input[id*="btnPesquisar"], input[id*="pesquisar"], input[id*="search"], ' +
+      'input[value="Pesquisar"], input[value="Buscar"], ' +
+      'button[id*="pesquisar"], a[id*="pesquisar"], a[id*="search"]'
+    );
+    if (btnPesquisar) {
+      await btnPesquisar.click();
+    } else {
+      const primeiroInput = await page.$('[id*="numeroSequencial"]');
+      if (primeiroInput) await primeiroInput.press('Enter');
+    }
+    await new Promise(r => setTimeout(r, AJAX_WAIT + 2000));
+
+    // Link do resultado — tenta seletores progressivamente mais amplos
     const linkProcesso = await page.$(
-      `a[id*="cxExItem"], ` +
-      `a[href*="${encodeURIComponent(numero)}"], ` +
+      `table[id*="processosTable"] td a, ` +
+      `a[href*="${seq}"], ` +
+      `td.rich-list-item a, ` +
       `td a[id*="processo"]`
     );
-
     if (linkProcesso) {
       await linkProcesso.click();
       await page.waitForNetworkIdle({ timeout: TIMEOUT }).catch(() => {});
       await new Promise(r => setTimeout(r, AJAX_WAIT));
-      await screenshot(page, 'detalhe-processo');
-      console.log(`[PJe] Processo ${numero} aberto com sucesso`);
+      console.log(`[PJe] Processo ${numero} aberto via ConsultaProcesso`);
       return true;
     }
+
+    // Diagnóstico se não encontrou link
+    const diagResult = await page.evaluate((s) => {
+      const links = Array.from(document.querySelectorAll('td a, table a')).slice(0, 10)
+        .map(a => `${a.id || '?'} href="${(a.href || '').slice(-60)}" txt="${(a.textContent || '').trim().slice(0, 40)}"`);
+      const rows = Array.from(document.querySelectorAll('tr')).length;
+      return { links, rows };
+    }, seq).catch(() => ({ links: [], rows: 0 }));
+    console.warn(`[PJe] Sem resultado (${diagResult.rows} linhas na pág). Links:\n  ` + (diagResult.links.join('\n  ') || '(nenhum)'));
+
+  } catch (err) {
+    console.warn(`[PJe] ConsultaProcesso falhou: ${err.message}`);
   }
 
-  // Fallback: consulta pública (sem necessidade de login)
-  const urlConsulta = `${base}/ConsultaPublica/listView.seam`;
+  // Abordagem 2: painel autocomplete com Enter
   try {
-    await page.goto(urlConsulta, { waitUntil: 'networkidle2', timeout: 20_000 });
-    await screenshot(page, 'tela-busca-publica');
+    const urlPainel = `${base}/Painel/painel_usuario/advogado.seam`;
+    if (!page.url().includes('Painel')) {
+      await page.goto(urlPainel, { waitUntil: 'domcontentloaded', timeout: 20_000 });
+      await new Promise(r => setTimeout(r, AJAX_WAIT));
+    }
 
-    const campoNumero = await page.$(
-      'input[id*="numProcesso"], input[name*="numProcesso"], ' +
-      'input[id*="numeroProcesso"], input[placeholder*="processo"]'
-    );
-    if (campoNumero) {
-      await campoNumero.click({ clickCount: 3 });
-      await campoNumero.type(numero);
-      const btnBusca = await page.$('input[id*="btnPesquisar"], a[id*="pesquisar"], input[value*="Pesquisar"]');
-      if (btnBusca) await btnBusca.click(); else await campoNumero.press('Enter');
-      await new Promise(r => setTimeout(r, AJAX_WAIT + 1000));
-      await screenshot(page, 'resultado-busca-publica');
+    const campoBusca = await page.$('#txtConsultaContextoExpedientes');
+    if (campoBusca) {
+      await campoBusca.click({ clickCount: 3 });
+      await campoBusca.type(numero);
+      await new Promise(r => setTimeout(r, 1500));
 
-      const linkProcesso = await page.$(`a[href*="${numero.replace(/\D/g, '')}"], td a[href*="processo"]`);
+      // Tenta autocomplete JS
+      await page.evaluate((num) => {
+        if (typeof setarTextoConsultaContextoExpedientes === 'function') {
+          setarTextoConsultaContextoExpedientes(num);
+        }
+      }, numero);
+      await new Promise(r => setTimeout(r, 2000));
+
+      const linkProcesso = await page.$(
+        `a[id*="cxExItem"], a[href*="${numero.replace(/\D/g, '')}"]`
+      );
       if (linkProcesso) {
         await linkProcesso.click();
         await page.waitForNetworkIdle({ timeout: TIMEOUT }).catch(() => {});
         await new Promise(r => setTimeout(r, AJAX_WAIT));
-        await screenshot(page, 'detalhe-processo');
-        console.log(`[PJe] Processo ${numero} aberto via consulta pública`);
+        console.log(`[PJe] Processo ${numero} aberto via painel autocomplete`);
+        return true;
+      }
+
+      // Fallback: pressiona Enter para submeter busca
+      await campoBusca.press('Enter');
+      await new Promise(r => setTimeout(r, AJAX_WAIT + 1000));
+      const linkAposEnter = await page.$(
+        `a[id*="cxExItem"], a[href*="${numero.replace(/\D/g, '')}"], td a[id*="processo"]`
+      );
+      if (linkAposEnter) {
+        await linkAposEnter.click();
+        await page.waitForNetworkIdle({ timeout: TIMEOUT }).catch(() => {});
+        await new Promise(r => setTimeout(r, AJAX_WAIT));
+        console.log(`[PJe] Processo ${numero} aberto via painel Enter`);
         return true;
       }
     }
   } catch (err) {
-    console.warn(`[PJe] Consulta pública falhou:`, err.message);
+    console.warn(`[PJe] Painel autocomplete falhou: ${err.message}`);
   }
 
   throw new Error(`[PJe] Não foi possível navegar para o processo ${numero}`);
@@ -746,5 +758,39 @@ export async function buscarProcessoCompleto(url, cpf, senha, totpSecret, numero
 
   } finally {
     await browser?.close();
+  }
+}
+
+// ─────────────────────────────────────────────
+//  SESSÃO COMPARTILHADA — para sync em lote
+//  Abre o browser UMA VEZ e reutiliza entre processos.
+//  Cada processo abre uma aba nova, extrai os dados e fecha a aba.
+//  O browser só é fechado pelo chamador (sincronizarTodos).
+// ─────────────────────────────────────────────
+
+// Abre browser e faz login — retorna {browser, page} para reutilização
+export async function abrirSessao(url, cpf, senha, totpSecret) {
+  return login(url, cpf, senha, totpSecret);
+}
+
+// Busca dados de um processo usando sessão existente (sem abrir novo browser)
+export async function buscarProcessoCompletoComSessao(browser, url, numero) {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(TIMEOUT);
+  try {
+    const base = new URL(url).origin + new URL(url).pathname.replace('/login.seam', '');
+    await navegarParaProcesso(page, base, numero);
+
+    const [dadosResult, movsResult] = await Promise.allSettled([
+      extrairDados(page),
+      extrairMovimentacoes(page),
+    ]);
+
+    return {
+      dados:         dadosResult.status === 'fulfilled' ? dadosResult.value : {},
+      movimentacoes: movsResult.status  === 'fulfilled' ? movsResult.value  : [],
+    };
+  } finally {
+    await page.close().catch(() => {});
   }
 }

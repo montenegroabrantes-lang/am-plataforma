@@ -1,10 +1,9 @@
 import { db }              from '../../db/index.js';
-import { lerCredencial, lerCredencialGrau, descriptografarCredencial } from '../../routes/credenciais.js';
+import { lerCredencialGrau, descriptografarCredencial } from '../../routes/credenciais.js';
 import * as pje           from './pje.js';
 import * as eproc         from './eproc.js';
 import * as mni           from './mni.js';
 
-// URLs públicas dos sistemas. Env vars sobrescrevem os padrões caso necessário.
 const URL_TRIBUNAL = {
   TJPB: {
     '1': process.env.PJE_TJPB_1G_URL || 'https://pje.tjpb.jus.br/pje/login.seam',
@@ -41,7 +40,46 @@ const URL_TRIBUNAL = {
 };
 
 // ─────────────────────────────────────────────
+//  SALVAR RESULTADO NO BANCO
+//  Reutilizado por sincronizarProcesso e sincronizarTodos
+// ─────────────────────────────────────────────
+async function salvarResultadoSync(processoId, processo, dados, movimentacoesBrutas) {
+  if (dados.vara || dados.habilitados?.length) {
+    await db.execute(
+      `UPDATE processos
+       SET vara            = COALESCE($1, vara),
+           juiz            = COALESCE($2, juiz),
+           polo_passivo    = COALESCE($3, polo_passivo),
+           habilitados_pje = COALESCE($4, habilitados_pje),
+           importado_pje   = true,
+           atualizado_em   = NOW()
+       WHERE id = $5`,
+      [dados.vara, dados.juiz, dados.polo_passivo, dados.habilitados, processoId]
+    );
+    await resolverSeparacaoSocios(processo, dados.habilitados || []);
+  }
+
+  let novasMovs = 0;
+  for (const mov of movimentacoesBrutas) {
+    if (!mov.texto) continue;
+    const data = parsearData(mov.data) || new Date();
+    try {
+      await db.execute(
+        `INSERT INTO movimentacoes (processo_id, data_movimentacao, tipo, texto)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (processo_id, data_movimentacao, texto) DO NOTHING`,
+        [processoId, data, mov.tipo || null, mov.texto]
+      );
+      novasMovs++;
+    } catch { /* ignora duplicata */ }
+  }
+  return novasMovs;
+}
+
+// ─────────────────────────────────────────────
 //  SINCRONIZAR PROCESSO INDIVIDUAL
+//  Usado pela UI (botão "Sincronizar" por processo)
+//  Abre e fecha o próprio browser — independente do sync em lote
 // ─────────────────────────────────────────────
 export async function sincronizarProcesso(processoId) {
   const processo = await db.queryOne(
@@ -65,8 +103,6 @@ export async function sincronizarProcesso(processoId) {
   let movimentacoesBrutas = [];
 
   if (processo.sistema === 'pje') {
-    // PJe: tenta MNI primeiro (sem Puppeteer, muito mais rápido).
-    // Se MNI falhar (403, indisponível, etc.) usa Puppeteer como fallback.
     try {
       const resultado = await mni.consultarProcesso(url, cred.cpf, cred.senha, processo.numero);
       dados               = resultado.dados;
@@ -79,85 +115,127 @@ export async function sincronizarProcesso(processoId) {
       movimentacoesBrutas = resultado.movimentacoes;
     }
   } else {
-    // eProc: busca tudo em uma sessão com suporte a grau
     const resultado = await eproc.buscarProcessoCompleto(url, cred.cpf, cred.senha, cred.totp_secret, processo.numero, grau);
     dados               = resultado.dados;
     movimentacoesBrutas = resultado.movimentacoes;
   }
 
-  // Atualiza dados básicos do processo
-  if (dados.vara || dados.habilitados?.length) {
-    await db.execute(
-      `UPDATE processos
-       SET vara              = COALESCE($1, vara),
-           juiz              = COALESCE($2, juiz),
-           polo_passivo      = COALESCE($3, polo_passivo),
-           habilitados_pje   = COALESCE($4, habilitados_pje),
-           importado_pje     = true,
-           atualizado_em     = NOW()
-       WHERE id = $5`,
-      [dados.vara, dados.juiz, dados.polo_passivo, dados.habilitados, processoId]
-    );
-
-    await resolverSeparacaoSocios(processo, dados.habilitados || []);
-  }
-
-  // Insere movimentações novas (ON CONFLICT ignora duplicatas)
-  let novasMovs = 0;
-  for (const mov of movimentacoesBrutas) {
-    if (!mov.texto) continue;
-    const data = parsearData(mov.data) || new Date();
-    try {
-      await db.execute(
-        `INSERT INTO movimentacoes (processo_id, data_movimentacao, tipo, texto)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (processo_id, data_movimentacao, texto) DO NOTHING`,
-        [processoId, data, mov.tipo || null, mov.texto]
-      );
-      novasMovs++;
-    } catch { /* ignora duplicata */ }
-  }
-
+  const novasMovs = await salvarResultadoSync(processoId, processo, dados, movimentacoesBrutas);
   console.log(`[Sync] Processo ${processo.numero}: ${novasMovs} novas movimentações.`);
   return { processoId, novasMovimentacoes: novasMovs };
 }
 
 // ─────────────────────────────────────────────
 //  SINCRONIZAR TODOS OS PROCESSOS ATIVOS
+//  Opção B: browser compartilhado por grupo (master + tribunal + grau)
+//  Uma sessão PJe por grupo → sem EAGAIN, sem 87 logins
 // ─────────────────────────────────────────────
 export async function sincronizarTodos() {
   const processos = await db.query(
-    `SELECT id, numero, tribunal, sistema, grau
+    `SELECT id, numero, tribunal, sistema, grau, master_responsavel_id
      FROM processos
      WHERE status IN ('ativo', 'suspenso')
-     ORDER BY atualizado_em ASC NULLS FIRST`
+     ORDER BY master_responsavel_id, tribunal, grau, atualizado_em ASC NULLS FIRST`
   );
 
   console.log(`[Sync] Iniciando sync de ${processos.length} processos...`);
 
+  // Agrupa por master + tribunal + grau + sistema para compartilhar a sessão do browser
+  const grupos = new Map();
+  for (const p of processos) {
+    const key = `${p.master_responsavel_id}|${p.tribunal}|${p.grau}|${p.sistema}`;
+    if (!grupos.has(key)) grupos.set(key, []);
+    grupos.get(key).push(p);
+  }
+
   const resultados = [];
-  // Sequencial — decisão arquitetural: não dois robôs paralelos
-  for (const { id, numero } of processos) {
+
+  for (const [, grupoProcessos] of grupos) {
+    const { tribunal, grau, sistema, master_responsavel_id } = grupoProcessos[0];
+
+    // eProc: ainda sem otimização de sessão compartilhada — sync individual
+    if (sistema !== 'pje') {
+      for (const { id, numero } of grupoProcessos) {
+        try {
+          const r = await sincronizarProcesso(id);
+          resultados.push({ ...r, ok: true });
+        } catch (err) {
+          resultados.push({ processoId: id, numero, ok: false, erro: err.message });
+          console.error(`[Sync] ${numero}:`, err.message);
+        }
+      }
+      continue;
+    }
+
+    // PJe: abre UM browser, faz login UMA VEZ, sincroniza todo o grupo
+    const url = URL_TRIBUNAL[tribunal]?.[grau];
+    if (!url) {
+      for (const { id, numero } of grupoProcessos) {
+        resultados.push({ processoId: id, numero, ok: false, erro: `URL não configurada para ${tribunal} grau ${grau}` });
+      }
+      continue;
+    }
+
+    const cred = await lerCredencialGrau(master_responsavel_id, tribunal, grau).catch(() => null);
+    if (!cred) {
+      console.warn(`[Sync] Credencial não encontrada — ${tribunal} ${grau}G — pulando ${grupoProcessos.length} processo(s)`);
+      for (const { id, numero } of grupoProcessos) {
+        resultados.push({ processoId: id, numero, ok: false, erro: 'Credencial não encontrada' });
+      }
+      continue;
+    }
+
+    let browser = null;
+    console.log(`[Sync] Abrindo sessão PJe — ${tribunal} ${grau}G (${grupoProcessos.length} processo(s))`);
+
     try {
-      const r = await sincronizarProcesso(id);
-      resultados.push({ ...r, ok: true });
+      ({ browser } = await pje.abrirSessao(url, cred.cpf, cred.senha, cred.totp_secret));
+
+      for (const { id, numero } of grupoProcessos) {
+        try {
+          const resultado = await pje.buscarProcessoCompletoComSessao(browser, url, numero);
+
+          // Busca registro completo do processo para resolverSeparacaoSocios
+          const processo = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
+          const novasMovs = await salvarResultadoSync(id, processo, resultado.dados, resultado.movimentacoes);
+
+          resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs });
+          console.log(`[Sync] OK: ${numero} (${novasMovs} novas movimentações)`);
+        } catch (err) {
+          resultados.push({ processoId: id, numero, ok: false, erro: err.message });
+          console.error(`[Sync] Falha ${numero}:`, err.message);
+
+          // Se a sessão foi encerrada pelo tribunal, interrompe o grupo
+          if (err.message?.includes('Target closed') || err.message?.includes('Session closed') || err.message?.includes('detached')) {
+            console.warn(`[Sync] Sessão PJe encerrada — interrompendo grupo ${tribunal} ${grau}G`);
+            break;
+          }
+        }
+
+        // Pausa entre processos — evita rate limiting do tribunal
+        await new Promise(r => setTimeout(r, 2_000));
+      }
     } catch (err) {
-      resultados.push({ processoId: id, numero, ok: false, erro: err.message });
-      console.error(`[Sync] Processo ${numero} (${id}):`, err.message);
+      console.error(`[Sync] Falha ao abrir sessão ${tribunal} ${grau}G:`, err.message);
+      for (const { id, numero } of grupoProcessos) {
+        if (!resultados.find(r => r.processoId === id)) {
+          resultados.push({ processoId: id, numero, ok: false, erro: `Sessão falhou: ${err.message}` });
+        }
+      }
+    } finally {
+      await browser?.close().catch(() => {});
     }
   }
 
   const ok   = resultados.filter(r => r.ok).length;
   const fail = resultados.filter(r => !r.ok).length;
   console.log(`[Sync] Concluído: ${ok} OK, ${fail} falhas.`);
-
   return resultados;
 }
 
 // ─────────────────────────────────────────────
 //  INSPECIONAR PAINEL — importa processos novos
 // ─────────────────────────────────────────────
-// Acessa o painel do PJe/eProc e importa números de processos ainda não cadastrados
 export async function importarDosPaineis(masterUserId) {
   const credenciais = await db.query(
     `SELECT * FROM credenciais_tribunal WHERE usuario_id = $1 AND ativo = true`,
@@ -168,43 +246,37 @@ export async function importarDosPaineis(masterUserId) {
 
   for (const credRaw of credenciais) {
     const cred = descriptografarCredencial(credRaw);
-    // Usa o grau cadastrado na credencial — cada grau pode ter login diferente
     const grau = cred.grau || '1';
-    {
-      const url = URL_TRIBUNAL[cred.tribunal]?.[grau];
-      if (!url) continue;
+    const url  = URL_TRIBUNAL[cred.tribunal]?.[grau];
+    if (!url) continue;
 
-      console.log(`[Painel] Acessando ${cred.tribunal} ${grau}G: ${url}`);
+    console.log(`[Painel] Acessando ${cred.tribunal} ${grau}G: ${url}`);
 
-      try {
-        let numeros = [];
+    try {
+      let numeros = [];
 
-        if (cred.sistema === 'pje') {
-          numeros = await pje.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret, cred.oab);
-        } else {
-          numeros = await eproc.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret);
-        }
-
-        for (const numero of numeros) {
-          // Só importa se não existir ainda
-          const existe = await db.queryOne(`SELECT id FROM processos WHERE numero = $1`, [numero]);
-          if (existe) continue;
-
-          await db.execute(
-            `INSERT INTO processos (numero, tribunal, sistema, grau, status, master_responsavel_id, importado_pje)
-             VALUES ($1, $2, $3, $4, 'ativo', $5, false)
-             ON CONFLICT (numero) DO NOTHING`,
-            [numero, cred.tribunal, cred.sistema, grau, masterUserId]
-          );
-          importados.push({ numero, tribunal: cred.tribunal, grau });
-        }
-
-        console.log(`[Painel] ${cred.tribunal} ${grau}G: ${numeros.length} processos encontrados`);
-
-      } catch (err) {
-        console.error(`[Painel] ${cred.tribunal} ${grau}G falhou:`, err.message);
-        console.error(`[Painel] Stack:`, err.stack);
+      if (cred.sistema === 'pje') {
+        numeros = await pje.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret, cred.oab);
+      } else {
+        numeros = await eproc.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret);
       }
+
+      for (const numero of numeros) {
+        const existe = await db.queryOne(`SELECT id FROM processos WHERE numero = $1`, [numero]);
+        if (existe) continue;
+
+        await db.execute(
+          `INSERT INTO processos (numero, tribunal, sistema, grau, status, master_responsavel_id, importado_pje)
+           VALUES ($1, $2, $3, $4, 'ativo', $5, false)
+           ON CONFLICT (numero) DO NOTHING`,
+          [numero, cred.tribunal, cred.sistema, grau, masterUserId]
+        );
+        importados.push({ numero, tribunal: cred.tribunal, grau });
+      }
+
+      console.log(`[Painel] ${cred.tribunal} ${grau}G: ${numeros.length} processos encontrados`);
+    } catch (err) {
+      console.error(`[Painel] ${cred.tribunal} ${grau}G falhou:`, err.message);
     }
   }
 
@@ -239,7 +311,7 @@ async function resolverSeparacaoSocios(processo, habilitados) {
 }
 
 // ─────────────────────────────────────────────
-//  UTILITÁRIO
+//  UTILITÁRIOS
 // ─────────────────────────────────────────────
 function parsearData(str) {
   if (!str) return null;
