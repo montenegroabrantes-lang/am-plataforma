@@ -23,6 +23,7 @@ async function abrirBrowser() {
     args: browserArgs(),
     executablePath: process.env.CHROMIUM_PATH || undefined,
     defaultViewport: { width: 1280, height: 900 },
+    protocolTimeout: 120_000, // 2 min — PJe pode demorar ao avaliar JS em páginas pesadas
   });
 }
 
