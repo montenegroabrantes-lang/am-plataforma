@@ -23,8 +23,10 @@ function filtroMaster(user) {
 
 // GET /api/processos
 processosRouter.get('/', async (req, res) => {
-  const { status, tribunal, busca, page = 1, limite = 30 } = req.query;
-  const offset = (Number(page) - 1) * Number(limite);
+  // Aceita tanto 'page' quanto 'pagina' (compatibilidade com frontend)
+  const { status, tribunal, busca, limite = 30 } = req.query;
+  const page   = Number(req.query.page || req.query.pagina || 1);
+  const offset = (page - 1) * Number(limite);
 
   const condicoes = ['1=1', filtroMaster(req.user), filtroVisibilidade(req.user)];
   const params    = [];
@@ -33,8 +35,18 @@ processosRouter.get('/', async (req, res) => {
   if (tribunal) { params.push(tribunal); condicoes.push(`p.tribunal = $${params.length}`); }
   if (busca)    {
     params.push(`%${busca}%`);
-    condicoes.push(`(p.numero ILIKE $${params.length} OR c.nome ILIKE $${params.length})`);
+    params.push(`%${busca}%`);
+    condicoes.push(`(p.numero ILIKE $${params.length - 1} OR c.nome ILIKE $${params.length})`);
   }
+
+  // Total para paginação
+  const [{ total }] = await db.query(
+    `SELECT COUNT(*) AS total
+     FROM processos p
+     LEFT JOIN clientes c ON c.id = p.cliente_id
+     WHERE ${condicoes.join(' ')}`,
+    params
+  );
 
   params.push(Number(limite), offset);
 
@@ -57,7 +69,7 @@ processosRouter.get('/', async (req, res) => {
     params
   );
 
-  res.json({ ok: true, processos: rows, page: Number(page), limite: Number(limite) });
+  res.json({ ok: true, processos: rows, total: Number(total), page, limite: Number(limite) });
 });
 
 // GET /api/processos/:id
