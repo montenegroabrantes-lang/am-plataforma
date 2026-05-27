@@ -12,6 +12,7 @@ export function criarSyncWorker() {
 
       if (job.name === 'sincronizar-processo') {
         const { processoId } = job.data;
+        if (!processoId) throw new Error('Job sincronizar-processo recebido sem processoId');
         return sincronizarProcesso(processoId);
       }
     },

@@ -70,7 +70,8 @@ async function login(url, cpf, senha, totpSecret) {
 
     const urlAtual = page.url();
     const titulo   = await page.title();
-    if (titulo.toLowerCase().includes('login') || urlAtual.includes('externo_controlador') && urlAtual.includes('principal')) {
+    // Falha se ainda está na tela de login — URL do eProc pós-login contém externo_controlador
+    if (titulo.toLowerCase().includes('login') || urlAtual.toLowerCase().includes('login')) {
       throw new Error('Login eProc falhou — verifique CPF, senha e código TOTP.');
     }
 

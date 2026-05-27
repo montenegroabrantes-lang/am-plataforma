@@ -176,7 +176,12 @@ export async function sincronizarTodos() {
       continue;
     }
 
-    const cred = await lerCredencialGrau(master_responsavel_id, tribunal, grau).catch(() => null);
+    let cred = null;
+    try {
+      cred = await lerCredencialGrau(master_responsavel_id, tribunal, grau);
+    } catch (err) {
+      console.warn(`[Sync] Erro ao buscar credencial ${tribunal} ${grau}G:`, err.message);
+    }
     if (!cred) {
       console.warn(`[Sync] Credencial não encontrada — ${tribunal} ${grau}G — pulando ${grupoProcessos.length} processo(s)`);
       for (const { id, numero } of grupoProcessos) {
@@ -315,9 +320,10 @@ async function resolverSeparacaoSocios(processo, habilitados) {
 // ─────────────────────────────────────────────
 function parsearData(str) {
   if (!str) return null;
+  // Fixa horário ao meio-dia UTC para evitar desvio de fuso — datas do tribunal são brasileiras (sem horário)
   const dmy = str.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-  if (dmy) return new Date(`${dmy[3]}-${dmy[2]}-${dmy[1]}`);
-  const iso = str.match(/\d{4}-\d{2}-\d{2}/);
-  if (iso) return new Date(iso[0]);
+  if (dmy) return new Date(`${dmy[3]}-${dmy[2]}-${dmy[1]}T12:00:00Z`);
+  const iso = str.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return new Date(`${iso[1]}-${iso[2]}-${iso[3]}T12:00:00Z`);
   return null;
 }

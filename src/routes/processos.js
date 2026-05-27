@@ -163,6 +163,18 @@ processosRouter.post('/importar-painel', apenasMaster, async (req, res) => {
   const { importarDosPaineis } = await import('../services/tribunal/sync.js');
   try {
     const importados = await importarDosPaineis(req.user.id);
+
+    // Dispara sync imediato para buscar detalhes dos processos recém-importados
+    if (importados.length > 0) {
+      try {
+        const { syncQueue } = await import('../workers/index.js');
+        if (syncQueue) {
+          await syncQueue.add('sincronizar-todos', {}, { delay: 3_000, removeOnComplete: 5 });
+          console.log(`[Importar Painel] Sync imediato enfileirado para ${importados.length} processo(s) novos`);
+        }
+      } catch { /* Redis pode não estar disponível — sync automático assume */ }
+    }
+
     res.json({ ok: true, importados: importados.length, processos: importados });
   } catch (err) {
     console.error('[Importar Painel]', err.message);
