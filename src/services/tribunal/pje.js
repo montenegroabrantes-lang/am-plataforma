@@ -587,6 +587,47 @@ async function navegarParaProcesso(page, base, numero) {
 // ─────────────────────────────────────────────
 //  EXTRAIR MOVIMENTAÇÕES — com paginação
 // ─────────────────────────────────────────────
+//  EXTRAIR EXPEDIENTES — citações, intimações e mandados com prazo
+// ─────────────────────────────────────────────
+async function extrairExpedientes(page) {
+  const abaExp = await page.$(
+    'a[id*="expediente"], a[href*="expediente"], ' +
+    'li a::-p-text("Expedientes"), li a::-p-text("Expediente"), ' +
+    'a[title*="Expediente"], a[title*="Comunicação"]'
+  );
+  if (!abaExp) return [];
+
+  await abaExp.click();
+  await new Promise(r => setTimeout(r, AJAX_WAIT));
+  await screenshot(page, 'aba-expedientes');
+
+  const linhas = await page.$$eval(
+    'table[id*="expediente"] tr, table[id*="Expediente"] tr, ' +
+    'table[id*="comunicacao"] tr, #tabelaExpedientes tr, ' +
+    '.tabela-expedientes tr, table[id*="ato"] tr',
+    rows => rows.slice(1).map(tr => {
+      const cols = Array.from(tr.querySelectorAll('td'));
+      if (cols.length < 2) return null;
+      const data      = cols[0]?.innerText?.trim() || '';
+      const tipo      = cols[1]?.innerText?.trim() || '';
+      const parte     = cols[2]?.innerText?.trim() || '';
+      const prazo     = cols[3]?.innerText?.trim() || '';
+      const vencimento = cols[4]?.innerText?.trim() || '';
+      if (!data || !tipo || tipo.length < 4) return null;
+      // Monta texto legível para operador e para IA
+      const partes = [`[EXPEDIENTE] ${tipo}`];
+      if (parte)     partes.push(`Para: ${parte}`);
+      if (prazo)     partes.push(`Prazo: ${prazo} dias`);
+      if (vencimento) partes.push(`Vencimento: ${vencimento}`);
+      return { data, tipo: 'expediente', texto: partes.join(' | ') };
+    }).filter(Boolean)
+  ).catch(() => []);
+
+  console.log(`[PJe] Expedientes encontrados: ${linhas.length}`);
+  return linhas;
+}
+
+// ─────────────────────────────────────────────
 async function extrairMovimentacoes(page) {
   const movimentacoes = [];
 
@@ -783,14 +824,16 @@ export async function buscarProcessoCompleto(url, cpf, senha, totpSecret, numero
 
     await navegarParaProcesso(page, base, numeroProcesso);
 
-    const [dados, movimentacoes] = await Promise.allSettled([
-      extrairDados(page),
-      extrairMovimentacoes(page),
-    ]);
+    let dados = {};
+    let movimentacoes = [];
+    let expedientes = [];
+    try { dados = await extrairDados(page); } catch (e) { console.warn('[PJe] extrairDados falhou:', e.message); }
+    try { movimentacoes = await extrairMovimentacoes(page); } catch (e) { console.warn('[PJe] extrairMovimentacoes falhou:', e.message); }
+    try { expedientes = await extrairExpedientes(page); } catch (e) { console.warn('[PJe] extrairExpedientes falhou:', e.message); }
 
     return {
-      dados:         dados.status === 'fulfilled'         ? dados.value         : {},
-      movimentacoes: movimentacoes.status === 'fulfilled' ? movimentacoes.value : [],
+      dados,
+      movimentacoes: [...movimentacoes, ...expedientes],
     };
 
   } finally {
@@ -822,10 +865,12 @@ export async function buscarProcessoCompletoComSessao(browser, url, numero) {
     // — rodar em paralelo no mesmo page causa conflito e perde os dados
     let dados = {};
     let movimentacoes = [];
+    let expedientes = [];
     try { dados = await extrairDados(page); } catch (e) { console.warn('[PJe] extrairDados falhou:', e.message); }
     try { movimentacoes = await extrairMovimentacoes(page); } catch (e) { console.warn('[PJe] extrairMovimentacoes falhou:', e.message); }
+    try { expedientes = await extrairExpedientes(page); } catch (e) { console.warn('[PJe] extrairExpedientes falhou:', e.message); }
 
-    return { dados, movimentacoes };
+    return { dados, movimentacoes: [...movimentacoes, ...expedientes] };
   } finally {
     await page.close().catch(() => {});
   }
