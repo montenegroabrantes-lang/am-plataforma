@@ -194,6 +194,18 @@ processosRouter.post('/importar-painel', apenasMaster, async (req, res) => {
   }
 });
 
+// POST /api/processos/:id/sync — sincroniza processo individual via PJe/eProc
+processosRouter.post('/:id/sync', async (req, res) => {
+  try {
+    const { sincronizarProcesso } = await import('../services/tribunal/sync.js');
+    const resultado = await sincronizarProcesso(req.params.id);
+    res.json({ ok: true, ...resultado });
+  } catch (err) {
+    console.error('[Sync individual]', err.message);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 // DELETE /api/processos/:id — apenas Master
 processosRouter.delete('/:id', apenasMaster, async (req, res) => {
   const antes = await db.queryOne('SELECT * FROM processos WHERE id = $1', [req.params.id]);
