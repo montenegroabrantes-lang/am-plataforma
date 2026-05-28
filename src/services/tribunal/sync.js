@@ -1,4 +1,5 @@
 import { db }              from '../../db/index.js';
+import { redis }           from '../../cache/redis.js';
 import { lerCredencialGrau, descriptografarCredencial } from '../../routes/credenciais.js';
 import * as pje           from './pje.js';
 import * as eproc         from './eproc.js';
@@ -193,6 +194,15 @@ export async function sincronizarProcesso(processoId) {
 //  Uma sessão PJe por grupo → sem EAGAIN, sem 87 logins
 // ─────────────────────────────────────────────
 export async function sincronizarTodos() {
+  // Lock Redis: impede sobreposição se a execução anterior ainda está rodando.
+  // TTL de 6h — tempo máximo razoável para um sync completo de ~900 processos.
+  const LOCK_KEY = 'sync:global:lock';
+  const acquired = await redis.set(LOCK_KEY, '1', 'NX', 'EX', 6 * 60 * 60);
+  if (!acquired) {
+    console.log('[Sync] Ignorado: execução anterior ainda em andamento (lock ativo).');
+    return { ignorado: true, motivo: 'lock ativo' };
+  }
+
   const processos = await db.query(
     `SELECT id, numero, tribunal, sistema, grau, master_responsavel_id
      FROM processos
@@ -212,86 +222,90 @@ export async function sincronizarTodos() {
 
   const resultados = [];
 
-  for (const [, grupoProcessos] of grupos) {
-    const { tribunal, grau, sistema, master_responsavel_id } = grupoProcessos[0];
+  try {
+    for (const [, grupoProcessos] of grupos) {
+      const { tribunal, grau, sistema, master_responsavel_id } = grupoProcessos[0];
 
-    // eProc: ainda sem otimização de sessão compartilhada — sync individual
-    if (sistema !== 'pje') {
-      for (const { id, numero } of grupoProcessos) {
-        try {
-          const r = await sincronizarProcesso(id);
-          resultados.push({ ...r, ok: true });
-        } catch (err) {
-          resultados.push({ processoId: id, numero, ok: false, erro: err.message });
-          console.error(`[Sync] ${numero}:`, err.message);
-        }
-      }
-      continue;
-    }
-
-    // PJe: abre UM browser, faz login UMA VEZ, sincroniza todo o grupo
-    const url = URL_TRIBUNAL[tribunal]?.[grau];
-    if (!url) {
-      for (const { id, numero } of grupoProcessos) {
-        resultados.push({ processoId: id, numero, ok: false, erro: `URL não configurada para ${tribunal} grau ${grau}` });
-      }
-      continue;
-    }
-
-    let cred = null;
-    try {
-      cred = await lerCredencialGrau(master_responsavel_id, tribunal, grau);
-    } catch (err) {
-      console.warn(`[Sync] Erro ao buscar credencial ${tribunal} ${grau}G:`, err.message);
-    }
-    if (!cred) {
-      console.warn(`[Sync] Credencial não encontrada — ${tribunal} ${grau}G — pulando ${grupoProcessos.length} processo(s)`);
-      for (const { id, numero } of grupoProcessos) {
-        resultados.push({ processoId: id, numero, ok: false, erro: 'Credencial não encontrada' });
-      }
-      continue;
-    }
-
-    let browser = null;
-    console.log(`[Sync] Abrindo sessão PJe — ${tribunal} ${grau}G (${grupoProcessos.length} processo(s))`);
-
-    try {
-      ({ browser } = await pje.abrirSessao(url, cred.cpf, cred.senha, cred.totp_secret));
-
-      for (const { id, numero } of grupoProcessos) {
-        try {
-          const resultado = await pje.buscarProcessoCompletoComSessao(browser, url, numero);
-
-          // Busca registro completo do processo para resolverSeparacaoSocios
-          const processo = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
-          const novasMovs = await salvarResultadoSync(id, processo, resultado.dados, resultado.movimentacoes);
-
-          resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs });
-          console.log(`[Sync] OK: ${numero} (${novasMovs} novas movimentações)`);
-        } catch (err) {
-          resultados.push({ processoId: id, numero, ok: false, erro: err.message });
-          console.error(`[Sync] Falha ${numero}:`, err.message);
-
-          // Se a sessão foi encerrada pelo tribunal, interrompe o grupo
-          if (err.message?.includes('Target closed') || err.message?.includes('Session closed') || err.message?.includes('detached')) {
-            console.warn(`[Sync] Sessão PJe encerrada — interrompendo grupo ${tribunal} ${grau}G`);
-            break;
+      // eProc: ainda sem otimização de sessão compartilhada — sync individual
+      if (sistema !== 'pje') {
+        for (const { id, numero } of grupoProcessos) {
+          try {
+            const r = await sincronizarProcesso(id);
+            resultados.push({ ...r, ok: true });
+          } catch (err) {
+            resultados.push({ processoId: id, numero, ok: false, erro: err.message });
+            console.error(`[Sync] ${numero}:`, err.message);
           }
         }
+        continue;
+      }
 
-        // Pausa entre processos — evita rate limiting do tribunal
-        await new Promise(r => setTimeout(r, 2_000));
-      }
-    } catch (err) {
-      console.error(`[Sync] Falha ao abrir sessão ${tribunal} ${grau}G:`, err.message);
-      for (const { id, numero } of grupoProcessos) {
-        if (!resultados.find(r => r.processoId === id)) {
-          resultados.push({ processoId: id, numero, ok: false, erro: `Sessão falhou: ${err.message}` });
+      // PJe: abre UM browser, faz login UMA VEZ, sincroniza todo o grupo
+      const url = URL_TRIBUNAL[tribunal]?.[grau];
+      if (!url) {
+        for (const { id, numero } of grupoProcessos) {
+          resultados.push({ processoId: id, numero, ok: false, erro: `URL não configurada para ${tribunal} grau ${grau}` });
         }
+        continue;
       }
-    } finally {
-      await browser?.close().catch(() => {});
+
+      let cred = null;
+      try {
+        cred = await lerCredencialGrau(master_responsavel_id, tribunal, grau);
+      } catch (err) {
+        console.warn(`[Sync] Erro ao buscar credencial ${tribunal} ${grau}G:`, err.message);
+      }
+      if (!cred) {
+        console.warn(`[Sync] Credencial não encontrada — ${tribunal} ${grau}G — pulando ${grupoProcessos.length} processo(s)`);
+        for (const { id, numero } of grupoProcessos) {
+          resultados.push({ processoId: id, numero, ok: false, erro: 'Credencial não encontrada' });
+        }
+        continue;
+      }
+
+      let browser = null;
+      console.log(`[Sync] Abrindo sessão PJe — ${tribunal} ${grau}G (${grupoProcessos.length} processo(s))`);
+
+      try {
+        ({ browser } = await pje.abrirSessao(url, cred.cpf, cred.senha, cred.totp_secret));
+
+        for (const { id, numero } of grupoProcessos) {
+          try {
+            const resultado = await pje.buscarProcessoCompletoComSessao(browser, url, numero);
+
+            // Busca registro completo do processo para resolverSeparacaoSocios
+            const processo = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
+            const novasMovs = await salvarResultadoSync(id, processo, resultado.dados, resultado.movimentacoes);
+
+            resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs });
+            console.log(`[Sync] OK: ${numero} (${novasMovs} novas movimentações)`);
+          } catch (err) {
+            resultados.push({ processoId: id, numero, ok: false, erro: err.message });
+            console.error(`[Sync] Falha ${numero}:`, err.message);
+
+            // Se a sessão foi encerrada pelo tribunal, interrompe o grupo
+            if (err.message?.includes('Target closed') || err.message?.includes('Session closed') || err.message?.includes('detached')) {
+              console.warn(`[Sync] Sessão PJe encerrada — interrompendo grupo ${tribunal} ${grau}G`);
+              break;
+            }
+          }
+
+          // Pausa entre processos — evita rate limiting do tribunal
+          await new Promise(r => setTimeout(r, 2_000));
+        }
+      } catch (err) {
+        console.error(`[Sync] Falha ao abrir sessão ${tribunal} ${grau}G:`, err.message);
+        for (const { id, numero } of grupoProcessos) {
+          if (!resultados.find(r => r.processoId === id)) {
+            resultados.push({ processoId: id, numero, ok: false, erro: `Sessão falhou: ${err.message}` });
+          }
+        }
+      } finally {
+        await browser?.close().catch(() => {});
+      }
     }
+  } finally {
+    await redis.del(LOCK_KEY).catch(() => {});
   }
 
   const ok   = resultados.filter(r => r.ok).length;

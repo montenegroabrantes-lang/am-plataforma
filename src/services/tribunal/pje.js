@@ -23,7 +23,7 @@ async function abrirBrowser() {
     args: browserArgs(),
     executablePath: process.env.CHROMIUM_PATH || undefined,
     defaultViewport: { width: 1280, height: 900 },
-    protocolTimeout: 180_000, // 3 min — PJe pode demorar ao avaliar JS em páginas pesadas
+    protocolTimeout: 300_000, // 5 min — Railway com Chromium pode ser mais lento que local
   });
 }
 
@@ -676,7 +676,7 @@ async function extrairMovimentacoes(page) {
     let linhas = [];
     for (const sel of SELETORES_TABELA) {
       const candidatas = await page.evaluate((s) => {
-        const rows = Array.from(document.querySelectorAll(s)).slice(1); // pula header
+        const rows = Array.from(document.querySelectorAll(s)).slice(1, 201); // pula header, max 200 linhas
         return rows.map(tr => {
           const cols = Array.from(tr.querySelectorAll('td'));
           if (cols.length < 2) return null;
@@ -760,9 +760,10 @@ async function extrairDados(page) {
   ];
 
   // Busca um campo por rótulo — chamada isolada para evitar timeout
+  // Limita a 400 células para evitar Runtime.callFunctionOn timed out em páginas JSF pesadas
   const porRotulo = async (rotulos) => page.evaluate(({ rotulos, labels }) => {
     const SKIP = new Set(labels);
-    const tds  = Array.from(document.querySelectorAll('td, th'));
+    const tds  = Array.from(document.querySelectorAll('td, th')).slice(0, 400);
     for (const td of tds) {
       const t = td.innerText?.trim() || '';
       if (!rotulos.some(r => t === r || t === r + ':')) continue;
