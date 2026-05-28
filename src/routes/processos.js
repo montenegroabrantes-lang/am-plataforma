@@ -194,6 +194,23 @@ processosRouter.post('/importar-painel', apenasMaster, async (req, res) => {
   }
 });
 
+// GET /api/processos/sync-status — status atual do sync (lock + última execução)
+processosRouter.get('/sync-status', apenasMaster, async (req, res) => {
+  try {
+    const { redis } = await import('../cache/redis.js');
+    const lockAtivo = await redis.exists('sync:global:lock').catch(() => 0);
+    const ultima = await db.queryOne(
+      `SELECT iniciado_em, concluido_em, total, via_datajud, via_mni, via_puppeteer, via_eproc, falhas
+       FROM sync_execucoes ORDER BY iniciado_em DESC LIMIT 1`
+    ).catch(() => null);
+    const emAndamento = lockAtivo && ultima && !ultima.concluido_em;
+    const travado     = lockAtivo && (!ultima || ultima.concluido_em);
+    res.json({ ok: true, lock_ativo: !!lockAtivo, em_andamento: emAndamento, travado, ultima_execucao: ultima || null });
+  } catch (err) {
+    res.json({ ok: false, lock_ativo: false, em_andamento: false, travado: false, ultima_execucao: null });
+  }
+});
+
 // POST /api/processos/sync-todos — dispara sync de todos os processos ativos imediatamente
 processosRouter.post('/sync-todos', apenasMaster, async (req, res) => {
   const forcar = req.body?.force === true || req.query?.force === 'true';
