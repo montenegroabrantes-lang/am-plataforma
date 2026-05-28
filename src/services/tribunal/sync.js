@@ -4,6 +4,7 @@ import { lerCredencialGrau, descriptografarCredencial } from '../../routes/crede
 import * as pje           from './pje.js';
 import * as eproc         from './eproc.js';
 import * as mni           from './mni.js';
+import * as datajud       from './datajud.js';
 
 const URL_TRIBUNAL = {
   TJPB: {
@@ -284,44 +285,72 @@ export async function sincronizarTodos() {
         continue;
       }
 
-      // PJe: tenta MNI primeiro por processo; Puppeteer como fallback via sessão compartilhada
-      let browser = null;
-      console.log(`[Sync] Abrindo sessão PJe — ${tribunal} ${grau}G (${grupoProcessos.length} processo(s))`);
+      // ── CAMADA 1: DataJud (lote, sem browser, ~15 min para 865 processos) ──
+      const numeros        = grupoProcessos.map(p => p.numero);
+      const naoEncontrados = [];
 
+      console.log(`[Sync DataJud] Consultando ${numeros.length} processo(s) — ${tribunal} ${grau}G`);
+      let datajudMap = new Map();
+      try {
+        datajudMap = await datajud.consultarLote(tribunal, numeros);
+        console.log(`[Sync DataJud] Encontrados: ${datajudMap.size}/${numeros.length}`);
+      } catch (djErr) {
+        console.warn(`[Sync DataJud] Falha geral — usando MNI/Puppeteer para todos:`, djErr.message);
+      }
+
+      for (const proc of grupoProcessos) {
+        if (datajudMap.has(proc.numero)) {
+          try {
+            const resultado = datajudMap.get(proc.numero);
+            const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [proc.id]);
+            const novasMovs = await salvarResultadoSync(proc.id, processo, resultado.dados, resultado.movimentacoes);
+            resultados.push({ processoId: proc.id, numero: proc.numero, ok: true, novasMovimentacoes: novasMovs, fonte: 'datajud' });
+            console.log(`[Sync DataJud] OK: ${proc.numero} (${novasMovs} novas movimentações)`);
+          } catch (err) {
+            console.warn(`[Sync DataJud] Salvar falhou para ${proc.numero}:`, err.message);
+            naoEncontrados.push(proc); // tenta pelo browser
+          }
+        } else {
+          naoEncontrados.push(proc);
+        }
+      }
+
+      // ── CAMADA 2: MNI + Puppeteer para o que o DataJud não cobriu ──
+      if (naoEncontrados.length === 0) continue;
+
+      console.log(`[Sync] ${naoEncontrados.length} processo(s) não cobertos pelo DataJud — MNI/Puppeteer`);
+      let browser = null;
       try {
         ({ browser } = await pje.abrirSessao(url, cred.cpf, cred.senha, cred.totp_secret));
 
-        for (const { id, numero } of grupoProcessos) {
+        for (const { id, numero } of naoEncontrados) {
           try {
             let resultado;
             try {
               resultado = await mni.consultarProcesso(url, cred.cpf, cred.senha, numero);
-              console.log(`[Sync] MNI OK: ${numero}`);
+              console.log(`[Sync MNI] OK: ${numero}`);
             } catch (mniErr) {
-              console.warn(`[Sync] MNI falhou (${mniErr.message}) — Puppeteer para ${numero}`);
+              console.warn(`[Sync MNI] Falhou (${mniErr.message}) — Puppeteer para ${numero}`);
               resultado = await pje.buscarProcessoCompletoComSessao(browser, url, numero);
             }
 
             const processo = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
             const novasMovs = await salvarResultadoSync(id, processo, resultado.dados, resultado.movimentacoes);
-
-            resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs });
-            console.log(`[Sync] OK: ${numero} (${novasMovs} novas movimentações)`);
+            resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs, fonte: 'puppeteer' });
+            console.log(`[Sync Puppeteer] OK: ${numero} (${novasMovs} novas movimentações)`);
           } catch (err) {
             resultados.push({ processoId: id, numero, ok: false, erro: err.message });
             console.error(`[Sync] Falha ${numero}:`, err.message);
-
             if (err.message?.includes('Target closed') || err.message?.includes('Session closed') || err.message?.includes('detached')) {
-              console.warn(`[Sync] Sessão PJe encerrada — interrompendo grupo ${tribunal} ${grau}G`);
+              console.warn(`[Sync] Sessão PJe encerrada — interrompendo fallback ${tribunal} ${grau}G`);
               break;
             }
           }
-
           await new Promise(r => setTimeout(r, 2_000));
         }
       } catch (err) {
         console.error(`[Sync] Falha ao abrir sessão ${tribunal} ${grau}G:`, err.message);
-        for (const { id, numero } of grupoProcessos) {
+        for (const { id, numero } of naoEncontrados) {
           if (!resultados.find(r => r.processoId === id)) {
             resultados.push({ processoId: id, numero, ok: false, erro: `Sessão falhou: ${err.message}` });
           }
