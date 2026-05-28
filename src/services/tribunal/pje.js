@@ -449,7 +449,72 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret, oab = null)
 }
 
 // ─────────────────────────────────────────────
+//  CLICAR NO LINK E ENTRAR NO PROCESSO
+//  O PJe frequentemente abre o detalhe em nova aba (popup/window).
+//  Detecta a nova aba e a retorna. Se o detalhe abrir na mesma aba,
+//  valida que a tela de busca (processosTable) sumiu.
+// ─────────────────────────────────────────────
+async function clicarEEntrarNoProcesso(page, linkEl, numero) {
+  const browser = page.browser();
+
+  // Escuta nova aba ANTES de clicar
+  let resolverNovaAba;
+  const promessaNovaAba = new Promise(resolve => { resolverNovaAba = resolve; });
+  const onTarget = async (target) => {
+    if (target.type() === 'page') resolverNovaAba(target);
+  };
+  browser.once('targetcreated', onTarget);
+
+  await linkEl.click();
+
+  // Aguarda: nova aba (5s) ou timeout (mesmo aba)
+  const novoTarget = await Promise.race([
+    promessaNovaAba,
+    new Promise(resolve => setTimeout(() => resolve(null), 5_000)),
+  ]);
+  browser.off('targetcreated', onTarget);
+
+  if (novoTarget) {
+    // Processo abriu em nova aba
+    const novaAba = await novoTarget.page();
+    novaAba.setDefaultTimeout(TIMEOUT);
+    await novaAba.bringToFront();
+    await novaAba.waitForNetworkIdle({ timeout: 20_000 }).catch(() => {});
+    await new Promise(r => setTimeout(r, AJAX_WAIT));
+    console.log(`[PJe] Processo ${numero} aberto em nova aba: ${novaAba.url()}`);
+    return novaAba;
+  }
+
+  // Mesma aba — aguarda navegação e valida
+  await page.waitForNetworkIdle({ timeout: TIMEOUT }).catch(() => {});
+  await new Promise(r => setTimeout(r, AJAX_WAIT));
+
+  // Rejeita se ainda estiver na tela de busca (processosTable visível = não entrou no detalhe)
+  const aindaNaBusca = await page.$('#fPP\\:processosTable, [id*="processosTable"]').catch(() => null);
+  if (aindaNaBusca) {
+    // Tenta encontrar aba do processo já aberta em segundo plano
+    const todasAbas = await browser.pages();
+    for (const aba of todasAbas) {
+      if (aba === page) continue;
+      const url = aba.url();
+      if (url.includes('pje') && !url.includes('ConsultaProcesso') && !url.includes('login')) {
+        aba.setDefaultTimeout(TIMEOUT);
+        await aba.bringToFront();
+        await aba.waitForNetworkIdle({ timeout: 15_000 }).catch(() => {});
+        console.log(`[PJe] Encontrou aba do processo em segundo plano: ${url}`);
+        return aba;
+      }
+    }
+    throw new Error(`Processo ${numero}: clicou no link mas tela de detalhe não abriu (processosTable ainda presente)`);
+  }
+
+  return page;
+}
+
+// ─────────────────────────────────────────────
 //  BUSCAR PROCESSO — pesquisa por número CNJ
+//  Retorna a página onde o detalhe foi aberto
+//  (pode ser uma nova aba — o chamador deve fechar se necessário)
 // ─────────────────────────────────────────────
 async function navegarParaProcesso(page, base, numero) {
   console.log(`[PJe] Buscando processo v2: ${numero}`);
@@ -511,19 +576,18 @@ async function navegarParaProcesso(page, base, numero) {
     }
     await new Promise(r => setTimeout(r, AJAX_WAIT + 2000));
 
-    // Link do resultado — tenta seletores progressivamente mais amplos
+    // Link do resultado — ID específico do TJPB primeiro, depois genérico
     const linkProcesso = await page.$(
+      `#fPP\\:processosTable td a, ` +
       `table[id*="processosTable"] td a, ` +
       `a[href*="${seq}"], ` +
       `td.rich-list-item a, ` +
       `td a[id*="processo"]`
     );
     if (linkProcesso) {
-      await linkProcesso.click();
-      await page.waitForNetworkIdle({ timeout: TIMEOUT }).catch(() => {});
-      await new Promise(r => setTimeout(r, AJAX_WAIT));
+      const procPage = await clicarEEntrarNoProcesso(page, linkProcesso, numero);
       console.log(`[PJe] Processo ${numero} aberto via ConsultaProcesso`);
-      return true;
+      return procPage;
     }
 
     // Diagnóstico se não encontrou link
@@ -565,11 +629,9 @@ async function navegarParaProcesso(page, base, numero) {
         `a[id*="cxExItem"], a[href*="${numero.replace(/\D/g, '')}"]`
       );
       if (linkProcesso) {
-        await linkProcesso.click();
-        await page.waitForNetworkIdle({ timeout: TIMEOUT }).catch(() => {});
-        await new Promise(r => setTimeout(r, AJAX_WAIT));
+        const procPage = await clicarEEntrarNoProcesso(page, linkProcesso, numero);
         console.log(`[PJe] Processo ${numero} aberto via painel autocomplete`);
-        return true;
+        return procPage;
       }
 
       // Fallback: pressiona Enter para submeter busca
@@ -579,11 +641,9 @@ async function navegarParaProcesso(page, base, numero) {
         `a[id*="cxExItem"], a[href*="${numero.replace(/\D/g, '')}"], td a[id*="processo"]`
       );
       if (linkAposEnter) {
-        await linkAposEnter.click();
-        await page.waitForNetworkIdle({ timeout: TIMEOUT }).catch(() => {});
-        await new Promise(r => setTimeout(r, AJAX_WAIT));
+        const procPage = await clicarEEntrarNoProcesso(page, linkAposEnter, numero);
         console.log(`[PJe] Processo ${numero} aberto via painel Enter`);
-        return true;
+        return procPage;
       }
     }
   } catch (err) {
@@ -804,8 +864,17 @@ async function extrairDados(page) {
   ).catch(() => '');
   if (tabelasIds) console.log(`[PJe] Tabelas no DOM: ${tabelasIds.slice(0, 400)}`);
 
-  const vara = await porSel('[id*="orgaoJulgador"]:not(th), [id*="OrgaoJulgador"]:not(th), .orgao-julgador') ||
-               await porRotulo(['Órgão julgador', 'Órgão Julgador', 'Vara']);
+  // Rejeita o conteúdo do select da tela de busca (lista de todas as varas do tribunal)
+  const isVaraValida = (v) =>
+    v && !v.includes('Selecione') && !v.includes('Órgão Julgador') &&
+    v.split('\n').length <= 3 && v.length <= 200;
+
+  const varaRaw = await porSel('[id*="orgaoJulgador"]:not(th), [id*="OrgaoJulgador"]:not(th), .orgao-julgador') ||
+                  await porRotulo(['Órgão julgador', 'Órgão Julgador', 'Vara']);
+  if (varaRaw && !isVaraValida(varaRaw)) {
+    console.warn(`[PJe] Vara descartada (parece dropdown de busca): "${varaRaw.slice(0, 80)}"`);
+  }
+  const vara = isVaraValida(varaRaw) ? varaRaw : null;
 
   const juiz = await porSel('[id*="magistrado"]:not(th), [id*="Magistrado"]:not(th)') ||
                await porRotulo(['Magistrado', 'Juiz', 'Juíza']);
@@ -843,8 +912,8 @@ export async function buscarMovimentacoes(url, cpf, senha, totpSecret, numeroPro
     const page = (await browser.pages()).pop();
     const base = new URL(url).origin + new URL(url).pathname.replace('/login.seam', '');
 
-    await navegarParaProcesso(page, base, numeroProcesso);
-    return await extrairMovimentacoes(page);
+    const procPage = await navegarParaProcesso(page, base, numeroProcesso);
+    return await extrairMovimentacoes(procPage);
 
   } finally {
     await browser?.close();
@@ -859,8 +928,8 @@ export async function buscarDadosProcesso(url, cpf, senha, totpSecret, numeroPro
     const page = (await browser.pages()).pop();
     const base = new URL(url).origin + new URL(url).pathname.replace('/login.seam', '');
 
-    await navegarParaProcesso(page, base, numeroProcesso);
-    return await extrairDados(page);
+    const procPage = await navegarParaProcesso(page, base, numeroProcesso);
+    return await extrairDados(procPage);
 
   } finally {
     await browser?.close();
@@ -875,14 +944,15 @@ export async function buscarProcessoCompleto(url, cpf, senha, totpSecret, numero
     const page = (await browser.pages()).pop();
     const base = new URL(url).origin + new URL(url).pathname.replace('/login.seam', '');
 
-    await navegarParaProcesso(page, base, numeroProcesso);
+    // procPage pode ser uma nova aba — browser.close() fecha tudo de qualquer forma
+    const procPage = await navegarParaProcesso(page, base, numeroProcesso);
 
     let dados = {};
     let movimentacoes = [];
     let expedientes = [];
-    try { dados = await comTimeout(extrairDados(page), 60_000, 'extrairDados'); } catch (e) { console.warn('[PJe] extrairDados falhou:', e.message); }
-    try { movimentacoes = await comTimeout(extrairMovimentacoes(page), 90_000, 'extrairMovimentacoes'); } catch (e) { console.warn('[PJe] extrairMovimentacoes falhou:', e.message); }
-    try { expedientes = await comTimeout(extrairExpedientes(page), 30_000, 'extrairExpedientes'); } catch (e) { console.warn('[PJe] extrairExpedientes falhou:', e.message); }
+    try { dados = await comTimeout(extrairDados(procPage), 60_000, 'extrairDados'); } catch (e) { console.warn('[PJe] extrairDados falhou:', e.message); }
+    try { movimentacoes = await comTimeout(extrairMovimentacoes(procPage), 90_000, 'extrairMovimentacoes'); } catch (e) { console.warn('[PJe] extrairMovimentacoes falhou:', e.message); }
+    try { expedientes = await comTimeout(extrairExpedientes(procPage), 30_000, 'extrairExpedientes'); } catch (e) { console.warn('[PJe] extrairExpedientes falhou:', e.message); }
 
     return {
       dados,
@@ -910,21 +980,26 @@ export async function abrirSessao(url, cpf, senha, totpSecret) {
 export async function buscarProcessoCompletoComSessao(browser, url, numero) {
   const page = await browser.newPage();
   page.setDefaultTimeout(TIMEOUT);
+  let procPage = page;
   try {
     const base = new URL(url).origin + new URL(url).pathname.replace('/login.seam', '');
-    await navegarParaProcesso(page, base, numero);
+
+    // procPage pode ser página diferente de page se o PJe abriu o detalhe em nova aba
+    procPage = await navegarParaProcesso(page, base, numero);
 
     // Sequencial: extrairDados e extrairMovimentacoes clicam em abas diferentes
     // — rodar em paralelo no mesmo page causa conflito e perde os dados
     let dados = {};
     let movimentacoes = [];
     let expedientes = [];
-    try { dados = await comTimeout(extrairDados(page), 60_000, 'extrairDados'); } catch (e) { console.warn('[PJe] extrairDados falhou:', e.message); }
-    try { movimentacoes = await comTimeout(extrairMovimentacoes(page), 90_000, 'extrairMovimentacoes'); } catch (e) { console.warn('[PJe] extrairMovimentacoes falhou:', e.message); }
-    try { expedientes = await comTimeout(extrairExpedientes(page), 30_000, 'extrairExpedientes'); } catch (e) { console.warn('[PJe] extrairExpedientes falhou:', e.message); }
+    try { dados = await comTimeout(extrairDados(procPage), 60_000, 'extrairDados'); } catch (e) { console.warn('[PJe] extrairDados falhou:', e.message); }
+    try { movimentacoes = await comTimeout(extrairMovimentacoes(procPage), 90_000, 'extrairMovimentacoes'); } catch (e) { console.warn('[PJe] extrairMovimentacoes falhou:', e.message); }
+    try { expedientes = await comTimeout(extrairExpedientes(procPage), 30_000, 'extrairExpedientes'); } catch (e) { console.warn('[PJe] extrairExpedientes falhou:', e.message); }
 
     return { dados, movimentacoes: [...movimentacoes, ...expedientes] };
   } finally {
+    // Fecha aba extra (nova aba do processo) se diferente da aba de navegação
+    if (procPage !== page) await procPage.close().catch(() => {});
     await page.close().catch(() => {});
   }
 }
