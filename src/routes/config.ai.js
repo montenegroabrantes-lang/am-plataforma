@@ -29,11 +29,16 @@ configAiRouter.post('/', async (req, res) => {
     return res.status(403).json({ ok: false, erro: 'Apenas usuários Master podem alterar configurações de IA.' });
   }
 
-  const { roteamento } = req.body;
+  const { roteamento, modelos } = req.body;
+
+  const MODELOS_CLAUDE = ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'];
+  const MODELOS_OPENAI = ['gpt-4o', 'gpt-4.5', 'gpt-5'];
 
   const pares = [
-    { chave: 'rota_diagnostico', valor: roteamento.diagnostico },
-    { chave: 'rota_peticao',     valor: roteamento.peticao },
+    { chave: 'rota_diagnostico',    valor: roteamento.diagnostico },
+    { chave: 'rota_peticao',        valor: roteamento.peticao },
+    { chave: 'claude_modelo',       valor: MODELOS_CLAUDE.includes(modelos?.claude) ? modelos.claude : 'claude-sonnet-4-6' },
+    { chave: 'openai_modelo_texto', valor: MODELOS_OPENAI.includes(modelos?.openai) ? modelos.openai : 'gpt-4o' },
   ];
 
   try {
@@ -120,7 +125,12 @@ configAiRouter.post('/camila', async (req, res) => {
   const secret = process.env.CAMILA_ADMIN_SECRET;
   if (!url) return res.status(503).json({ ok: false, erro: 'CAMILA_ADMIN_URL não configurada no Railway.' });
   try {
-    const { data } = await axios.post(`${url}/admin/ia-config`, req.body, {
+    const MODELOS_CLAUDE = ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'];
+    const MODELOS_OPENAI = ['gpt-4o', 'gpt-4.5', 'gpt-5'];
+    const payload = { ...req.body };
+    if (payload.claude_modelo && !MODELOS_CLAUDE.includes(payload.claude_modelo)) delete payload.claude_modelo;
+    if (payload.openai_modelo && !MODELOS_OPENAI.includes(payload.openai_modelo)) delete payload.openai_modelo;
+    const { data } = await axios.post(`${url}/admin/ia-config`, payload, {
       headers: { 'x-admin-secret': secret || '', 'Content-Type': 'application/json' }, timeout: 5000,
     });
     res.json(data);
