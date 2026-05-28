@@ -120,6 +120,9 @@ try {
   // 9. processos: sync_status
   await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS sync_status TEXT DEFAULT 'aguardando_primeira_captura'`).catch(() => {});
 
+  // 10. clientes: vinculo_ativo separado de ativo
+  await db.execute(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS vinculo_ativo BOOLEAN NOT NULL DEFAULT true`).catch(() => {});
+
   console.log('[migrate] ✅ Migração concluída');
 } catch (err) {
   console.error('[migrate] ❌ Erro (não fatal):', err.message);

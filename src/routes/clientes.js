@@ -135,7 +135,7 @@ clientesRouter.post('/:id/criar-tarefas-protocolo', apenasMaster, async (req, re
 
 // POST /api/clientes
 clientesRouter.post('/', async (req, res) => {
-  const { nome, cpf, whatsapp, email, cargo, orgao, periodo_vinculo, polo_passivo, lgpd_consentimento } = req.body;
+  const { nome, cpf, whatsapp, email, cargo, orgao, periodo_vinculo, polo_passivo, lgpd_consentimento, vinculo_ativo } = req.body;
 
   if (!nome || !cpf) return res.status(400).json({ ok: false, erro: 'nome e cpf são obrigatórios.' });
 
@@ -144,14 +144,16 @@ clientesRouter.post('/', async (req, res) => {
   try {
     const [novo] = await db.query(
       `INSERT INTO clientes (nome, cpf, whatsapp, email, cargo, orgao, periodo_vinculo,
-              polo_passivo, lgpd_consentimento, lgpd_data, master_responsavel_id, cadastrado_por)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+              polo_passivo, lgpd_consentimento, lgpd_data, vinculo_ativo,
+              master_responsavel_id, cadastrado_por)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        RETURNING id, nome, cpf`,
       [
         nome.trim(), cpf.replace(/\D/g, ''), whatsapp || null, email || null,
         cargo || null, orgao || null, periodo_vinculo || null, polo_passivo || null,
         lgpd_consentimento ?? false,
         lgpd_consentimento ? new Date() : null,
+        vinculo_ativo !== false,
         masterId, req.user.id,
       ]
     );
@@ -178,7 +180,21 @@ clientesRouter.post('/', async (req, res) => {
       entidadeId: novo.id, valorDepois: novo, ip: req._ip,
     });
 
-    res.status(201).json({ ok: true, cliente: novo });
+    // Sugestões automáticas de produtos compatíveis com cargo + orgão
+    let sugestoes = [];
+    if (cargo || orgao) {
+      sugestoes = await db.query(
+        `SELECT id, nome, polo_passivo_padrao
+         FROM produtos
+         WHERE ativo = true
+           AND (cargos_elegiveis IS NULL OR cardinality(cargos_elegiveis) = 0 OR $1 = ANY(cargos_elegiveis))
+           AND (orgaos_elegiveis IS NULL OR cardinality(orgaos_elegiveis) = 0 OR $2 = ANY(orgaos_elegiveis))
+         ORDER BY nome`,
+        [cargo || null, orgao || null]
+      );
+    }
+
+    res.status(201).json({ ok: true, cliente: novo, sugestoes });
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ ok: false, erro: 'CPF já cadastrado.' });
     throw e;
@@ -187,7 +203,7 @@ clientesRouter.post('/', async (req, res) => {
 
 // PATCH /api/clientes/:id
 clientesRouter.patch('/:id', async (req, res) => {
-  const campos = ['nome','whatsapp','email','cargo','orgao','periodo_vinculo','polo_passivo','ativo'];
+  const campos = ['nome','whatsapp','email','cargo','orgao','periodo_vinculo','polo_passivo','ativo','vinculo_ativo'];
   const updates = [];
   const params  = [];
 
