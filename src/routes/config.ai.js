@@ -5,6 +5,7 @@ import { Router }  from 'express';
 import { db }      from '../db/index.js';
 import { encrypt } from '../utils/crypto.js';
 import { recarregarAiConfig } from '../config/ai.js';
+import axios from 'axios';
 
 export const configAiRouter = Router();
 
@@ -94,3 +95,34 @@ configAiRouter.get('/test', async (req, res) => {
 async function recarregarConfigAI() {
   await recarregarAiConfig(db);
 }
+
+// GET /api/config/camila-ia — lê config atual da Camila
+configAiRouter.get('/camila', async (req, res) => {
+  const url    = process.env.CAMILA_ADMIN_URL;
+  const secret = process.env.CAMILA_ADMIN_SECRET;
+  if (!url) return res.json({ ok: true, config: { vendas: 'claude', processo: 'claude' }, offline: true });
+  try {
+    const { data } = await axios.get(`${url}/admin/ia-config`, {
+      headers: { 'x-admin-secret': secret || '' }, timeout: 5000,
+    });
+    res.json(data);
+  } catch {
+    res.json({ ok: false, config: { vendas: 'claude', processo: 'claude' }, offline: true });
+  }
+});
+
+// POST /api/config/camila-ia — aplica config na Camila em tempo real
+configAiRouter.post('/camila', async (req, res) => {
+  if (req.user?.perfil !== 'master') return res.status(403).json({ ok: false, erro: 'Apenas Master.' });
+  const url    = process.env.CAMILA_ADMIN_URL;
+  const secret = process.env.CAMILA_ADMIN_SECRET;
+  if (!url) return res.status(503).json({ ok: false, erro: 'CAMILA_ADMIN_URL não configurada no Railway.' });
+  try {
+    const { data } = await axios.post(`${url}/admin/ia-config`, req.body, {
+      headers: { 'x-admin-secret': secret || '', 'Content-Type': 'application/json' }, timeout: 5000,
+    });
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ ok: false, erro: 'Camila offline ou inacessível.' });
+  }
+});
