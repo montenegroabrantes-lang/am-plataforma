@@ -113,20 +113,30 @@ function parsearProcesso(xml) {
     xAttr(xml, 'magistrado', 'nome')         ||
     xText(xml, 'magistrado');
 
-  // Polo passivo (tipo PA ou RE) — primeiro nome de parte
+  // Classe/tipo de ação
+  const acao =
+    xAttr(xml, 'classeProcessual', 'nome') ||
+    xAttr(xml, 'dadosBasicos', 'classeProcessual') ||
+    xText(xml, 'classeProcessual') ||
+    xText(xml, 'classe');
+
+  // Polo ativo (tipo AT) — nomes das partes
+  const poloAtivoM = xml.match(/<polo[^>]*tipo="AT"[^>]*>([\s\S]*?)<\/polo>/i);
+  let polo_ativo = null;
+  const habilitados = [];
+  if (poloAtivoM) {
+    const nomesAt = [...poloAtivoM[1].matchAll(/<nome>([^<]+)<\/nome>/gi)];
+    polo_ativo = nomesAt.map(n => n[1].trim()).join(', ') || null;
+    for (const m of poloAtivoM[1].matchAll(/numeroOAB="([^"]+)"/gi)) habilitados.push(m[1]);
+    for (const m of poloAtivoM[1].matchAll(/<oab>([^<]+)<\/oab>/gi))  habilitados.push(m[1].trim());
+  }
+
+  // Polo passivo (tipo PA ou RE)
   const poloPassivoM = xml.match(/<polo[^>]*tipo="(?:PA|RE)"[^>]*>([\s\S]*?)<\/polo>/i);
   let polo_passivo = null;
   if (poloPassivoM) {
     const nomes = [...poloPassivoM[1].matchAll(/<nome>([^<]+)<\/nome>/gi)];
     polo_passivo = nomes.map(n => n[1].trim()).join(', ') || null;
-  }
-
-  // Habilitados — OABs dos advogados do polo ativo (AT)
-  const poloAtivoM = xml.match(/<polo[^>]*tipo="AT"[^>]*>([\s\S]*?)<\/polo>/i);
-  const habilitados = [];
-  if (poloAtivoM) {
-    for (const m of poloAtivoM[1].matchAll(/numeroOAB="([^"]+)"/gi)) habilitados.push(m[1]);
-    for (const m of poloAtivoM[1].matchAll(/<oab>([^<]+)<\/oab>/gi))  habilitados.push(m[1].trim());
   }
 
   // Movimentações
@@ -150,7 +160,7 @@ function parsearProcesso(xml) {
   }
 
   return {
-    dados: { vara, juiz, polo_passivo, habilitados },
+    dados: { vara, juiz, acao, polo_ativo, polo_passivo, habilitados },
     movimentacoes,
   };
 }

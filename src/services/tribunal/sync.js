@@ -226,21 +226,6 @@ export async function sincronizarTodos() {
     for (const [, grupoProcessos] of grupos) {
       const { tribunal, grau, sistema, master_responsavel_id } = grupoProcessos[0];
 
-      // eProc: ainda sem otimização de sessão compartilhada — sync individual
-      if (sistema !== 'pje') {
-        for (const { id, numero } of grupoProcessos) {
-          try {
-            const r = await sincronizarProcesso(id);
-            resultados.push({ ...r, ok: true });
-          } catch (err) {
-            resultados.push({ processoId: id, numero, ok: false, erro: err.message });
-            console.error(`[Sync] ${numero}:`, err.message);
-          }
-        }
-        continue;
-      }
-
-      // PJe: abre UM browser, faz login UMA VEZ, sincroniza todo o grupo
       const url = URL_TRIBUNAL[tribunal]?.[grau];
       if (!url) {
         for (const { id, numero } of grupoProcessos) {
@@ -263,6 +248,43 @@ export async function sincronizarTodos() {
         continue;
       }
 
+      // eProc: sessão compartilhada — um login, todos os processos do grupo
+      if (sistema !== 'pje') {
+        let eprocBrowser = null;
+        console.log(`[Sync] Abrindo sessão eProc — ${tribunal} ${grau}G (${grupoProcessos.length} processo(s))`);
+        try {
+          ({ browser: eprocBrowser } = await eproc.abrirSessao(url, cred.cpf, cred.senha, cred.totp_secret));
+          for (const { id, numero } of grupoProcessos) {
+            try {
+              const resultado = await eproc.buscarProcessoCompletoComSessao(eprocBrowser, url, numero, grau);
+              const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
+              const novasMovs = await salvarResultadoSync(id, processo, resultado.dados, resultado.movimentacoes);
+              resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs });
+              console.log(`[Sync eProc] OK: ${numero} (${novasMovs} novas movimentações)`);
+            } catch (err) {
+              resultados.push({ processoId: id, numero, ok: false, erro: err.message });
+              console.error(`[Sync eProc] Falha ${numero}:`, err.message);
+              if (err.message?.includes('Target closed') || err.message?.includes('Session closed')) {
+                console.warn(`[Sync eProc] Sessão encerrada — interrompendo grupo ${tribunal} ${grau}G`);
+                break;
+              }
+            }
+            await new Promise(r => setTimeout(r, 2_000));
+          }
+        } catch (err) {
+          console.error(`[Sync eProc] Falha ao abrir sessão ${tribunal} ${grau}G:`, err.message);
+          for (const { id, numero } of grupoProcessos) {
+            if (!resultados.find(r => r.processoId === id)) {
+              resultados.push({ processoId: id, numero, ok: false, erro: `Sessão eProc falhou: ${err.message}` });
+            }
+          }
+        } finally {
+          await eprocBrowser?.close().catch(() => {});
+        }
+        continue;
+      }
+
+      // PJe: tenta MNI primeiro por processo; Puppeteer como fallback via sessão compartilhada
       let browser = null;
       console.log(`[Sync] Abrindo sessão PJe — ${tribunal} ${grau}G (${grupoProcessos.length} processo(s))`);
 
@@ -271,9 +293,15 @@ export async function sincronizarTodos() {
 
         for (const { id, numero } of grupoProcessos) {
           try {
-            const resultado = await pje.buscarProcessoCompletoComSessao(browser, url, numero);
+            let resultado;
+            try {
+              resultado = await mni.consultarProcesso(url, cred.cpf, cred.senha, numero);
+              console.log(`[Sync] MNI OK: ${numero}`);
+            } catch (mniErr) {
+              console.warn(`[Sync] MNI falhou (${mniErr.message}) — Puppeteer para ${numero}`);
+              resultado = await pje.buscarProcessoCompletoComSessao(browser, url, numero);
+            }
 
-            // Busca registro completo do processo para resolverSeparacaoSocios
             const processo = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
             const novasMovs = await salvarResultadoSync(id, processo, resultado.dados, resultado.movimentacoes);
 
@@ -283,14 +311,12 @@ export async function sincronizarTodos() {
             resultados.push({ processoId: id, numero, ok: false, erro: err.message });
             console.error(`[Sync] Falha ${numero}:`, err.message);
 
-            // Se a sessão foi encerrada pelo tribunal, interrompe o grupo
             if (err.message?.includes('Target closed') || err.message?.includes('Session closed') || err.message?.includes('detached')) {
               console.warn(`[Sync] Sessão PJe encerrada — interrompendo grupo ${tribunal} ${grau}G`);
               break;
             }
           }
 
-          // Pausa entre processos — evita rate limiting do tribunal
           await new Promise(r => setTimeout(r, 2_000));
         }
       } catch (err) {

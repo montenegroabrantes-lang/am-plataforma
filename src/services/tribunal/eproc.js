@@ -22,6 +22,7 @@ async function abrirBrowser() {
     args: browserArgs(),
     executablePath: process.env.CHROMIUM_PATH || undefined,
     defaultViewport: { width: 1280, height: 900 },
+    protocolTimeout: 300_000,
   });
 }
 
@@ -237,6 +238,16 @@ async function extrairDados(page) {
                  txt('[id*="Magistrado"]') ||
                  txt('[id*="magistrado"]');
 
+    const acao = txt('#lblClasse') ||
+                 txt('[id*="Classe"]') ||
+                 txt('[id*="classe"]') ||
+                 txt('[id*="tipoAcao"]');
+
+    const polo_ativo = txt('#txtAutor') ||
+                       txt('[id*="Autor"]') ||
+                       txt('[id*="polo_ativo"]') ||
+                       txt('[id*="requerente"]');
+
     const polo_passivo = txt('#txtReu') ||
                          txt('[id*="Reu"]') ||
                          txt('[id*="polo_passivo"]');
@@ -253,13 +264,35 @@ async function extrairDados(page) {
     .map(el => el.innerText?.trim())
     .filter(t => t && /OAB\/[A-Z]{2}\s?\d{3,6}|^\d{4,6}$/.test(t));
 
-    return { vara, juiz, polo_passivo, habilitados };
+    return { vara, juiz, acao, polo_ativo, polo_passivo, habilitados };
   });
 }
 
 // ─────────────────────────────────────────────
 //  EXPORTAÇÕES PÚBLICAS
 // ─────────────────────────────────────────────
+
+// ─────────────────────────────────────────────
+//  SESSÃO COMPARTILHADA — sync em lote eProc
+// ─────────────────────────────────────────────
+
+export async function abrirSessao(url, cpf, senha, totpSecret) {
+  return login(url, cpf, senha, totpSecret);
+}
+
+export async function buscarProcessoCompletoComSessao(browser, url, numeroProcesso, grau = '1') {
+  const page    = await browser.newPage();
+  page.setDefaultTimeout(TIMEOUT);
+  try {
+    const baseUrl = new URL(url).origin;
+    await navegarParaProcesso(page, baseUrl, grau, numeroProcesso);
+    const dados         = await extrairDados(page);
+    const movimentacoes = await extrairMovimentacoes(page);
+    return { dados, movimentacoes };
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
 
 export async function buscarMovimentacoes(url, cpf, senha, totpSecret, numeroProcesso, grau = '1') {
   let browser;
