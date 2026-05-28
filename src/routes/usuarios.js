@@ -75,6 +75,17 @@ usuariosRouter.post('/', apenasMaster, async (req, res) => {
   }
 });
 
+// PATCH /api/usuarios/me — o próprio usuário atualiza seu WhatsApp
+usuariosRouter.patch('/me', async (req, res) => {
+  const { whatsapp } = req.body;
+  const phone = whatsapp ? String(whatsapp).replace(/\D/g, '') : null;
+  await db.execute(
+    `UPDATE usuarios SET whatsapp = $1 WHERE id = $2`,
+    [phone || null, req.user.id]
+  );
+  res.json({ ok: true });
+});
+
 // PATCH /api/usuarios/:id — atualiza nome, email ou ativo
 usuariosRouter.patch('/:id', apenasMaster, async (req, res) => {
   const { id } = req.params;

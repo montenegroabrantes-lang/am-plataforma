@@ -4,18 +4,22 @@ import { criarSyncWorker }      from './sync.worker.js';
 import { criarBackupWorker }    from './backup.worker.js';
 import { criarAudienciaWorker }        from './audiencia.worker.js';
 import { criarSACWorker, agendarSACWorker } from './sac.worker.js';
+import { criarAlertasWorker }   from './alertas.worker.js';
 
 let syncQueue;
 let backupQueue;
+let alertasQueue;
 
 export async function iniciarWorkers() {
-  syncQueue   = new Queue('sync-tribunal', { connection: redis });
-  backupQueue = new Queue('backup',        { connection: redis });
+  syncQueue    = new Queue('sync-tribunal', { connection: redis });
+  backupQueue  = new Queue('backup',        { connection: redis });
+  alertasQueue = new Queue('alertas',       { connection: redis });
 
   criarSyncWorker();
   criarBackupWorker();
   criarAudienciaWorker();
   criarSACWorker();
+  criarAlertasWorker();
   await agendarSACWorker();
 
   // Agenda sync de todos os processos a cada hora
@@ -42,7 +46,19 @@ export async function iniciarWorkers() {
     }
   );
 
-  console.log('[Workers] Sync (a cada hora) e Backup (02h diário) iniciados.');
+  // Lembretes diários de tarefas via WhatsApp às 8h
+  await alertasQueue.add(
+    'lembretes-diarios',
+    {},
+    {
+      repeat:           { pattern: '0 8 * * *' },
+      jobId:            'lembretes-diarios-recorrente',
+      removeOnComplete: 3,
+      removeOnFail:     3,
+    }
+  );
+
+  console.log('[Workers] Sync (a cada hora), Backup (02h) e Alertas WhatsApp (08h) iniciados.');
 }
 
 // Dispara sync imediato de um processo (chamado pelas rotas)
@@ -54,4 +70,4 @@ export async function enfileirarSincronizarProcesso(processoId) {
   });
 }
 
-export { syncQueue, backupQueue };
+export { syncQueue, backupQueue, alertasQueue };

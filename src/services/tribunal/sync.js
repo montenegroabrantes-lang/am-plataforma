@@ -110,6 +110,25 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
           [diag.significado, diag.proximaAcao, diag.urgencia, diag.prazoDiasUteis ?? null, movId]
         );
         console.log(`[IA] Diagnóstico gerado: ${mov.numero} — urgência ${diag.urgencia}`);
+
+        // WhatsApp imediato para movimentações CRÍTICAS
+        if (diag.urgencia === 'CRITICO') {
+          try {
+            const { enviarAlerta } = await import('../digisac/index.js');
+            const master = await db.queryOne(
+              `SELECT whatsapp FROM usuarios WHERE id = $1`, [processo.master_responsavel_id]
+            );
+            if (master?.whatsapp) {
+              const msg =
+                `⚠️ *CRÍTICO — ${mov.numero}*\n\n` +
+                `${(mov.texto || '').slice(0, 300)}\n\n` +
+                `▶ ${diag.proximaAcao || 'Verificar processo'}`;
+              await enviarAlerta(master.whatsapp, msg);
+            }
+          } catch (alertErr) {
+            console.warn('[Alerta] Falha ao enviar WhatsApp CRÍTICO:', alertErr.message);
+          }
+        }
       } catch (e) {
         console.warn(`[IA] Diagnóstico falhou para movimentação ${movId}:`, e.message);
       }

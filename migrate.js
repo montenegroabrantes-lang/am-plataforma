@@ -94,6 +94,32 @@ try {
       ADD COLUMN IF NOT EXISTS oab TEXT
   `).catch(() => {});
 
+  // 6. documentos: adiciona coluna deletado, torna drive_file_id/drive_url nullable, expande categorias
+  await db.execute(`ALTER TABLE documentos ADD COLUMN IF NOT EXISTS deletado BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
+  await db.execute(`ALTER TABLE documentos ALTER COLUMN drive_file_id DROP NOT NULL`).catch(() => {});
+  await db.execute(`ALTER TABLE documentos ALTER COLUMN drive_url DROP NOT NULL`).catch(() => {});
+  await db.execute(`ALTER TABLE documentos DROP CONSTRAINT IF EXISTS documentos_categoria_check`).catch(() => {});
+  await db.execute(`
+    ALTER TABLE documentos
+      ADD CONSTRAINT documentos_categoria_check
+      CHECK (categoria IN ('pessoais','vinculo','procuracao','outro'))
+  `).catch(() => {});
+
+  // 7. usuarios: whatsapp para alertas
+  await db.execute(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS whatsapp TEXT`).catch(() => {});
+
+  // 8. tarefas: cliente_produto_id + numero_processo_inserido + índice único protocolo
+  await db.execute(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS cliente_produto_id UUID REFERENCES cliente_produtos(id)`).catch(() => {});
+  await db.execute(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS numero_processo_inserido TEXT`).catch(() => {});
+  await db.execute(`
+    CREATE UNIQUE INDEX IF NOT EXISTS uq_tarefa_protocolo_ativa
+    ON tarefas (cliente_produto_id, tipo)
+    WHERE status NOT IN ('concluida', 'cancelada')
+  `).catch(() => {});
+
+  // 9. processos: sync_status
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS sync_status TEXT DEFAULT 'aguardando_primeira_captura'`).catch(() => {});
+
   console.log('[migrate] ✅ Migração concluída');
 } catch (err) {
   console.error('[migrate] ❌ Erro (não fatal):', err.message);

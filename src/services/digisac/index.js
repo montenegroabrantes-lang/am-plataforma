@@ -76,6 +76,35 @@ export async function sincronizarEventosSAC() {
   return salvos;
 }
 
+// Envia mensagem de texto via Digisac → WhatsApp do destinatário
+export async function enviarAlerta(numero, texto) {
+  const api = client();
+  if (!api) {
+    console.warn('[Digisac] enviarAlerta ignorado — Digisac não configurado.');
+    return false;
+  }
+
+  const phone = String(numero).replace(/\D/g, '');
+  if (phone.length < 10) {
+    console.warn('[Digisac] enviarAlerta: número inválido —', numero);
+    return false;
+  }
+
+  try {
+    await api.post('/messages', {
+      serviceId:    process.env.DIGISAC_SERVICE_ID,
+      contactPhone: phone.startsWith('55') ? phone : `55${phone}`,
+      type:         'text',
+      text:         texto,
+    });
+    console.log(`[Digisac] Alerta enviado para +${phone}`);
+    return true;
+  } catch (err) {
+    console.error('[Digisac] Erro ao enviar alerta:', err.message);
+    return false;
+  }
+}
+
 function classificarTipo(ticket) {
   const status = ticket.status?.toLowerCase() || '';
   const tags   = (ticket.tags || []).map(t => t.toLowerCase());

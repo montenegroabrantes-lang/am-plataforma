@@ -1,8 +1,12 @@
-import { Router } from 'express';
-import { db }      from '../db/index.js';
+import { Router }   from 'express';
+import multer        from 'multer';
+import { Readable }  from 'stream';
+import { db }        from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
-import { criarPastaCliente, criarSubpasta } from '../services/drive/index.js';
+import { criarPastaCliente, criarSubpasta, uploadPdf } from '../services/drive/index.js';
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 export const clientesRouter = Router();
 
@@ -64,7 +68,7 @@ clientesRouter.get('/:id', async (req, res) => {
       [req.params.id]
     ),
     db.query(
-      `SELECT id, categoria, nome, drive_url, criado_em FROM documentos WHERE cliente_id = $1`,
+      `SELECT id, categoria, nome, drive_url, criado_em FROM documentos WHERE cliente_id = $1 AND deletado = false`,
       [req.params.id]
     ),
     db.query(
@@ -200,5 +204,77 @@ clientesRouter.patch('/:id', async (req, res) => {
   updates.push('atualizado_em = NOW()');
 
   await db.execute(`UPDATE clientes SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
+  res.json({ ok: true });
+});
+
+// ─── DOCUMENTOS ───────────────────────────────────────────────────────────────
+
+const CATS_VALIDAS = ['pessoais', 'vinculo', 'procuracao', 'outro'];
+
+// GET /api/clientes/:id/documentos
+clientesRouter.get('/:id/documentos', async (req, res) => {
+  const rows = await db.query(
+    `SELECT id, nome, categoria, drive_url, criado_em
+     FROM documentos WHERE cliente_id = $1 AND deletado = false
+     ORDER BY categoria, criado_em DESC`,
+    [req.params.id]
+  );
+  res.json({ ok: true, documentos: rows });
+});
+
+// POST /api/clientes/:id/documentos — upload PDF para o Drive
+clientesRouter.post('/:id/documentos', upload.single('arquivo'), async (req, res) => {
+  const clienteId = req.params.id;
+  const { categoria = 'outro', nome } = req.body;
+
+  if (!CATS_VALIDAS.includes(categoria)) {
+    return res.status(400).json({ ok: false, erro: 'Categoria inválida.' });
+  }
+  if (!req.file) {
+    return res.status(400).json({ ok: false, erro: 'Nenhum arquivo enviado.' });
+  }
+
+  const cliente = await db.queryOne(
+    `SELECT id, nome, cpf, drive_pasta_id FROM clientes WHERE id = $1`, [clienteId]
+  );
+  if (!cliente) return res.status(404).json({ ok: false, erro: 'Cliente não encontrado.' });
+
+  let pastaId = cliente.drive_pasta_id;
+  if (!pastaId) {
+    try {
+      const { id, url } = await criarPastaCliente(cliente.cpf || clienteId, cliente.nome);
+      pastaId = id;
+      await db.execute(`UPDATE clientes SET drive_pasta_id=$1, drive_pasta_url=$2 WHERE id=$3`, [id, url, clienteId]);
+    } catch (err) {
+      return res.status(500).json({ ok: false, erro: 'Criação de pasta falhou: ' + err.message });
+    }
+  }
+
+  const nomeArquivo = (nome || `${categoria}_${Date.now()}`).replace(/[^\w\-. ]/g, '_') + '.pdf';
+  let driveUrl = null, driveFileId = null;
+  try {
+    const stream    = Readable.from(req.file.buffer);
+    const uploaded  = await uploadPdf(pastaId, nomeArquivo, stream);
+    driveUrl        = uploaded.url;
+    driveFileId     = uploaded.id;
+  } catch (err) {
+    return res.status(500).json({ ok: false, erro: 'Upload falhou: ' + err.message });
+  }
+
+  const [doc] = await db.query(
+    `INSERT INTO documentos (cliente_id, nome, categoria, drive_file_id, drive_url)
+     VALUES ($1,$2,$3,$4,$5) RETURNING id, nome, categoria, drive_url, criado_em`,
+    [clienteId, nome || nomeArquivo, categoria, driveFileId, driveUrl]
+  );
+
+  res.status(201).json({ ok: true, documento: doc });
+});
+
+// DELETE /api/clientes/:id/documentos/:docId
+clientesRouter.delete('/:id/documentos/:docId', async (req, res) => {
+  await db.execute(
+    `UPDATE documentos SET deletado = true WHERE id = $1 AND cliente_id = $2`,
+    [req.params.docId, req.params.id]
+  );
   res.json({ ok: true });
 });

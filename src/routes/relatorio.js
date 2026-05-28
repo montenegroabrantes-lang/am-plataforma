@@ -130,6 +130,54 @@ relatorioRouter.get('/financeiro', async (req, res) => {
   res.json({ ok: true, mensal: rows });
 });
 
+// GET /api/relatorio/diligencias?dias=30 — processos sem movimentação há X dias, agrupados por vara
+relatorioRouter.get('/diligencias', async (req, res) => {
+  const dias = Math.min(Number(req.query.dias) || 30, 365);
+  const { id, perfil, master_id, pode_marcar_restrito } = req.user;
+  const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? id : master_id);
+
+  const params = [dias];
+  const filtroM = masterId ? `AND p.master_responsavel_id = '${masterId}'` : '';
+
+  const rows = await db.query(
+    `SELECT
+       p.id, p.numero, p.tribunal, p.vara, p.status,
+       c.nome AS cliente_nome,
+       MAX(m.data_movimentacao) AS ultima_movimentacao,
+       NOW()::date - MAX(m.data_movimentacao)::date AS dias_sem_movimentacao
+     FROM processos p
+     LEFT JOIN movimentacoes m ON m.processo_id = p.id
+     LEFT JOIN clientes c      ON c.id = p.cliente_id
+     WHERE p.status = 'ativo' ${filtroM}
+     GROUP BY p.id, p.numero, p.tribunal, p.vara, p.status, c.nome
+     HAVING MAX(m.data_movimentacao) < NOW() - ($1 || ' days')::interval
+        OR  MAX(m.data_movimentacao) IS NULL
+     ORDER BY dias_sem_movimentacao DESC NULLS FIRST, p.vara NULLS LAST`,
+    params
+  );
+
+  // Agrupa por vara
+  const porVara = {};
+  for (const r of rows) {
+    const vara = r.vara || 'Vara não informada';
+    if (!porVara[vara]) porVara[vara] = { vara, tribunal: r.tribunal, processos: [] };
+    porVara[vara].processos.push({
+      id:                  r.id,
+      numero:              r.numero,
+      cliente_nome:        r.cliente_nome,
+      ultima_movimentacao: r.ultima_movimentacao,
+      dias:                r.dias_sem_movimentacao ?? null,
+    });
+  }
+
+  res.json({
+    ok: true,
+    total: rows.length,
+    dias_referencia: dias,
+    por_vara: Object.values(porVara).sort((a, b) => b.processos.length - a.processos.length),
+  });
+});
+
 function indexarPorChave(rows, chave, valor) {
   const obj = {};
   for (const row of rows) obj[row[chave]] = Number(row[valor]);
