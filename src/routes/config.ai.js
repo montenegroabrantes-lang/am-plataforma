@@ -4,6 +4,7 @@
 import { Router }  from 'express';
 import { db }      from '../db/index.js';
 import { encrypt } from '../utils/crypto.js';
+import { recarregarAiConfig } from '../config/ai.js';
 
 export const configAiRouter = Router();
 
@@ -97,7 +98,5 @@ configAiRouter.get('/test', async (req, res) => {
 });
 
 async function recarregarConfigAI() {
-  // No modelo atual, aiConfig lê process.env na inicialização.
-  // Configurações salvas no banco entram em vigor no próximo restart do servidor.
-  // Para reload sem restart, substituir por leitura do banco em tempo real.
+  await recarregarAiConfig(db);
 }

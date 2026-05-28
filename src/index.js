@@ -70,6 +70,8 @@ async function iniciar() {
     await db.query('SELECT 1');
     dbOk = true;
     console.log('[DB] PostgreSQL conectado.');
+    const { recarregarAiConfig } = await import('./config/ai.js');
+    await recarregarAiConfig(db);
   } catch (err) {
     console.error('[FATAL] PostgreSQL falhou:', err.stack || err);
     process.exit(1);
