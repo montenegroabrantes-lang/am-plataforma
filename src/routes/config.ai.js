@@ -100,13 +100,15 @@ async function recarregarConfigAI() {
 configAiRouter.get('/camila', async (req, res) => {
   const url    = process.env.CAMILA_ADMIN_URL;
   const secret = process.env.CAMILA_ADMIN_SECRET;
+  console.log(`[Camila Config] URL=${url ? url : 'NÃO DEFINIDA'} SECRET=${secret ? 'definido' : 'NÃO DEFINIDO'}`);
   if (!url) return res.json({ ok: true, config: { vendas: 'claude', processo: 'claude' }, offline: true });
   try {
     const { data } = await axios.get(`${url}/admin/ia-config`, {
       headers: { 'x-admin-secret': secret || '' }, timeout: 5000,
     });
     res.json(data);
-  } catch {
+  } catch (err) {
+    console.error(`[Camila Config] Erro ao conectar: ${err.response?.status || err.message}`);
     res.json({ ok: false, config: { vendas: 'claude', processo: 'claude' }, offline: true });
   }
 });
