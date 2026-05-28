@@ -196,6 +196,16 @@ processosRouter.post('/importar-painel', apenasMaster, async (req, res) => {
 
 // POST /api/processos/sync-todos — dispara sync de todos os processos ativos imediatamente
 processosRouter.post('/sync-todos', apenasMaster, async (req, res) => {
+  const forcar = req.body?.force === true || req.query?.force === 'true';
+
+  if (forcar) {
+    try {
+      const { redis } = await import('../cache/redis.js');
+      await redis.del('sync:global:lock');
+      console.log('[Sync] Lock removido por solicitação manual (force=true)');
+    } catch { /* Redis indisponível */ }
+  }
+
   try {
     const { syncQueue } = await import('../workers/index.js');
     if (syncQueue) {
