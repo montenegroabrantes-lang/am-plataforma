@@ -58,17 +58,75 @@ clientesRouter.get('/:id', async (req, res) => {
   );
   if (!cliente) return res.status(404).json({ ok: false, erro: 'Cliente não encontrado.' });
 
-  const processos = await db.query(
-    `SELECT id, numero, tribunal, status, produto_id FROM processos WHERE cliente_id = $1`,
-    [req.params.id]
+  const [processos, documentos, teses] = await Promise.all([
+    db.query(
+      `SELECT id, numero, tribunal, status, produto_id FROM processos WHERE cliente_id = $1`,
+      [req.params.id]
+    ),
+    db.query(
+      `SELECT id, categoria, nome, drive_url, criado_em FROM documentos WHERE cliente_id = $1`,
+      [req.params.id]
+    ),
+    db.query(
+      `SELECT cp.id, cp.honorarios_pct, cp.criado_em,
+              pr.id AS produto_id, pr.nome AS produto_nome, pr.polo_passivo_padrao
+       FROM cliente_produtos cp
+       JOIN produtos pr ON pr.id = cp.produto_id
+       WHERE cp.cliente_id = $1
+       ORDER BY pr.nome`,
+      [req.params.id]
+    ),
+  ]);
+
+  res.json({ ok: true, cliente, processos, documentos, teses });
+});
+
+// POST /api/clientes/:id/criar-tarefas-protocolo
+clientesRouter.post('/:id/criar-tarefas-protocolo', apenasMaster, async (req, res) => {
+  const clienteId = req.params.id;
+
+  const cliente = await db.queryOne('SELECT id, nome FROM clientes WHERE id = $1', [clienteId]);
+  if (!cliente) return res.status(404).json({ ok: false, erro: 'Cliente não encontrado.' });
+
+  const teses = await db.query(
+    `SELECT cp.id AS cliente_produto_id, pr.nome AS produto_nome
+     FROM cliente_produtos cp
+     JOIN produtos pr ON pr.id = cp.produto_id
+     WHERE cp.cliente_id = $1`,
+    [clienteId]
   );
 
-  const documentos = await db.query(
-    `SELECT id, categoria, nome, drive_url, criado_em FROM documentos WHERE cliente_id = $1`,
-    [req.params.id]
-  );
+  if (teses.length === 0) {
+    return res.status(400).json({ ok: false, erro: 'Cliente não possui teses jurídicas vinculadas.' });
+  }
 
-  res.json({ ok: true, cliente, processos, documentos });
+  const criadas = [];
+  const existentes = [];
+
+  for (const tese of teses) {
+    const jaExiste = await db.queryOne(
+      `SELECT id FROM tarefas
+       WHERE cliente_produto_id = $1 AND tipo = 'protocolar'
+       AND status NOT IN ('concluida', 'cancelada')`,
+      [tese.cliente_produto_id]
+    );
+
+    if (jaExiste) { existentes.push(tese.produto_nome); continue; }
+
+    const [nova] = await db.query(
+      `INSERT INTO tarefas (cliente_produto_id, tipo, descricao, urgencia, validado_por, status)
+       VALUES ($1, 'protocolar', $2, 'MEDIO', $3, 'pendente')
+       RETURNING id`,
+      [
+        tese.cliente_produto_id,
+        `Protocolar processo — ${tese.produto_nome} — ${cliente.nome}`,
+        req.user.id,
+      ]
+    );
+    criadas.push({ id: nova.id, produto: tese.produto_nome });
+  }
+
+  res.json({ ok: true, criadas: criadas.length, existentes: existentes.length, tarefas: criadas });
 });
 
 // POST /api/clientes
