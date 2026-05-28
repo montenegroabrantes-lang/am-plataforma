@@ -194,6 +194,33 @@ processosRouter.post('/importar-painel', apenasMaster, async (req, res) => {
   }
 });
 
+// POST /api/processos/sync-todos — dispara sync de todos os processos ativos imediatamente
+processosRouter.post('/sync-todos', apenasMaster, async (req, res) => {
+  try {
+    const { syncQueue } = await import('../workers/index.js');
+    if (syncQueue) {
+      // Remove jobs pendentes do mesmo tipo para não empilhar
+      await syncQueue.obliterate({ force: false }).catch(() => {});
+      await syncQueue.add('sincronizar-todos', {}, { removeOnComplete: 5, removeOnFail: 5 });
+      console.log('[Sync] Sync manual de todos os processos enfileirado');
+      return res.json({ ok: true, status: 'enfileirado', mensagem: 'Sync iniciado. Pode levar alguns minutos dependendo do número de processos.' });
+    }
+  } catch { /* Redis indisponível */ }
+
+  // Fallback: roda direto (bloqueia a requisição — evitar em produção com 800+ processos)
+  try {
+    const { sincronizarTodos } = await import('../services/tribunal/sync.js');
+    const resultado = await sincronizarTodos();
+    if (resultado?.ignorado) return res.json({ ok: true, ignorado: true, motivo: resultado.motivo });
+    const ok   = resultado.filter(r => r.ok).length;
+    const fail = resultado.filter(r => !r.ok).length;
+    res.json({ ok: true, total: resultado.length, sincronizados: ok, falhas: fail });
+  } catch (err) {
+    console.error('[Sync todos]', err.message);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
 // POST /api/processos/:id/sync — enfileira sync individual (não bloqueia — Puppeteer leva 60-90s)
 processosRouter.post('/:id/sync', async (req, res) => {
   const { id } = req.params;
