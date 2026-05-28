@@ -72,6 +72,23 @@ processosRouter.get('/', async (req, res) => {
   res.json({ ok: true, processos: rows, total: Number(total), page, limite: Number(limite) });
 });
 
+// GET /api/processos/sync-status — status atual do sync (lock + última execução)
+processosRouter.get('/sync-status', apenasMaster, async (req, res) => {
+  try {
+    const { redis } = await import('../cache/redis.js');
+    const lockAtivo = await redis.exists('sync:global:lock').catch(() => 0);
+    const ultima = await db.queryOne(
+      `SELECT iniciado_em, concluido_em, total, via_datajud, via_mni, via_puppeteer, via_eproc, falhas
+       FROM sync_execucoes ORDER BY iniciado_em DESC LIMIT 1`
+    ).catch(() => null);
+    const emAndamento = lockAtivo && ultima && !ultima.concluido_em;
+    const travado     = lockAtivo && (!ultima || ultima.concluido_em);
+    res.json({ ok: true, lock_ativo: !!lockAtivo, em_andamento: emAndamento, travado, ultima_execucao: ultima || null });
+  } catch (err) {
+    res.json({ ok: false, lock_ativo: false, em_andamento: false, travado: false, ultima_execucao: null });
+  }
+});
+
 // GET /api/processos/:id
 processosRouter.get('/:id', async (req, res) => {
   const p = await db.queryOne(
@@ -191,23 +208,6 @@ processosRouter.post('/importar-painel', apenasMaster, async (req, res) => {
   } catch (err) {
     console.error('[Importar Painel]', err.message);
     res.status(500).json({ ok: false, erro: err.message });
-  }
-});
-
-// GET /api/processos/sync-status — status atual do sync (lock + última execução)
-processosRouter.get('/sync-status', apenasMaster, async (req, res) => {
-  try {
-    const { redis } = await import('../cache/redis.js');
-    const lockAtivo = await redis.exists('sync:global:lock').catch(() => 0);
-    const ultima = await db.queryOne(
-      `SELECT iniciado_em, concluido_em, total, via_datajud, via_mni, via_puppeteer, via_eproc, falhas
-       FROM sync_execucoes ORDER BY iniciado_em DESC LIMIT 1`
-    ).catch(() => null);
-    const emAndamento = lockAtivo && ultima && !ultima.concluido_em;
-    const travado     = lockAtivo && (!ultima || ultima.concluido_em);
-    res.json({ ok: true, lock_ativo: !!lockAtivo, em_andamento: emAndamento, travado, ultima_execucao: ultima || null });
-  } catch (err) {
-    res.json({ ok: false, lock_ativo: false, em_andamento: false, travado: false, ultima_execucao: null });
   }
 });
 
