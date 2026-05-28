@@ -46,8 +46,11 @@ export async function consultarProcesso(tribunal, numero) {
   const indice = INDICE[tribunal];
   if (!indice) throw new Error(`DataJud: tribunal ${tribunal} não mapeado`);
 
+  // DataJud armazena o número sem formatação (só dígitos): "08017009820258151071"
+  const numeroPuro = numero.replace(/\D/g, '');
+
   const resp = await http().post(`/${indice}/_search`, {
-    query: { match: { numeroProcesso: numero } },
+    query: { match: { numeroProcesso: numeroPuro } },
     size: 1,
   });
 
