@@ -194,11 +194,25 @@ processosRouter.post('/importar-painel', apenasMaster, async (req, res) => {
   }
 });
 
-// POST /api/processos/:id/sync — sincroniza processo individual via PJe/eProc
+// POST /api/processos/:id/sync — enfileira sync individual (não bloqueia — Puppeteer leva 60-90s)
 processosRouter.post('/:id/sync', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { syncQueue } = await import('../workers/index.js');
+    if (syncQueue) {
+      await syncQueue.add('sincronizar-processo', { processoId: id }, {
+        removeOnComplete: 5,
+        removeOnFail: 10,
+      });
+      console.log(`[Sync individual] enfileirado: ${id}`);
+      return res.json({ ok: true, status: 'enfileirado' });
+    }
+  } catch { /* Redis indisponível — fallback síncrono */ }
+
+  // Fallback sem Redis: roda direto mas pode exceder timeout HTTP do proxy
   try {
     const { sincronizarProcesso } = await import('../services/tribunal/sync.js');
-    const resultado = await sincronizarProcesso(req.params.id);
+    const resultado = await sincronizarProcesso(id);
     res.json({ ok: true, ...resultado });
   } catch (err) {
     console.error('[Sync individual]', err.message);

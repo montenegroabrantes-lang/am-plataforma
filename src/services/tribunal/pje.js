@@ -631,7 +631,6 @@ async function extrairExpedientes(page) {
 async function extrairMovimentacoes(page) {
   const movimentacoes = [];
 
-  // Clica na aba de movimentações se não estiver ativa
   const abaMovs = await page.$(
     'a[id*="movimentacao"], a[href*="movimentacao"], ' +
     'li a::-p-text("Movimentações"), li a::-p-text("Histórico"), ' +
@@ -641,52 +640,94 @@ async function extrairMovimentacoes(page) {
     await abaMovs.click();
     await new Promise(r => setTimeout(r, AJAX_WAIT));
   }
-
   await screenshot(page, 'aba-movimentacoes');
+
+  // Log diagnóstico: tabelas visíveis após clicar na aba
+  const diagTabelas = await page.evaluate(() => {
+    const ts = Array.from(document.querySelectorAll('table[id]'));
+    return ts.map(t => `${t.id}(${t.querySelectorAll('tr').length}tr)`).join(', ');
+  }).catch(() => '');
+  console.log(`[PJe] Tabelas após aba movimentações: ${diagTabelas.slice(0, 600) || '(nenhuma com id)'}`);
+
+  // Seletores em ordem de especificidade — tenta cada um até encontrar linhas
+  const SELETORES_TABELA = [
+    'table[id*="evento"] tr',
+    'table[id*="movimentac"] tr',
+    'table[id*="Eventos"] tr',
+    'table[id*="timeline"] tr',
+    'table[id*="historic"] tr',
+    'table[id*="listaEvento"] tr',
+    'table[id*="listaMovimento"] tr',
+    'table[id*="listaAndamento"] tr',
+    '#tabelaEventos tr',
+    '#tabelaMovimentacoes tr',
+    '.tabela-movimentacoes tr',
+    // Fallback amplo: qualquer tabela com 3+ colunas que contenha data no 1º td
+    'table tr',
+  ];
+
+  const CNJ_RE  = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
+  const NUM_RE  = /^[\d\s\-\/\.\:,;()]+$/;
+  const DATA_RE = /^\d{2}\/\d{2}\/\d{4}/;
 
   let pagina = 1;
   while (true) {
-    // Seletores possíveis para a tabela de movimentações no PJe
-    const linhas = await page.$$eval(
-      'table[id*="evento"] tr, table[id*="movimentac"] tr, ' +
-      'table[id*="Eventos"] tr, .rich-table-row, ' +
-      '#tabelaEventos tr, #tabelaMovimentacoes tr, ' +
-      '.tabela-movimentacoes tr',
-      rows => rows.slice(1).map(tr => {
-        const cols = Array.from(tr.querySelectorAll('td'));
-        const texto = cols[2]?.innerText?.trim() || cols[1]?.innerText?.trim() || '';
-        if (!texto || texto.length < 10) return null;
-        // Descarta movimentações que são apenas número de processo CNJ
-        if (/^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/.test(texto)) return null;
-        // Descarta textos compostos apenas de números, datas e símbolos
-        if (/^[\d\s\-\/\.\:,;()]+$/.test(texto)) return null;
-        return {
-          data:  cols[0]?.innerText?.trim() || '',
-          tipo:  cols[1]?.innerText?.trim() || '',
-          texto,
-        };
-      }).filter(Boolean)
-    );
+    // Tenta cada seletor; usa o primeiro que retorna linhas com texto válido
+    let linhas = [];
+    for (const sel of SELETORES_TABELA) {
+      const candidatas = await page.evaluate((s) => {
+        const rows = Array.from(document.querySelectorAll(s)).slice(1); // pula header
+        return rows.map(tr => {
+          const cols = Array.from(tr.querySelectorAll('td'));
+          if (cols.length < 2) return null;
+          const texto = cols[2]?.innerText?.trim() || cols[1]?.innerText?.trim() || '';
+          return {
+            data:  cols[0]?.innerText?.trim() || '',
+            tipo:  cols[1]?.innerText?.trim() || '',
+            texto,
+            ncols: cols.length,
+          };
+        }).filter(Boolean);
+      }, sel).catch(() => []);
+
+      // Aplica filtros de qualidade
+      const validas = candidatas.filter(m => {
+        if (!m.texto || m.texto.length < 10) return false;
+        if (CNJ_RE.test(m.texto)) return false;
+        if (NUM_RE.test(m.texto)) return false;
+        return true;
+      });
+
+      // Só usa se encontrou movimentações com texto real
+      // No fallback 'table tr', exige que a 1ª coluna pareça uma data
+      if (sel === 'table tr') {
+        const comData = validas.filter(m => DATA_RE.test(m.data));
+        if (comData.length > 0) { linhas = comData; break; }
+      } else if (validas.length > 0) {
+        linhas = validas;
+        break;
+      }
+    }
 
     movimentacoes.push(...linhas);
     console.log(`[PJe] Movimentações página ${pagina}: ${linhas.length} registros`);
 
-    // Verifica se há próxima página de movimentações
     const proxPagina = await page.$(
       'a[id*="proxima"], a[title*="Próxima página"], ' +
-      '.rich-datascr-button-next:not([disabled]), ' +
-      'a[title="next page"]'
+      '.rich-datascr-button-next:not([disabled]), a[title="next page"]'
     );
-
     if (!proxPagina) break;
 
-    const desabilitado = await proxPagina.evaluate(el => el.disabled || el.getAttribute('aria-disabled') === 'true' || el.classList.contains('rich-datascr-button-next-dis'));
+    const desabilitado = await proxPagina.evaluate(
+      el => el.disabled || el.getAttribute('aria-disabled') === 'true' ||
+            el.classList.contains('rich-datascr-button-next-dis')
+    ).catch(() => true);
     if (desabilitado) break;
 
     await proxPagina.click();
     await new Promise(r => setTimeout(r, AJAX_WAIT));
     pagina++;
-    if (pagina > 20) break; // segurança
+    if (pagina > 20) break;
   }
 
   return movimentacoes;
@@ -694,9 +735,11 @@ async function extrairMovimentacoes(page) {
 
 // ─────────────────────────────────────────────
 //  EXTRAIR DADOS + HABILITADOS
+//  Dividido em chamadas evaluate menores para evitar protocolTimeout
+//  com páginas pesadas do PJe (querySelectorAll 'td,span,div' retorna
+//  milhares de nós e a serialização CDP estoura o timeout).
 // ─────────────────────────────────────────────
 async function extrairDados(page) {
-  // Clica na aba de dados/partes se necessário
   const abaDados = await page.$(
     'a[id*="aba"][id*="dados"], li a::-p-text("Dados"), ' +
     'li a::-p-text("Partes"), a[title*="Partes"], a[title*="Dados"]'
@@ -705,77 +748,77 @@ async function extrairDados(page) {
     await abaDados.click();
     await new Promise(r => setTimeout(r, AJAX_WAIT));
   }
-
   await screenshot(page, 'aba-dados');
 
-  return await page.evaluate(() => {
-    const txt = sel => document.querySelector(sel)?.innerText?.trim() || null;
+  // Rótulos que nunca devem ser retornados como valor (são labels da própria tabela)
+  const LABELS = [
+    'Órgão julgador','Órgão Julgador','Vara','Magistrado','Juiz','Juíza',
+    'Classe','Classe processual','Tipo de ação','Polo ativo','Polo passivo',
+    'Requerente','Requerido','Autor','Réu','Reclamante','Reclamado',
+    'Última moviment.','Data distribuição','Distribuição','Advogado',
+    'Advogados','Partes','Processo','Número',
+  ];
 
-    // Busca por rótulo de texto — mais robusta para RichFaces com IDs dinâmicos
-    function porRotulo(rotulos) {
-      const allEls = Array.from(document.querySelectorAll('td, span, label, th, div'));
-      for (const el of allEls) {
-        const t = el.innerText?.trim() || '';
-        if (rotulos.some(r => t === r || t.startsWith(r + ':'))) {
-          // Tenta irmão seguinte ou td irmão
-          const next = el.nextElementSibling || el.parentElement?.nextElementSibling?.querySelector('td,span,div');
-          const val = next?.innerText?.trim();
-          if (val && val.length > 1) return val;
-        }
-      }
-      return null;
+  // Busca um campo por rótulo — chamada isolada para evitar timeout
+  const porRotulo = async (rotulos) => page.evaluate(({ rotulos, labels }) => {
+    const SKIP = new Set(labels);
+    const tds  = Array.from(document.querySelectorAll('td, th'));
+    for (const td of tds) {
+      const t = td.innerText?.trim() || '';
+      if (!rotulos.some(r => t === r || t === r + ':')) continue;
+      // Próximo irmão na mesma linha
+      const next = td.nextElementSibling;
+      const val  = next?.innerText?.trim();
+      if (val && val.length > 1 && !SKIP.has(val) && !val.endsWith(':')) return val;
+      // Linha seguinte, primeira célula de valor
+      const proxLinha = td.parentElement?.nextElementSibling?.querySelector('td:not(th)');
+      const val2 = proxLinha?.innerText?.trim();
+      if (val2 && val2.length > 1 && !SKIP.has(val2) && !val2.endsWith(':')) return val2;
     }
+    return null;
+  }, { rotulos, labels: LABELS }).catch(() => null);
 
-    // Vara / Órgão Julgador
-    const vara = txt('[id*="orgaoJulgador"]') ||
-                 txt('[id*="OrgaoJulgador"]') ||
-                 txt('[id*="orgao-julgador"]') ||
-                 txt('.orgao-julgador') ||
-                 porRotulo(['Órgão julgador', 'Vara', 'Órgão Julgador']);
+  // Busca por seletor CSS — filtra labels conhecidos no resultado
+  const porSel = async (sel) => page.evaluate(({ s, labels }) => {
+    const SKIP = new Set(labels);
+    for (const el of document.querySelectorAll(s)) {
+      const t = el.innerText?.trim();
+      if (t && t.length > 1 && !SKIP.has(t) && !t.endsWith(':')) return t;
+    }
+    return null;
+  }, { s: sel, labels: LABELS }).catch(() => null);
 
-    // Juiz
-    const juiz = txt('[id*="magistrado"]') ||
-                 txt('[id*="Magistrado"]') ||
-                 porRotulo(['Magistrado', 'Juiz', 'Juíza']);
+  // Log diagnóstico: IDs de tabelas disponíveis no DOM
+  const tabelasIds = await page.evaluate(() =>
+    Array.from(document.querySelectorAll('table[id]')).map(t => t.id).join(', ')
+  ).catch(() => '');
+  if (tabelasIds) console.log(`[PJe] Tabelas no DOM: ${tabelasIds.slice(0, 400)}`);
 
-    // Tipo de ação / classe processual
-    const acao = txt('[id*="classeProcessual"]') ||
-                 txt('[id*="classePrincipal"]') ||
-                 txt('[id*="classe"]') ||
-                 porRotulo(['Classe', 'Classe processual', 'Tipo de ação']);
+  const vara = await porSel('[id*="orgaoJulgador"]:not(th), [id*="OrgaoJulgador"]:not(th), .orgao-julgador') ||
+               await porRotulo(['Órgão julgador', 'Órgão Julgador', 'Vara']);
 
-    // Polo ativo — tenta seletores específicos do PJe TJPB depois rótulo
-    const polo_ativo = txt('[id*="autor"] .nome') ||
-                       txt('[id*="Autor"] .nome') ||
-                       txt('[id*="requerente"] .nome') ||
-                       txt('[id*="reclamante"] .nome') ||
-                       txt('[id*="parteAtiva"] .nome') ||
-                       txt('[id*="parteAtiva"]') ||
-                       porRotulo(['Polo ativo', 'Requerente', 'Autor', 'Reclamante']);
+  const juiz = await porSel('[id*="magistrado"]:not(th), [id*="Magistrado"]:not(th)') ||
+               await porRotulo(['Magistrado', 'Juiz', 'Juíza']);
 
-    // Polo passivo
-    const polo_passivo = txt('[id*="reu"] .nome') ||
-                         txt('[id*="Reu"] .nome') ||
-                         txt('[id*="requerido"] .nome') ||
-                         txt('[id*="reclamado"] .nome') ||
-                         txt('[id*="partePassiva"] .nome') ||
-                         txt('[id*="partePassiva"]') ||
-                         porRotulo(['Polo passivo', 'Requerido', 'Réu', 'Reclamado']);
+  const acao = await porSel('[id*="classeProcessual"]:not(th), [id*="classePrincipal"]:not(th)') ||
+               await porRotulo(['Classe', 'Classe processual', 'Tipo de ação']);
 
-    // Habilitados: OABs dos advogados
-    const habilitados = Array.from(
-      document.querySelectorAll(
-        '[id*="tabelaAdvogados"] td, [id*="advogado"] td, ' +
-        '[id*="Advogado"] td, .polo-ativo .oab, ' +
-        '[class*="advogado"] span, td[title*="OAB"]'
-      )
-    )
+  const polo_ativo = await porSel('[id*="parteAtiva"] .nome, [id*="autor"] .nome, [id*="requerente"] .nome') ||
+                     await porRotulo(['Polo ativo', 'Requerente', 'Autor', 'Reclamante']);
+
+  const polo_passivo = await porSel('[id*="partePassiva"] .nome, [id*="reu"] .nome, [id*="requerido"] .nome') ||
+                       await porRotulo(['Polo passivo', 'Requerido', 'Réu', 'Reclamado']);
+
+  const habilitados = await page.evaluate(() =>
+    Array.from(document.querySelectorAll(
+      '[id*="tabelaAdvogados"] td, [id*="advogado"] td, td[title*="OAB"]'
+    ))
     .map(el => el.innerText?.trim())
     .filter(t => t && /OAB|^\d{3,6}$/.test(t))
-    .map(t => t.replace(/[^\d\w\/]/g, ''));
+    .map(t => t.replace(/[^\d\w\/]/g, ''))
+  ).catch(() => []);
 
-    return { vara, juiz, polo_ativo, polo_passivo, acao, habilitados };
-  });
+  return { vara, juiz, polo_ativo, polo_passivo, acao, habilitados };
 }
 
 // ─────────────────────────────────────────────
