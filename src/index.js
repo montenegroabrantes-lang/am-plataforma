@@ -80,6 +80,23 @@ async function iniciar() {
   if (process.env.REDIS_URL) {
     try {
       await conectarRedis();
+
+      // Limpa lock de sync travado por restart anterior
+      try {
+        const { redis } = await import('./cache/redis.js');
+        const lockAtivo = await redis.exists('sync:global:lock');
+        if (lockAtivo) {
+          // Verifica se havia execução real em andamento nos últimos 10min
+          const exec = await db.queryOne(
+            `SELECT id FROM sync_execucoes WHERE concluido_em IS NULL AND iniciado_em >= NOW() - INTERVAL '10 minutes' LIMIT 1`
+          ).catch(() => null);
+          if (!exec) {
+            await redis.del('sync:global:lock');
+            console.log('[BOOT] Lock de sync antigo removido — restart detectado.');
+          }
+        }
+      } catch { /* não bloqueia o boot */ }
+
       const { iniciarWorkers } = await import('./workers/index.js');
       await iniciarWorkers();
     } catch (err) {

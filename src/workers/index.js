@@ -34,6 +34,24 @@ export async function iniciarWorkers() {
     }
   );
 
+  // Se havia sync interrompido por restart, reagenda imediatamente
+  try {
+    const { db } = await import('../db/index.js');
+    const interrompido = await db.queryOne(
+      `SELECT id FROM sync_execucoes WHERE concluido_em IS NULL AND iniciado_em < NOW() - INTERVAL '10 minutes' LIMIT 1`
+    ).catch(() => null);
+    if (interrompido) {
+      // Marca a execução interrompida como falha
+      await db.execute(
+        `UPDATE sync_execucoes SET concluido_em = NOW(), falhas = -1 WHERE id = $1`,
+        [interrompido.id]
+      ).catch(() => {});
+      // Reagenda imediatamente
+      await syncQueue.add('sincronizar-todos', {}, { removeOnComplete: 10, removeOnFail: 5 });
+      console.log('[Workers] Sync interrompido por restart — reagendado imediatamente.');
+    }
+  } catch { /* não bloqueia boot */ }
+
   // Backup diário às 2h
   await backupQueue.add(
     'backup-diario',
