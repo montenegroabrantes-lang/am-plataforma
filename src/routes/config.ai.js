@@ -128,8 +128,9 @@ configAiRouter.post('/camila', async (req, res) => {
     const MODELOS_CLAUDE = ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'];
     const MODELOS_OPENAI = ['gpt-4o', 'gpt-4.5', 'gpt-5'];
     const payload = { ...req.body };
-    if (payload.claude_modelo && !MODELOS_CLAUDE.includes(payload.claude_modelo)) delete payload.claude_modelo;
-    if (payload.openai_modelo && !MODELOS_OPENAI.includes(payload.openai_modelo)) delete payload.openai_modelo;
+    if (payload.claude_modelo          && !MODELOS_CLAUDE.includes(payload.claude_modelo))          delete payload.claude_modelo;
+    if (payload.claude_modelo_processo && !MODELOS_CLAUDE.includes(payload.claude_modelo_processo)) delete payload.claude_modelo_processo;
+    if (payload.openai_modelo          && !MODELOS_OPENAI.includes(payload.openai_modelo))          delete payload.openai_modelo;
     const { data } = await axios.post(`${url}/admin/ia-config`, payload, {
       headers: { 'x-admin-secret': secret || '', 'Content-Type': 'application/json' }, timeout: 5000,
     });
