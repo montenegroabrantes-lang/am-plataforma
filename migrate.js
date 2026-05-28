@@ -126,6 +126,13 @@ try {
   // 11. processos: sync_falhas — contador de falhas consecutivas para marcar erro_sync
   await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS sync_falhas INTEGER NOT NULL DEFAULT 0`).catch(() => {});
 
+  // 12. movimentacoes: campos estruturados de pendência operacional
+  await db.execute(`ALTER TABLE movimentacoes ADD COLUMN IF NOT EXISTS pendencia_tipo TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE movimentacoes ADD COLUMN IF NOT EXISTS pendencia_resumo TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE movimentacoes ADD COLUMN IF NOT EXISTS pendencia_prazo_final TIMESTAMPTZ`).catch(() => {});
+  await db.execute(`ALTER TABLE movimentacoes ADD COLUMN IF NOT EXISTS pendencia_status_prazo TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE movimentacoes ADD COLUMN IF NOT EXISTS pendencia_conferencia_pje BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
+
   console.log('[migrate] ✅ Migração concluída');
 } catch (err) {
   console.error('[migrate] ❌ Erro (não fatal):', err.message);

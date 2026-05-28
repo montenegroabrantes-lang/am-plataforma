@@ -677,18 +677,34 @@ async function extrairExpedientes(page) {
     rows => rows.slice(1).map(tr => {
       const cols = Array.from(tr.querySelectorAll('td'));
       if (cols.length < 2) return null;
-      const data      = cols[0]?.innerText?.trim() || '';
-      const tipo      = cols[1]?.innerText?.trim() || '';
-      const parte     = cols[2]?.innerText?.trim() || '';
-      const prazo     = cols[3]?.innerText?.trim() || '';
-      const vencimento = cols[4]?.innerText?.trim() || '';
-      if (!data || !tipo || tipo.length < 4) return null;
-      // Monta texto legível para operador e para IA
-      const partes = [`[EXPEDIENTE] ${tipo}`];
-      if (parte)     partes.push(`Para: ${parte}`);
-      if (prazo)     partes.push(`Prazo: ${prazo} dias`);
-      if (vencimento) partes.push(`Vencimento: ${vencimento}`);
-      return { data, tipo: 'expediente', texto: partes.join(' | ') };
+
+      // cols[0] = data de abertura
+      // cols[1] = tipo/descrição — pode conter prazo final embutido: "07/04/2026 23:59:59 (para manifestação)"
+      // cols[2] = botões de ação da UI (VISUALIZAR ATO, VALIDAR ASSINATURA DIGITAL) — ignorar como dado jurídico
+      // cols[3] = coluna booleana "SIM/NÃO" (tem prazo?) — não é número de dias
+      // cols[4] = vencimento (alternativa ao embutido no cols[1])
+      const dataAbertura = cols[0]?.innerText?.trim() || '';
+      const tipoRaw      = cols[1]?.innerText?.trim() || '';
+      const vencimentoRaw = cols[4]?.innerText?.trim() || '';
+
+      if (!tipoRaw || tipoRaw.length < 4) return null;
+
+      // Extrai prazo final do texto de cols[1] — formato: "DD/MM/AAAA HH:MM:SS (descrição)"
+      const dtMatch = tipoRaw.match(/(\d{2}\/\d{2}\/\d{4})\s+(\d{2}:\d{2}(?::\d{2})?)/);
+      const prazoFinalTexto = dtMatch
+        ? `${dtMatch[1]} às ${dtMatch[2].slice(0, 5)}`
+        : (vencimentoRaw || null);
+
+      // Descrição limpa: remove a data/hora inicial se presente
+      const descricao = tipoRaw
+        .replace(/^\d{2}\/\d{2}\/\d{4}\s+\d{2}:\d{2}(?::\d{2})?\s*/, '')
+        .replace(/^\(/, '').replace(/\)$/, '')
+        .trim() || tipoRaw;
+
+      const partes = [`[EXPEDIENTE] ${descricao}`];
+      if (prazoFinalTexto) partes.push(`Prazo final: ${prazoFinalTexto}`);
+
+      return { data: dataAbertura, tipo: 'expediente', texto: partes.join(' | ') };
     }).filter(Boolean)
   ).catch(() => []);
 

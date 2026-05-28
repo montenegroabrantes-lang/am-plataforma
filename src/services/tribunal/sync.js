@@ -42,6 +42,38 @@ const URL_TRIBUNAL = {
 };
 
 // ─────────────────────────────────────────────
+//  PRIORIDADE DETERMINÍSTICA
+//  Regras objetivas sobrescrevem a sugestão da IA.
+//  Evita conflitos entre prioridade da UI e do diagnóstico.
+// ─────────────────────────────────────────────
+function calcularPrioridade(diag) {
+  const prazoFinal   = diag.pendencia?.prazoFinal;
+  const statusPrazo  = diag.pendencia?.statusPrazo;
+  const tipo         = diag.pendencia?.tipo;
+
+  // Prazo já vencido → sempre CRITICO
+  if (statusPrazo === 'VENCIDO') return 'CRITICO';
+
+  if (prazoFinal) {
+    const agora   = Date.now();
+    const prazo   = new Date(prazoFinal).getTime();
+    const diffH   = (prazo - agora) / 3_600_000;
+    if (diffH < 0)   return 'CRITICO'; // passou
+    if (diffH <= 48) return 'CRITICO'; // menos de 48h
+    if (diffH <= 120) return 'ALTO';   // menos de 5 dias
+  }
+
+  // Expediente aberto ou determinação judicial = mínimo ALTO
+  const URGENTES = new Set(['PETICIONAR', 'CONFERIR_EXPEDIENTE', 'CUMPRIR_DETERMINACAO', 'PROVIDENCIAR_CITACAO']);
+  if (URGENTES.has(tipo)) {
+    return diag.prioridade === 'CRITICO' ? 'CRITICO' : 'ALTO';
+  }
+
+  // Fallback: usa o que a IA classificou (já validado no parser)
+  return diag.prioridade || 'MEDIO';
+}
+
+// ─────────────────────────────────────────────
 //  SALVAR RESULTADO NO BANCO
 //  Reutilizado por sincronizarProcesso e sincronizarTodos
 // ─────────────────────────────────────────────
@@ -112,25 +144,54 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
           data: mov.data_movimentacao, texto: mov.texto,
           historico: historico.map(h => h.texto).join('\n---\n'),
         });
+
+        // Prioridade final: regra determinística prevalece sobre sugestão da IA
+        const prioridadeFinal = calcularPrioridade(diag);
+
+        // Campos herdados (retrocompat) + campos estruturados novos
         await db.execute(
-          `UPDATE movimentacoes SET diagnostico_significado=$1, diagnostico_proxima_acao=$2,
-           diagnostico_urgencia=$3, diagnostico_prazo_dias=$4, diagnostico_em=NOW() WHERE id=$5`,
-          [diag.significado, diag.proximaAcao, diag.urgencia, diag.prazoDiasUteis ?? null, movId]
+          `UPDATE movimentacoes SET
+             diagnostico_significado   = $1,
+             diagnostico_proxima_acao  = $2,
+             diagnostico_urgencia      = $3,
+             diagnostico_prazo_dias    = NULL,
+             pendencia_tipo            = $4,
+             pendencia_resumo          = $5,
+             pendencia_prazo_final     = $6,
+             pendencia_status_prazo    = $7,
+             pendencia_conferencia_pje = $8,
+             diagnostico_em            = NOW()
+           WHERE id = $9`,
+          [
+            diag.ultimaMovimentacao?.descricao,
+            diag.pendencia?.resumo,
+            prioridadeFinal,
+            diag.pendencia?.tipo,
+            diag.pendencia?.resumo,
+            diag.pendencia?.prazoFinal   || null,
+            diag.pendencia?.statusPrazo  || null,
+            diag.pendencia?.precisaConferenciaPJe ?? false,
+            movId,
+          ]
         );
-        console.log(`[IA] Diagnóstico gerado: ${mov.numero} — urgência ${diag.urgencia}`);
+        console.log(`[IA] ${mov.numero} — ${diag.pendencia?.tipo} — ${prioridadeFinal}`);
 
         // WhatsApp imediato para movimentações CRÍTICAS
-        if (diag.urgencia === 'CRITICO') {
+        if (prioridadeFinal === 'CRITICO') {
           try {
             const { enviarAlerta } = await import('../digisac/index.js');
             const master = await db.queryOne(
               `SELECT whatsapp FROM usuarios WHERE id = $1`, [processo.master_responsavel_id]
             );
             if (master?.whatsapp) {
+              const prazoTexto = diag.pendencia?.prazoFinal
+                ? `\nPrazo: ${new Date(diag.pendencia.prazoFinal).toLocaleDateString('pt-BR')} ${diag.pendencia.statusPrazo === 'VENCIDO' ? '— VENCIDO' : ''}`
+                : '';
               const msg =
                 `⚠️ *CRÍTICO — ${mov.numero}*\n\n` +
-                `${(mov.texto || '').slice(0, 300)}\n\n` +
-                `▶ ${diag.proximaAcao || 'Verificar processo'}`;
+                `${diag.ultimaMovimentacao?.descricao || mov.texto.slice(0, 200)}` +
+                prazoTexto +
+                `\n\nPendente: ${diag.pendencia?.resumo || 'Verificar processo'}`;
               await enviarAlerta(master.whatsapp, msg);
             }
           } catch (alertErr) {
