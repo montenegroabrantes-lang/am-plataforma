@@ -126,7 +126,26 @@ try {
   // 11. processos: sync_falhas — contador de falhas consecutivas para marcar erro_sync
   await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS sync_falhas INTEGER NOT NULL DEFAULT 0`).catch(() => {});
 
-  // 12. movimentacoes: campos estruturados de pendência operacional
+  // 12. processos: sync_fonte — qual camada atualizou por último
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS sync_fonte TEXT`).catch(() => {});
+
+  // 13. sync_execucoes — histórico de cada execução do sync completo
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS sync_execucoes (
+      id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      iniciado_em   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      concluido_em  TIMESTAMPTZ,
+      total         INTEGER DEFAULT 0,
+      via_datajud   INTEGER DEFAULT 0,
+      via_mni       INTEGER DEFAULT 0,
+      via_puppeteer INTEGER DEFAULT 0,
+      via_eproc     INTEGER DEFAULT 0,
+      falhas        INTEGER DEFAULT 0,
+      ignorado      BOOLEAN DEFAULT false
+    )
+  `).catch(() => {});
+
+  // 14. movimentacoes: campos estruturados de pendência operacional
   await db.execute(`ALTER TABLE movimentacoes ADD COLUMN IF NOT EXISTS pendencia_tipo TEXT`).catch(() => {});
   await db.execute(`ALTER TABLE movimentacoes ADD COLUMN IF NOT EXISTS pendencia_resumo TEXT`).catch(() => {});
   await db.execute(`ALTER TABLE movimentacoes ADD COLUMN IF NOT EXISTS pendencia_prazo_final TIMESTAMPTZ`).catch(() => {});

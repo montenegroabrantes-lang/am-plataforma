@@ -280,6 +280,13 @@ export async function sincronizarTodos() {
 
   console.log(`[Sync] Iniciando sync de ${processos.length} processos...`);
 
+  // Registra início da execução
+  const execucao = await db.queryOne(
+    `INSERT INTO sync_execucoes (total) VALUES ($1) RETURNING id`,
+    [processos.length]
+  ).catch(() => null);
+  const execucaoId = execucao?.id || null;
+
   // Agrupa por master + tribunal + grau + sistema para compartilhar a sessão do browser
   const grupos = new Map();
   for (const p of processos) {
@@ -327,7 +334,8 @@ export async function sincronizarTodos() {
               const resultado = await eproc.buscarProcessoCompletoComSessao(eprocBrowser, url, numero, grau);
               const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
               const novasMovs = await salvarResultadoSync(id, processo, resultado.dados, resultado.movimentacoes);
-              resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs });
+              await db.execute(`UPDATE processos SET sync_fonte = 'eproc' WHERE id = $1`, [id]).catch(() => {});
+              resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs, fonte: 'eproc' });
               console.log(`[Sync eProc] OK: ${numero} (${novasMovs} novas movimentações)`);
             } catch (err) {
               resultados.push({ processoId: id, numero, ok: false, erro: err.message });
@@ -372,6 +380,7 @@ export async function sincronizarTodos() {
             const resultado = datajudMap.get(proc.numero);
             const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [proc.id]);
             const novasMovs = await salvarResultadoSync(proc.id, processo, resultado.dados, resultado.movimentacoes);
+            await db.execute(`UPDATE processos SET sync_fonte = 'datajud' WHERE id = $1`, [proc.id]).catch(() => {});
             resultados.push({ processoId: proc.id, numero: proc.numero, ok: true, novasMovimentacoes: novasMovs, fonte: 'datajud' });
             console.log(`[Sync DataJud] OK: ${proc.numero} (${novasMovs} novas movimentações)`);
           } catch (err) {
@@ -396,16 +405,20 @@ export async function sincronizarTodos() {
             let resultado;
             try {
               resultado = await mni.consultarProcesso(url, cred.cpf, cred.senha, numero);
+              resultado._fonte = 'mni';
               console.log(`[Sync MNI] OK: ${numero}`);
             } catch (mniErr) {
               console.warn(`[Sync MNI] Falhou (${mniErr.message}) — Puppeteer para ${numero}`);
               resultado = await pje.buscarProcessoCompletoComSessao(browser, url, numero);
+              resultado._fonte = 'puppeteer';
             }
 
-            const processo = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
+            const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
             const novasMovs = await salvarResultadoSync(id, processo, resultado.dados, resultado.movimentacoes);
-            resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs, fonte: 'puppeteer' });
-            console.log(`[Sync Puppeteer] OK: ${numero} (${novasMovs} novas movimentações)`);
+            const fonteUsada = resultado._fonte || 'puppeteer';
+            await db.execute(`UPDATE processos SET sync_fonte = $1 WHERE id = $2`, [fonteUsada, id]).catch(() => {});
+            resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs, fonte: fonteUsada });
+            console.log(`[Sync ${fonteUsada}] OK: ${numero} (${novasMovs} novas movimentações)`);
           } catch (err) {
             resultados.push({ processoId: id, numero, ok: false, erro: err.message });
             console.error(`[Sync] Falha ${numero}:`, err.message);
@@ -435,6 +448,29 @@ export async function sincronizarTodos() {
   const ok   = resultados.filter(r => r.ok).length;
   const fail = resultados.filter(r => !r.ok).length;
   console.log(`[Sync] Concluído: ${ok} OK, ${fail} falhas.`);
+
+  // Registra conclusão na tabela de histórico
+  if (execucaoId) {
+    await db.execute(
+      `UPDATE sync_execucoes SET
+         concluido_em  = NOW(),
+         via_datajud   = $1,
+         via_mni       = $2,
+         via_puppeteer = $3,
+         via_eproc     = $4,
+         falhas        = $5
+       WHERE id = $6`,
+      [
+        resultados.filter(r => r.fonte === 'datajud').length,
+        resultados.filter(r => r.fonte === 'mni').length,
+        resultados.filter(r => r.fonte === 'puppeteer').length,
+        resultados.filter(r => r.fonte === 'eproc').length,
+        fail,
+        execucaoId,
+      ]
+    ).catch(() => {});
+  }
+
   return resultados;
 }
 

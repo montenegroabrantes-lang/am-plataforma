@@ -19,7 +19,10 @@ dashboardRouter.get('/', async (req, res) => {
     tarefasPendentes,
     audiencias7d,
     syncStatus,
-    ultimoSync,
+    syncCobertura,
+    syncExecucoes,
+    syncMovsNovas,
+    syncErros,
   ] = await Promise.all([
 
     // Total de processos por status
@@ -73,12 +76,38 @@ dashboardRouter.get('/', async (req, res) => {
       FROM processos p WHERE 1=1 ${filtroP}
       GROUP BY sync_status`),
 
-    // Último sync bem-sucedido
-    db.query(`
-      SELECT MAX(m.criado_em) AS ultimo_sync
+    // Cobertura por fonte + última atualização
+    db.queryOne(`
+      SELECT
+        MAX(atualizado_em)                                              AS ultima_atualizacao,
+        COUNT(*) FILTER (WHERE sync_fonte = 'datajud')                 AS via_datajud,
+        COUNT(*) FILTER (WHERE sync_fonte = 'mni')                     AS via_mni,
+        COUNT(*) FILTER (WHERE sync_fonte = 'puppeteer')               AS via_puppeteer,
+        COUNT(*) FILTER (WHERE sync_fonte = 'eproc')                   AS via_eproc,
+        COUNT(*) FILTER (WHERE sync_fonte IS NULL)                     AS sem_fonte,
+        COUNT(*) FILTER (WHERE sync_falhas > 0)                        AS com_falhas,
+        COUNT(*) FILTER (WHERE sync_status = 'erro_sync')              AS com_erro
+      FROM processos p WHERE status IN ('ativo','suspenso') ${filtroP}`),
+
+    // Última e penúltima execuções do sync completo
+    db.query(`SELECT * FROM sync_execucoes ORDER BY iniciado_em DESC LIMIT 5`),
+
+    // Movimentações novas nas últimas 24h e 7 dias
+    db.queryOne(`
+      SELECT
+        COUNT(*) FILTER (WHERE m.criado_em >= NOW() - INTERVAL '24 hours') AS total_24h,
+        COUNT(*) FILTER (WHERE m.criado_em >= NOW() - INTERVAL '7 days')   AS total_7d
       FROM movimentacoes m
       JOIN processos p ON p.id = m.processo_id
       WHERE 1=1 ${filtroM}`),
+
+    // Processos com erro de sync para exibir na lista de pendências
+    db.query(`
+      SELECT p.id, p.numero, p.tribunal, p.sync_falhas, p.atualizado_em
+      FROM processos p
+      WHERE p.sync_status = 'erro_sync' ${filtroP}
+      ORDER BY p.sync_falhas DESC, p.atualizado_em ASC
+      LIMIT 10`),
   ]);
 
   // Movimentações críticas recentes (últimas 48h, urgência CRITICO ou ALTO)
@@ -101,6 +130,8 @@ dashboardRouter.get('/', async (req, res) => {
     return obj;
   };
 
+  const ultimaExecucao = syncExecucoes[0] || null;
+
   res.json({
     ok: true,
     processos: {
@@ -112,8 +143,12 @@ dashboardRouter.get('/', async (req, res) => {
     tarefas_pendentes: idx(tarefasPendentes, 'urgencia', 'total'),
     audiencias_7d: audiencias7d,
     sync: {
-      por_status: idx(syncStatus, 'sync_status', 'total'),
-      ultimo_sync: ultimoSync[0]?.ultimo_sync || null,
+      por_status:       idx(syncStatus, 'sync_status', 'total'),
+      cobertura:        syncCobertura || {},
+      ultima_execucao:  ultimaExecucao,
+      execucoes_7d:     syncExecucoes,
+      movs_novas:       syncMovsNovas || { total_24h: 0, total_7d: 0 },
+      processos_erro:   syncErros,
     },
     alertas: movsAlerta,
   });
