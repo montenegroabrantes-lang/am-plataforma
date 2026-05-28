@@ -7,6 +7,15 @@ const TIMEOUT     = 90_000; // 90s — PJe pode ser lento, especialmente em Rail
 const AJAX_WAIT   = 3_000;   // tempo para AJAX do RichFaces estabilizar
 const DEBUG_SHOTS = process.env.PJE_DEBUG_SCREENSHOTS === 'true';
 
+// Envolve uma promise com timeout explícito — evita que extrações pendurem indefinidamente
+function comTimeout(promise, ms, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label}: timeout após ${ms / 1000}s`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 function browserArgs() {
   return [
     '--no-sandbox',
@@ -871,9 +880,9 @@ export async function buscarProcessoCompleto(url, cpf, senha, totpSecret, numero
     let dados = {};
     let movimentacoes = [];
     let expedientes = [];
-    try { dados = await extrairDados(page); } catch (e) { console.warn('[PJe] extrairDados falhou:', e.message); }
-    try { movimentacoes = await extrairMovimentacoes(page); } catch (e) { console.warn('[PJe] extrairMovimentacoes falhou:', e.message); }
-    try { expedientes = await extrairExpedientes(page); } catch (e) { console.warn('[PJe] extrairExpedientes falhou:', e.message); }
+    try { dados = await comTimeout(extrairDados(page), 60_000, 'extrairDados'); } catch (e) { console.warn('[PJe] extrairDados falhou:', e.message); }
+    try { movimentacoes = await comTimeout(extrairMovimentacoes(page), 90_000, 'extrairMovimentacoes'); } catch (e) { console.warn('[PJe] extrairMovimentacoes falhou:', e.message); }
+    try { expedientes = await comTimeout(extrairExpedientes(page), 30_000, 'extrairExpedientes'); } catch (e) { console.warn('[PJe] extrairExpedientes falhou:', e.message); }
 
     return {
       dados,
@@ -910,9 +919,9 @@ export async function buscarProcessoCompletoComSessao(browser, url, numero) {
     let dados = {};
     let movimentacoes = [];
     let expedientes = [];
-    try { dados = await extrairDados(page); } catch (e) { console.warn('[PJe] extrairDados falhou:', e.message); }
-    try { movimentacoes = await extrairMovimentacoes(page); } catch (e) { console.warn('[PJe] extrairMovimentacoes falhou:', e.message); }
-    try { expedientes = await extrairExpedientes(page); } catch (e) { console.warn('[PJe] extrairExpedientes falhou:', e.message); }
+    try { dados = await comTimeout(extrairDados(page), 60_000, 'extrairDados'); } catch (e) { console.warn('[PJe] extrairDados falhou:', e.message); }
+    try { movimentacoes = await comTimeout(extrairMovimentacoes(page), 90_000, 'extrairMovimentacoes'); } catch (e) { console.warn('[PJe] extrairMovimentacoes falhou:', e.message); }
+    try { expedientes = await comTimeout(extrairExpedientes(page), 30_000, 'extrairExpedientes'); } catch (e) { console.warn('[PJe] extrairExpedientes falhou:', e.message); }
 
     return { dados, movimentacoes: [...movimentacoes, ...expedientes] };
   } finally {

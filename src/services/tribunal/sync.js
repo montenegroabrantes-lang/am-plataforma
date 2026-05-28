@@ -47,6 +47,12 @@ const URL_TRIBUNAL = {
 // ─────────────────────────────────────────────
 async function salvarResultadoSync(processoId, processo, dados, movimentacoesBrutas) {
   console.log(`[Sync] dados extraídos p/${processo.numero}:`, JSON.stringify({ vara: dados.vara, polo_ativo: dados.polo_ativo, polo_passivo: dados.polo_passivo, acao: dados.acao, movs: movimentacoesBrutas.length }));
+  // Marca sync bem-sucedido — reseta contador de falhas consecutivas
+  await db.execute(
+    `UPDATE processos SET sync_status = 'ok', sync_falhas = 0 WHERE id = $1`,
+    [processoId]
+  ).catch(() => {});
+
   if (dados.vara || dados.polo_ativo || dados.habilitados?.length) {
     await db.execute(
       `UPDATE processos
@@ -265,6 +271,7 @@ export async function sincronizarTodos() {
             } catch (err) {
               resultados.push({ processoId: id, numero, ok: false, erro: err.message });
               console.error(`[Sync eProc] Falha ${numero}:`, err.message);
+              await registrarFalhaSyncProcesso(id);
               if (err.message?.includes('Target closed') || err.message?.includes('Session closed')) {
                 console.warn(`[Sync eProc] Sessão encerrada — interrompendo grupo ${tribunal} ${grau}G`);
                 break;
@@ -341,6 +348,7 @@ export async function sincronizarTodos() {
           } catch (err) {
             resultados.push({ processoId: id, numero, ok: false, erro: err.message });
             console.error(`[Sync] Falha ${numero}:`, err.message);
+            await registrarFalhaSyncProcesso(id);
             if (err.message?.includes('Target closed') || err.message?.includes('Session closed') || err.message?.includes('detached')) {
               console.warn(`[Sync] Sessão PJe encerrada — interrompendo fallback ${tribunal} ${grau}G`);
               break;
@@ -444,6 +452,26 @@ async function resolverSeparacaoSocios(processo, habilitados) {
       [processo.id]
     );
   }
+}
+
+// ─────────────────────────────────────────────
+//  REGISTRAR FALHA DE SYNC
+//  Após 3 falhas consecutivas, marca sync_status = 'erro_sync'
+//  para que a UI possa destacar o processo e o advogado possa investigar.
+// ─────────────────────────────────────────────
+async function registrarFalhaSyncProcesso(processoId) {
+  try {
+    await db.execute(
+      `UPDATE processos
+       SET sync_falhas = COALESCE(sync_falhas, 0) + 1,
+           sync_status = CASE
+             WHEN COALESCE(sync_falhas, 0) + 1 >= 3 THEN 'erro_sync'
+             ELSE sync_status
+           END
+       WHERE id = $1`,
+      [processoId]
+    );
+  } catch { /* ignora — coluna pode não existir em dev */ }
 }
 
 // ─────────────────────────────────────────────

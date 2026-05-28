@@ -123,6 +123,9 @@ try {
   // 10. clientes: vinculo_ativo separado de ativo
   await db.execute(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS vinculo_ativo BOOLEAN NOT NULL DEFAULT true`).catch(() => {});
 
+  // 11. processos: sync_falhas — contador de falhas consecutivas para marcar erro_sync
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS sync_falhas INTEGER NOT NULL DEFAULT 0`).catch(() => {});
+
   console.log('[migrate] ✅ Migração concluída');
 } catch (err) {
   console.error('[migrate] ❌ Erro (não fatal):', err.message);
