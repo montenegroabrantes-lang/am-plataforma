@@ -18,6 +18,7 @@ import { financeiroRouter }    from './routes/financeiro.js';
 import { pipelineRouter }      from './routes/pipeline.js';
 import { relatorioRouter }     from './routes/relatorio.js';
 import { produtosRouter }      from './routes/produtos.js';
+import { dashboardRouter }     from './routes/dashboard.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -48,6 +49,7 @@ app.use('/api/financeiro',    autenticar, financeiroRouter);
 app.use('/api/pipeline',      autenticar, pipelineRouter);
 app.use('/api/relatorio',     autenticar, relatorioRouter);
 app.use('/api/produtos',      autenticar, produtosRouter);
+app.use('/api/dashboard',    autenticar, dashboardRouter);
 
 let dbOk = false;
 app.get('/health', (_req, res) => res.json({ ok: true, db: dbOk, env: process.env.NODE_ENV }));
