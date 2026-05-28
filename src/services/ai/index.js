@@ -6,23 +6,18 @@ import { diagnosticarMovimentacao } from './tasks/diagnostico.js';
 import { gerarPeticao }             from './tasks/peticao.js';
 
 function provedorPara(tipoTarefa) {
-  const config = aiConfig.roteamento[tipoTarefa];
+  const rota = aiConfig.roteamento[tipoTarefa] || 'claude';
 
-  if (config === 'openai') {
-    if (!aiConfig.openai.habilitado) throw new Error('OpenAI está desabilitado no .env');
+  if (rota === 'openai') {
+    if (!aiConfig.openai.apiKey) throw new Error('Chave da OpenAI não configurada no Railway (OPENAI_API_KEY).');
     return openaiProvider;
   }
 
-  if (!aiConfig.claude.habilitado) {
-    if (aiConfig.openai.habilitado) return openaiProvider;
-    throw new Error('Nenhum provedor de IA habilitado. Verifique CLAUDE_HABILITADO e OPENAI_HABILITADO no .env');
-  }
-
+  if (!aiConfig.claude.apiKey) throw new Error('Chave da Anthropic não configurada no Railway (ANTHROPIC_API_KEY).');
   return claudeProvider;
 }
 
 export const ai = {
-
   async diagnosticar(movimentacao) {
     return diagnosticarMovimentacao(movimentacao, provedorPara('diagnostico'));
   },
@@ -34,14 +29,12 @@ export const ai = {
   status() {
     return {
       claude: {
-        habilitado: aiConfig.claude.habilitado,
-        modelo:     aiConfig.claude.modelo,
-        apiKeyOk:   !!aiConfig.claude.apiKey,
+        apiKeyOk: !!aiConfig.claude.apiKey,
+        modelo:   aiConfig.claude.modelo,
       },
       openai: {
-        habilitado:  aiConfig.openai.habilitado,
-        modeloTexto: aiConfig.openai.modeloTexto,
         apiKeyOk:    !!aiConfig.openai.apiKey,
+        modeloTexto: aiConfig.openai.modeloTexto,
       },
       roteamento: aiConfig.roteamento,
     };

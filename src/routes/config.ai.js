@@ -28,24 +28,12 @@ configAiRouter.post('/', async (req, res) => {
     return res.status(403).json({ ok: false, erro: 'Apenas usuários Master podem alterar configurações de IA.' });
   }
 
-  const { claude, openai, roteamento } = req.body;
+  const { roteamento } = req.body;
 
   const pares = [
-    { chave: 'claude_habilitado',  valor: String(claude.habilitado) },
-    { chave: 'claude_modelo',      valor: claude.modelo },
-    { chave: 'openai_habilitado',  valor: String(openai.habilitado) },
-    { chave: 'openai_modelo_texto', valor: openai.modeloTexto },
-    { chave: 'rota_diagnostico',   valor: roteamento.diagnostico },
-    { chave: 'rota_peticao',       valor: roteamento.peticao },
+    { chave: 'rota_diagnostico', valor: roteamento.diagnostico },
+    { chave: 'rota_peticao',     valor: roteamento.peticao },
   ];
-
-  // Chaves de API: salvas separadamente com criptografia
-  if (claude.apiKey && !claude.apiKey.includes('•')) {
-    pares.push({ chave: 'claude_api_key_enc', valor: encrypt(claude.apiKey) });
-  }
-  if (openai.apiKey && !openai.apiKey.includes('•')) {
-    pares.push({ chave: 'openai_api_key_enc', valor: encrypt(openai.apiKey) });
-  }
 
   try {
     // UPSERT — insere ou atualiza cada par
@@ -66,6 +54,12 @@ configAiRouter.post('/', async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, erro: e.message });
   }
+});
+
+// Status dos provedores (chave configurada + roteamento atual)
+configAiRouter.get('/status', async (req, res) => {
+  const { ai } = await import('../services/ai/index.js');
+  res.json(ai.status());
 });
 
 // Testa conexão com um provedor
