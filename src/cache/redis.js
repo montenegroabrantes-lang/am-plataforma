@@ -15,7 +15,13 @@ export async function conectarRedis() {
   await new Promise((resolve) => {
     if (redis.status === 'ready') return resolve();
     redis.once('ready', resolve);
-    redis.once('error', resolve);
-    setTimeout(resolve, 5000);
+    redis.once('error', (err) => {
+      console.warn('[Redis] Boot sem Redis — workers de sync desativados:', err.message);
+      resolve();
+    });
+    setTimeout(() => {
+      if (redis.status !== 'ready') console.warn('[Redis] Timeout na conexão — continuando sem Redis.');
+      resolve();
+    }, 5000);
   });
 }

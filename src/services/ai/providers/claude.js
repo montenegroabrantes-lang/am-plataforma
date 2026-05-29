@@ -2,9 +2,13 @@ import Anthropic from '@anthropic-ai/sdk';
 import { aiConfig } from '../../../config/ai.js';
 
 let _client = null;
+let _clientKey = null;
 
 function client() {
-  if (!_client) _client = new Anthropic({ apiKey: aiConfig.claude.apiKey });
+  if (!_client || _clientKey !== aiConfig.claude.apiKey) {
+    _client    = new Anthropic({ apiKey: aiConfig.claude.apiKey });
+    _clientKey = aiConfig.claude.apiKey;
+  }
   return _client;
 }
 

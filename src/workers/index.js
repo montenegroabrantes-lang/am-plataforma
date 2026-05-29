@@ -43,7 +43,7 @@ export async function iniciarWorkers() {
     if (interrompido) {
       // Marca a execução interrompida como falha
       await db.execute(
-        `UPDATE sync_execucoes SET concluido_em = NOW(), falhas = -1 WHERE id = $1`,
+        `UPDATE sync_execucoes SET concluido_em = NOW(), falhas = 0, status = 'interrompido' WHERE id = $1`,
         [interrompido.id]
       ).catch(() => {});
       // Reagenda imediatamente

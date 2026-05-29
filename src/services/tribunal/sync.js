@@ -81,7 +81,7 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
   console.log(`[Sync] dados extraídos p/${processo.numero}:`, JSON.stringify({ vara: dados.vara, polo_ativo: dados.polo_ativo, polo_passivo: dados.polo_passivo, acao: dados.acao, movs: movimentacoesBrutas.length }));
   // Marca sync bem-sucedido — reseta contador de falhas consecutivas
   await db.execute(
-    `UPDATE processos SET sync_status = 'ok', sync_falhas = 0 WHERE id = $1`,
+    `UPDATE processos SET sync_status = 'ok', sync_falhas = 0, atualizado_em = NOW() WHERE id = $1`,
     [processoId]
   ).catch(() => {});
 

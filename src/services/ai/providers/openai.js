@@ -2,9 +2,13 @@ import OpenAI from 'openai';
 import { aiConfig } from '../../../config/ai.js';
 
 let _client = null;
+let _clientKey = null;
 
 function client() {
-  if (!_client) _client = new OpenAI({ apiKey: aiConfig.openai.apiKey });
+  if (!_client || _clientKey !== aiConfig.openai.apiKey) {
+    _client    = new OpenAI({ apiKey: aiConfig.openai.apiKey });
+    _clientKey = aiConfig.openai.apiKey;
+  }
   return _client;
 }
 

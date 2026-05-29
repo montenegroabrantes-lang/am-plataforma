@@ -7,18 +7,23 @@ export const processosRouter = Router();
 
 // Filtro de visibilidade: restritos só para pode_marcar_restrito
 function filtroVisibilidade(user) {
-  if (user.pode_marcar_restrito) return ''; // Master 01 vê tudo
+  if (user.pode_marcar_restrito) return '';
   return `AND (p.visibilidade = 'normal')`;
 }
 
-// Filtro de master: cada Master vê só seus processos (ou compartilhados)
-function filtroMaster(user) {
-  if (user.pode_marcar_restrito) return ''; // Master 01 vê tudo
-  if (user.perfil === 'master') {
-    return `AND (p.master_responsavel_id = '${user.id}' OR p.compartilhado = true)`;
-  }
-  // Junior herda visibilidade do seu Master
-  return `AND (p.master_responsavel_id = '${user.master_id}' OR p.compartilhado = true)`;
+// Filtro de master: usa parâmetros para evitar SQL injection
+function filtroMaster(user, params) {
+  if (user.pode_marcar_restrito) return '';
+  const masterId = user.perfil === 'master' ? user.id : user.master_id;
+  params.push(masterId);
+  return `AND (p.master_responsavel_id = $${params.length} OR p.compartilhado = true)`;
+}
+
+// Verifica se o user tem acesso ao processo (para GET/PATCH/DELETE /:id)
+function podeAcessarProcesso(user, processo) {
+  if (user.pode_marcar_restrito) return true;
+  const masterId = user.perfil === 'master' ? user.id : user.master_id;
+  return processo.master_responsavel_id === masterId || processo.compartilhado === true;
 }
 
 // GET /api/processos
@@ -28,8 +33,8 @@ processosRouter.get('/', async (req, res) => {
   const page   = Number(req.query.page || req.query.pagina || 1);
   const offset = (page - 1) * Number(limite);
 
-  const condicoes = ['1=1', filtroMaster(req.user), filtroVisibilidade(req.user)];
   const params    = [];
+  const condicoes = ['1=1', filtroMaster(req.user, params), filtroVisibilidade(req.user)];
 
   if (status)   { params.push(status);   condicoes.push(`p.status = $${params.length}`); }
   if (tribunal) { params.push(tribunal); condicoes.push(`p.tribunal = $${params.length}`); }
@@ -104,7 +109,10 @@ processosRouter.get('/:id', async (req, res) => {
 
   if (!p) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
 
-  // Não expõe restrito para quem não pode ver
+  if (!podeAcessarProcesso(req.user, p)) {
+    return res.status(403).json({ ok: false, erro: 'Acesso negado a este processo.' });
+  }
+
   if (p.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
     return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
   }
@@ -154,6 +162,10 @@ processosRouter.post('/', async (req, res) => {
 
 // PATCH /api/processos/:id
 processosRouter.patch('/:id', async (req, res) => {
+  const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado FROM processos WHERE id = $1', [req.params.id]);
+  if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  if (!podeAcessarProcesso(req.user, dono)) return res.status(403).json({ ok: false, erro: 'Acesso negado a este processo.' });
+
   const campos  = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas'];
   const updates = [];
   const params  = [];
@@ -278,6 +290,7 @@ processosRouter.post('/:id/sync', async (req, res) => {
 processosRouter.delete('/:id', apenasMaster, async (req, res) => {
   const antes = await db.queryOne('SELECT * FROM processos WHERE id = $1', [req.params.id]);
   if (!antes) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  if (!podeAcessarProcesso(req.user, antes)) return res.status(403).json({ ok: false, erro: 'Acesso negado a este processo.' });
 
   await db.execute('DELETE FROM processos WHERE id = $1', [req.params.id]);
 
