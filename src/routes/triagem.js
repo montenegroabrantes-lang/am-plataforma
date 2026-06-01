@@ -38,7 +38,7 @@ triagemRouter.get('/', async (req, res) => {
 
   // Constrói cláusulas WHERE dinâmicas para filtros base (sem etapa)
   const filterParams = [];
-  const filterWheres = ['p.ativo = true'];
+  const filterWheres = [`p.status IN ('ativo','suspenso')`];
 
   function fp(val) { filterParams.push(val); return `$${filterParams.length}`; }
 
@@ -53,7 +53,7 @@ triagemRouter.get('/', async (req, res) => {
   if (produto_id)   filterWheres.push(`p.produto_id = ${fp(produto_id)}`);
   if (polo_passivo) filterWheres.push(`p.polo_passivo ILIKE ${fp('%' + polo_passivo + '%')}`);
   if (tempo_parado_min) {
-    filterWheres.push(`EXTRACT(DAY FROM NOW() - p.ultima_movimentacao) >= ${fp(Number(tempo_parado_min))}`);
+    filterWheres.push(`EXTRACT(DAY FROM NOW() - ult.data_movimentacao) >= ${fp(Number(tempo_parado_min))}`);
   }
   if (pagamento === 'true') {
     filterWheres.push(`(p.situacao_atual IN ('rpv_paga','pagamento_realizado')
@@ -72,8 +72,7 @@ triagemRouter.get('/', async (req, res) => {
         COALESCE(c.nome, p.polo_ativo) AS cliente,
         pr.id   AS produto_id,
         pr.nome AS produto,
-        p.ultima_movimentacao,
-        EXTRACT(DAY FROM NOW() - p.ultima_movimentacao)::int AS dias_parado,
+        EXTRACT(DAY FROM NOW() - ult.data_movimentacao)::int AS dias_parado,
         ult.texto             AS ultima_mov_texto,
         ult.data_movimentacao AS ultima_mov_data,
         ${ETAPA_CASE} AS etapa
@@ -114,7 +113,7 @@ triagemRouter.get('/', async (req, res) => {
       `${CTE}
        SELECT * FROM base
        WHERE 1=1 ${etapaWhere}
-       ORDER BY dias_parado DESC NULLS LAST, ultima_movimentacao ASC NULLS LAST
+       ORDER BY dias_parado DESC NULLS LAST, ultima_mov_data ASC NULLS LAST
        LIMIT $${listaParams.length - 1} OFFSET $${listaParams.length}`,
       listaParams
     ),

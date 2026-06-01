@@ -86,7 +86,7 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
   ).catch(() => {});
 
   if (dados.vara || dados.polo_ativo || dados.habilitados?.length || dados.data_ajuizamento) {
-    const dataAjuiz = parsearDataPtBR(dados.data_ajuizamento);
+    const dataDistribuicao = parsearDataPtBR(dados.data_ajuizamento);
     await db.execute(
       `UPDATE processos
        SET vara              = COALESCE($1, vara),
@@ -95,11 +95,11 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
            polo_passivo      = COALESCE($4, polo_passivo),
            acao              = COALESCE($5, acao),
            habilitados_pje   = COALESCE($6, habilitados_pje),
-           data_ajuizamento  = COALESCE($7, data_ajuizamento),
+           data_distribuicao = COALESCE($7, data_distribuicao),
            importado_pje     = true,
            atualizado_em     = NOW()
        WHERE id = $8`,
-      [dados.vara, dados.juiz, dados.polo_ativo, dados.polo_passivo, dados.acao, dados.habilitados, dataAjuiz, processoId]
+      [dados.vara, dados.juiz, dados.polo_ativo, dados.polo_passivo, dados.acao, dados.habilitados, dataDistribuicao, processoId]
     );
     await resolverSeparacaoSocios(processo, dados.habilitados || []);
   }

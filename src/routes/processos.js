@@ -33,9 +33,44 @@ const FILTROS_PERIODO = {
   'sem60d': `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) < NOW() - INTERVAL '60 days'`,
 };
 
+const ETAPA_WHERE = {
+  'Pagamento':               `(p.situacao_atual IN ('rpv_paga','pagamento_realizado') OR p.status_rpv = 'paga' OR p.status_alvara = 'pagamento_realizado')`,
+  'Arquivado':               `p.situacao_atual IN ('arquivado','autos_baixados')`,
+  'Alvará':                  `(p.tipo_requisicao = 'alvara' OR p.situacao_atual IN ('aguardando_alvara','alvara_expedido'))`,
+  'Precatório':              `(p.tipo_requisicao = 'precatorio' OR p.situacao_atual IN ('em_precatorio','minuta_precatorio_juntada','precatorio_assinado','precatorio_remetido','precatorio_incluido_fila'))`,
+  'RPV':                     `(p.tipo_requisicao = 'rpv' OR p.situacao_atual IN ('aguardando_rpv','em_rpv','rpv_expedida'))`,
+  'Cumprimento de Sentença': `p.situacao_atual IN ('cumprimento_sentenca','calculos_apresentados','fazenda_intimada_impugnar','impugnacao_fazenda_apresentada','calculos_homologados')`,
+  'Recurso':                 `p.situacao_atual IN ('em_recurso','em_segundo_grau','aguardando_baixa')`,
+  'Sentença':                `p.situacao_atual IN ('concluso_sentenca','sentenca_proferida','sentenca_publicada')`,
+  'Contestação':             `p.situacao_atual IN ('contestacao_apresentada','impugnacao_contestacao','manifestacao_provas')`,
+  'Inicial':                 `p.situacao_atual IN ('em_conhecimento','aguardando_contestacao')`,
+  'Sem classificação':       `p.situacao_atual IS NULL`,
+};
+
+const ETAPA_CASE = `
+  CASE
+    WHEN p.situacao_atual IN ('rpv_paga','pagamento_realizado') OR p.status_rpv = 'paga' OR p.status_alvara = 'pagamento_realizado' THEN 'Pagamento'
+    WHEN p.situacao_atual IN ('arquivado','autos_baixados') THEN 'Arquivado'
+    WHEN p.tipo_requisicao = 'alvara' OR p.situacao_atual IN ('aguardando_alvara','alvara_expedido') THEN 'Alvará'
+    WHEN p.tipo_requisicao = 'precatorio' OR p.situacao_atual IN ('em_precatorio','minuta_precatorio_juntada','precatorio_assinado','precatorio_remetido','precatorio_incluido_fila') THEN 'Precatório'
+    WHEN p.tipo_requisicao = 'rpv' OR p.situacao_atual IN ('aguardando_rpv','em_rpv','rpv_expedida') THEN 'RPV'
+    WHEN p.situacao_atual IN ('cumprimento_sentenca','calculos_apresentados','fazenda_intimada_impugnar','impugnacao_fazenda_apresentada','calculos_homologados') THEN 'Cumprimento de Sentença'
+    WHEN p.situacao_atual IN ('em_recurso','em_segundo_grau','aguardando_baixa') THEN 'Recurso'
+    WHEN p.situacao_atual IN ('concluso_sentenca','sentenca_proferida','sentenca_publicada') THEN 'Sentença'
+    WHEN p.situacao_atual IN ('contestacao_apresentada','impugnacao_contestacao','manifestacao_provas') THEN 'Contestação'
+    WHEN p.situacao_atual IN ('em_conhecimento','aguardando_contestacao') THEN 'Inicial'
+    ELSE 'Sem classificação'
+  END
+`;
+
 // GET /api/processos
 processosRouter.get('/', async (req, res) => {
-  const { status, tribunal, busca, situacao_atual, urgente, localizacao_processual, tipo_requisicao, periodo, limite = 30 } = req.query;
+  const {
+    status, tribunal, busca, situacao_atual, urgente,
+    localizacao_processual, tipo_requisicao, periodo,
+    produto_id, etapa, tempo_parado_min,
+    limite = 30,
+  } = req.query;
   const page   = Number(req.query.page || req.query.pagina || 1);
   const offset = (page - 1) * Number(limite);
 
@@ -47,13 +82,16 @@ processosRouter.get('/', async (req, res) => {
   if (situacao_atual)        { params.push(situacao_atual);        condicoes.push(`AND p.situacao_atual = $${params.length}`); }
   if (localizacao_processual){ params.push(localizacao_processual);condicoes.push(`AND p.localizacao_processual = $${params.length}`); }
   if (tipo_requisicao)       { params.push(tipo_requisicao);       condicoes.push(`AND p.tipo_requisicao = $${params.length}`); }
+  if (produto_id)            { params.push(produto_id);            condicoes.push(`AND p.produto_id = $${params.length}`); }
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
   if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
+  if (etapa && ETAPA_WHERE[etapa]) condicoes.push(`AND ${ETAPA_WHERE[etapa]}`);
+  if (tempo_parado_min) {
+    params.push(Number(tempo_parado_min));
+    condicoes.push(`AND EXTRACT(DAY FROM NOW() - (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id)) >= $${params.length}`);
+  }
   if (busca) {
-    params.push(`%${busca}%`);
-    params.push(`%${busca}%`);
-    params.push(`%${busca}%`);
-    params.push(`%${busca}%`);
+    params.push(`%${busca}%`, `%${busca}%`, `%${busca}%`, `%${busca}%`);
     condicoes.push(`AND (p.numero ILIKE $${params.length - 3} OR c.nome ILIKE $${params.length - 2} OR p.polo_ativo ILIKE $${params.length - 1} OR p.polo_passivo ILIKE $${params.length})`);
   }
 
@@ -74,12 +112,19 @@ processosRouter.get('/', async (req, res) => {
             p.polo_ativo, p.polo_passivo,
             p.visibilidade, p.compartilhado, p.master_responsavel_id,
             p.situacao_atual, p.urgente, p.etapa_atual, p.localizacao_processual,
-            p.status_rpv, p.tipo_requisicao, p.requer_revisao,
-            p.classificado_por, p.classificado_em, p.criado_em,
+            p.status_rpv, p.status_precatorio, p.status_alvara, p.tipo_requisicao,
+            p.requer_revisao, p.classificado_por, p.classificado_em, p.criado_em,
+            p.data_distribuicao,
+            EXTRACT(YEAR FROM p.data_distribuicao)::int AS ano,
             c.nome AS cliente_nome,
-            (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) AS ultima_movimentacao
+            pr.nome AS produto_nome,
+            (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) AS ultima_movimentacao,
+            (SELECT m.texto FROM movimentacoes m WHERE m.processo_id = p.id ORDER BY m.data_movimentacao DESC LIMIT 1) AS ultima_mov_texto,
+            EXTRACT(DAY FROM NOW() - (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id))::int AS dias_parado,
+            ${ETAPA_CASE} AS etapa
      FROM processos p
-     LEFT JOIN clientes c ON c.id = p.cliente_id
+     LEFT JOIN clientes c  ON c.id  = p.cliente_id
+     LEFT JOIN produtos  pr ON pr.id = p.produto_id
      WHERE ${where}
      ORDER BY p.urgente DESC, p.atualizado_em DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
@@ -455,14 +500,16 @@ processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
   setImmediate(async () => {
     try {
       const masterId = req.user.pode_marcar_restrito ? null : req.user.id;
-      const filtroM  = masterId ? `AND p.master_responsavel_id = '${masterId}'` : '';
+      const loteParams = masterId ? [masterId] : [];
+      const filtroM    = masterId ? `AND p.master_responsavel_id = $1` : '';
 
       const processos = await db.query(
         `SELECT p.id, p.numero, p.tribunal, p.situacao_atual, pr.nome AS produto_nome
          FROM processos p
          LEFT JOIN produtos pr ON pr.id = p.produto_id
          WHERE p.status = 'ativo' ${filtroM}
-         ORDER BY p.atualizado_em ASC`
+         ORDER BY p.atualizado_em ASC`,
+        loteParams
       );
 
       const { ai } = await import('../services/ai/index.js');

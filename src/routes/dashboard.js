@@ -54,7 +54,7 @@ dashboardRouter.get('/', async (req, res) => {
     db.query(`
       SELECT t.urgencia, COUNT(*) AS total
       FROM tarefas t
-      WHERE t.status NOT IN ('concluida','cancelada') ${filtroT}
+      WHERE t.status NOT IN ('concluida','nao_verificada') ${filtroT}
       GROUP BY t.urgencia
       ORDER BY CASE t.urgencia
         WHEN 'CRITICO' THEN 1 WHEN 'ALTO' THEN 2 WHEN 'MEDIO' THEN 3 ELSE 4 END`),
@@ -66,7 +66,7 @@ dashboardRouter.get('/', async (req, res) => {
       JOIN processos p ON p.id = a.processo_id
       LEFT JOIN clientes c ON c.id = p.cliente_id
       WHERE a.data_hora BETWEEN NOW() AND NOW() + INTERVAL '7 days'
-      ${filtroP.replace('p.master_responsavel_id', 'p.master_responsavel_id')}
+      ${filtroP}
       ORDER BY a.data_hora ASC
       LIMIT 5`),
 
