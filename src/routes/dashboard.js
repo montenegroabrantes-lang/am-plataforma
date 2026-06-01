@@ -86,7 +86,10 @@ dashboardRouter.get('/', async (req, res) => {
         COUNT(*) FILTER (WHERE sync_fonte = 'eproc')                   AS via_eproc,
         COUNT(*) FILTER (WHERE sync_fonte IS NULL)                     AS sem_fonte,
         COUNT(*) FILTER (WHERE sync_falhas > 0)                        AS com_falhas,
-        COUNT(*) FILTER (WHERE sync_status = 'erro_sync')              AS com_erro
+        COUNT(*) FILTER (WHERE sync_status = 'erro_sync')              AS com_erro,
+        COUNT(*) FILTER (WHERE polo_ativo  IS NOT NULL AND polo_ativo  <> '') AS com_polo_ativo,
+        COUNT(*) FILTER (WHERE polo_passivo IS NOT NULL AND polo_passivo <> '') AS com_polo_passivo,
+        COUNT(*)                                                        AS total_monitorados
       FROM processos p WHERE status IN ('ativo','suspenso') ${filtroP}`),
 
     // Última e penúltima execuções do sync completo
@@ -108,6 +111,43 @@ dashboardRouter.get('/', async (req, res) => {
       WHERE p.sync_status = 'erro_sync' ${filtroP}
       ORDER BY p.sync_falhas DESC, p.atualizado_em ASC
       LIMIT 10`),
+  ]);
+
+  // Métricas processuais operacionais
+  const [situacaoCounts, localizacaoCounts, urgentesLista, requisicaoCounts] = await Promise.all([
+
+    db.query(`
+      SELECT situacao_atual, COUNT(*) AS total
+      FROM processos p
+      WHERE status = 'ativo' AND situacao_atual IS NOT NULL ${filtroP}
+      GROUP BY situacao_atual ORDER BY total DESC`),
+
+    db.query(`
+      SELECT localizacao_processual, COUNT(*) AS total
+      FROM processos p
+      WHERE status = 'ativo' AND localizacao_processual IS NOT NULL ${filtroP}
+      GROUP BY localizacao_processual ORDER BY total DESC`),
+
+    db.query(`
+      SELECT p.id, p.numero, p.situacao_atual, p.etapa_atual, c.nome AS cliente_nome
+      FROM processos p
+      LEFT JOIN clientes c ON c.id = p.cliente_id
+      WHERE p.urgente = true AND p.status = 'ativo' ${filtroP}
+      ORDER BY p.classificado_em DESC LIMIT 20`),
+
+    db.queryOne(`
+      SELECT
+        COUNT(*) FILTER (WHERE status_rpv NOT IN ('nao_iniciado','paga') AND status_rpv IS NOT NULL) AS rpv_andamento,
+        COUNT(*) FILTER (WHERE status_rpv = 'expedida')                                              AS rpv_expedida,
+        COUNT(*) FILTER (WHERE status_rpv = 'paga')                                                  AS rpv_paga,
+        COUNT(*) FILTER (WHERE status_precatorio NOT IN ('nao_iniciado','pagamento_disponibilizado') AND status_precatorio IS NOT NULL) AS prec_andamento,
+        COUNT(*) FILTER (WHERE status_precatorio = 'pagamento_disponibilizado')                      AS prec_pago,
+        COUNT(*) FILTER (WHERE status_alvara NOT IN ('nao_iniciado','pagamento_realizado') AND status_alvara IS NOT NULL) AS alv_andamento,
+        COUNT(*) FILTER (WHERE status_alvara = 'pagamento_realizado')                                AS alv_pago,
+        COUNT(*) FILTER (WHERE tipo_requisicao = 'rpv')                                              AS total_rpv,
+        COUNT(*) FILTER (WHERE tipo_requisicao = 'precatorio')                                       AS total_precatorio,
+        COUNT(*) FILTER (WHERE tipo_requisicao = 'alvara')                                           AS total_alvara
+      FROM processos p WHERE status = 'ativo' ${filtroP}`),
   ]);
 
   // Movimentações críticas recentes (últimas 48h, urgência CRITICO ou ALTO)
@@ -151,5 +191,9 @@ dashboardRouter.get('/', async (req, res) => {
       processos_erro:   syncErros,
     },
     alertas: movsAlerta,
+    situacoes:   situacaoCounts,
+    localizacoes: localizacaoCounts,
+    urgentes:    urgentesLista,
+    requisicoes: requisicaoCounts || {},
   });
 });

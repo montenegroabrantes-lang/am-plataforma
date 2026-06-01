@@ -152,6 +152,42 @@ try {
   await db.execute(`ALTER TABLE movimentacoes ADD COLUMN IF NOT EXISTS pendencia_status_prazo TEXT`).catch(() => {});
   await db.execute(`ALTER TABLE movimentacoes ADD COLUMN IF NOT EXISTS pendencia_conferencia_pje BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
 
+  // 15. processos: campos de situação processual e classificação
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS situacao_atual TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS etapa_atual TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS localizacao_processual TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS data_inicio_situacao DATE`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS urgente BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS tipo_requisicao TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS status_rpv TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS status_precatorio TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS status_alvara TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS valor_homologado NUMERIC(14,2)`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS comarca TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS classe_processual TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS requer_revisao BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS classificado_por TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS classificado_em TIMESTAMPTZ`).catch(() => {});
+
+  // 16. historico_situacao — rastreia toda mudança de situação processual
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS historico_situacao (
+      id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      processo_id       UUID NOT NULL REFERENCES processos(id) ON DELETE CASCADE,
+      situacao_anterior TEXT,
+      situacao_nova     TEXT,
+      etapa_anterior    TEXT,
+      etapa_nova        TEXT,
+      usuario_id        TEXT,
+      fonte             TEXT NOT NULL DEFAULT 'manual',
+      criado_em         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `).catch(() => {});
+  await db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_historico_situacao_processo
+    ON historico_situacao(processo_id, criado_em DESC)
+  `).catch(() => {});
+
   console.log('[migrate] ✅ Migração concluída');
 } catch (err) {
   console.error('[migrate] ❌ Erro (não fatal):', err.message);

@@ -34,9 +34,11 @@ configAiRouter.post('/', async (req, res) => {
   const MODELOS_CLAUDE = ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'];
   const MODELOS_OPENAI = ['gpt-4o', 'gpt-4.5', 'gpt-5'];
 
+  const PROVEDORES = ['claude', 'openai'];
   const pares = [
-    { chave: 'rota_diagnostico',    valor: roteamento.diagnostico },
-    { chave: 'rota_peticao',        valor: roteamento.peticao },
+    { chave: 'rota_diagnostico',    valor: PROVEDORES.includes(roteamento?.diagnostico)   ? roteamento.diagnostico   : 'claude' },
+    { chave: 'rota_peticao',        valor: PROVEDORES.includes(roteamento?.peticao)        ? roteamento.peticao        : 'claude' },
+    { chave: 'rota_classificacao',  valor: PROVEDORES.includes(roteamento?.classificacao)  ? roteamento.classificacao  : 'openai' },
     { chave: 'claude_modelo',       valor: MODELOS_CLAUDE.includes(modelos?.claude) ? modelos.claude : 'claude-sonnet-4-6' },
     { chave: 'openai_modelo_texto', valor: MODELOS_OPENAI.includes(modelos?.openai) ? modelos.openai : 'gpt-4o' },
   ];

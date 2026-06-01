@@ -4,6 +4,7 @@ import { claudeProvider }           from './providers/claude.js';
 import { openaiProvider }           from './providers/openai.js';
 import { diagnosticarMovimentacao } from './tasks/diagnostico.js';
 import { gerarPeticao }             from './tasks/peticao.js';
+import { classificarProcesso }      from './tasks/classificacao.js';
 
 function provedorPara(tipoTarefa) {
   const rota = aiConfig.roteamento[tipoTarefa] || 'claude';
@@ -26,6 +27,10 @@ export const ai = {
     return gerarPeticao(dados, provedorPara('peticao'));
   },
 
+  async classificar(dados) {
+    return classificarProcesso({ ...dados, provider: provedorPara('classificacao') });
+  },
+
   status() {
     return {
       claude: {
@@ -36,7 +41,7 @@ export const ai = {
         apiKeyOk:    !!aiConfig.openai.apiKey,
         modeloTexto: aiConfig.openai.modeloTexto,
       },
-      roteamento: aiConfig.roteamento,
+      roteamento: { ...aiConfig.roteamento },
     };
   },
 };

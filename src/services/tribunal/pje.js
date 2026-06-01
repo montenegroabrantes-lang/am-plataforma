@@ -1,7 +1,10 @@
-import puppeteer          from 'puppeteer';
+import puppeteerExtra     from 'puppeteer-extra';
+import StealthPlugin      from 'puppeteer-extra-plugin-stealth';
 import { authenticator }  from 'otplib';
 import path               from 'path';
 import fs                 from 'fs';
+
+puppeteerExtra.use(StealthPlugin());
 
 const TIMEOUT     = 90_000; // 90s — PJe pode ser lento, especialmente em Railway
 const AJAX_WAIT   = 3_000;   // tempo para AJAX do RichFaces estabilizar
@@ -27,12 +30,12 @@ function browserArgs() {
 }
 
 async function abrirBrowser() {
-  return puppeteer.launch({
-    headless: 'new',
+  return puppeteerExtra.launch({
+    headless: true,
     args: browserArgs(),
     executablePath: process.env.CHROMIUM_PATH || undefined,
     defaultViewport: { width: 1280, height: 900 },
-    protocolTimeout: 300_000, // 5 min — Railway com Chromium pode ser mais lento que local
+    protocolTimeout: 300_000,
   });
 }
 
@@ -716,15 +719,8 @@ async function extrairExpedientes(page) {
 async function extrairMovimentacoes(page) {
   const movimentacoes = [];
 
-  const abaMovs = await page.$(
-    'a[id*="movimentacao"], a[href*="movimentacao"], ' +
-    'li a::-p-text("Movimentações"), li a::-p-text("Histórico"), ' +
-    'a[title*="Movimentação"]'
-  );
-  if (abaMovs) {
-    await abaMovs.click();
-    await new Promise(r => setTimeout(r, AJAX_WAIT));
-  }
+  // TJPB PJe não tem aba "Movimentações" — movimentações vêm do DataJud.
+  // Tenta ler tabelas já presentes na página; retorna vazio se não encontrar.
   await screenshot(page, 'aba-movimentacoes');
 
   // Log diagnóstico: tabelas visíveis após clicar na aba
@@ -820,100 +816,95 @@ async function extrairMovimentacoes(page) {
 
 // ─────────────────────────────────────────────
 //  EXTRAIR DADOS + HABILITADOS
-//  Dividido em chamadas evaluate menores para evitar protocolTimeout
-//  com páginas pesadas do PJe (querySelectorAll 'td,span,div' retorna
-//  milhares de nós e a serialização CDP estoura o timeout).
+//  TJPB PJe usa Bootstrap tabs: #maisDetalhes, #poloAtivo, #poloPassivo.
+//  O conteúdo já está no DOM — clica no toggle ▼ para garantir carregamento
+//  e lê diretamente dos IDs corretos.
 // ─────────────────────────────────────────────
 async function extrairDados(page) {
-  const abaDados = await page.$(
-    'a[id*="aba"][id*="dados"], li a::-p-text("Dados"), ' +
-    'li a::-p-text("Partes"), a[title*="Partes"], a[title*="Dados"]'
-  );
-  if (abaDados) {
-    await abaDados.click();
-    await new Promise(r => setTimeout(r, AJAX_WAIT));
+  // O toggle ▼ (Bootstrap dropdown) carrega #poloAtivo/#poloPassivo/#maisDetalhes via AJAX.
+  // Usa waitForSelector para esperar o toggle aparecer no DOM antes de clicar.
+  await screenshot(page, 'pre-toggle');
+  try {
+    const toggle = await page.waitForSelector(
+      'a.titulo-topo.dropdown-toggle, a[class*="titulo-topo"][data-toggle="dropdown"]',
+      { timeout: 15_000 }
+    );
+    await toggle.click();
+    console.log('[PJe] Toggle ▼ clicado — aguardando #poloAtivo no DOM');
+    // Aguarda AJAX injetar o conteúdo das abas
+    await page.waitForSelector('#poloAtivo, #maisDetalhes', { timeout: 12_000 }).catch(() => {});
+    await new Promise(r => setTimeout(r, 800));
+  } catch {
+    // Diagnóstico: mostra snippet do body para entender o que carregou
+    const bodySnip = await page.evaluate(() =>
+      (document.body?.innerText || '').slice(0, 600)
+    ).catch(() => '');
+    console.log('[PJe] Toggle ▼ não encontrado após 15s. Body snippet:', bodySnip);
   }
-  await screenshot(page, 'aba-dados');
+  await screenshot(page, 'pos-toggle');
 
-  // Rótulos que nunca devem ser retornados como valor (são labels da própria tabela)
-  const LABELS = [
-    'Órgão julgador','Órgão Julgador','Vara','Magistrado','Juiz','Juíza',
-    'Classe','Classe processual','Tipo de ação','Polo ativo','Polo passivo',
-    'Requerente','Requerido','Autor','Réu','Reclamante','Reclamado',
-    'Última moviment.','Data distribuição','Distribuição','Advogado',
-    'Advogados','Partes','Processo','Número',
-  ];
+  const dados = await page.evaluate(() => {
+    const limparNome = (txt) =>
+      (txt || '').replace(/\s*[-–]\s*(CPF|CNPJ)[:\s].*$/i, '').trim() || null;
 
-  // Busca um campo por rótulo — chamada isolada para evitar timeout
-  // Limita a 400 células para evitar Runtime.callFunctionOn timed out em páginas JSF pesadas
-  const porRotulo = async (rotulos) => page.evaluate(({ rotulos, labels }) => {
-    const SKIP = new Set(labels);
-    const tds  = Array.from(document.querySelectorAll('td, th')).slice(0, 400);
-    for (const td of tds) {
-      const t = td.innerText?.trim() || '';
-      if (!rotulos.some(r => t === r || t === r + ':')) continue;
-      // Próximo irmão na mesma linha
-      const next = td.nextElementSibling;
-      const val  = next?.innerText?.trim();
-      if (val && val.length > 1 && !SKIP.has(val) && !val.endsWith(':')) return val;
-      // Linha seguinte, primeira célula de valor
-      const proxLinha = td.parentElement?.nextElementSibling?.querySelector('td:not(th)');
-      const val2 = proxLinha?.innerText?.trim();
-      if (val2 && val2.length > 1 && !SKIP.has(val2) && !val2.endsWith(':')) return val2;
+    // ── Estratégia 1: ler das abas #poloAtivo / #poloPassivo (disponível após clique no toggle) ──
+    let polo_ativo  = limparNome(document.querySelector('#poloAtivo tbody td > span > span')?.textContent);
+    let polo_passivo = limparNome(document.querySelector('#poloPassivo tbody td > span > span')?.textContent);
+
+    // ── Estratégia 2: ler do subtítulo do navbar "NOME X OUTRA_PARTE" (sempre visível) ──
+    if (!polo_ativo || !polo_passivo) {
+      const navEl = document.querySelector('a.titulo-topo.dropdown-toggle, a[class*="titulo-topo"]')
+        ?.closest('.navbar, nav, header, .navbar-header, .navbar-collapse');
+      const navText = navEl?.innerText || document.querySelector('.navbar, nav')?.innerText || '';
+      // Procura linha "NOME A X NOME B" — letras maiúsculas separadas por " X "
+      const match = navText.match(/^([A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÜÇ][^\n]+?)\s+X\s+([A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÜÇ][^\n]+)$/m);
+      if (match) {
+        if (!polo_ativo)  polo_ativo  = match[1].trim();
+        if (!polo_passivo) polo_passivo = match[2].trim();
+      }
     }
-    return null;
-  }, { rotulos, labels: LABELS }).catch(() => null);
 
-  // Busca por seletor CSS — filtra labels conhecidos no resultado
-  const porSel = async (sel) => page.evaluate(({ s, labels }) => {
-    const SKIP = new Set(labels);
-    for (const el of document.querySelectorAll(s)) {
-      const t = el.innerText?.trim();
-      if (t && t.length > 1 && !SKIP.has(t) && !t.endsWith(':')) return t;
+    // ── Habilitados (OAB) das árvores dos polos ──
+    const oabSet = new Set();
+    document.querySelectorAll('#poloAtivo .tree span > span, #poloPassivo .tree span > span').forEach(el => {
+      const txt = el.textContent?.trim() || '';
+      const m = txt.match(/OAB\s+([A-Z]{2})\s*(\d+)/i);
+      if (m) oabSet.add(`${m[1]}${m[2]}`);
+    });
+
+    // ── Campos de detalhe: busca por rótulo em #maisDetalhes OU no navbar ──
+    let vara = null, acao = null, juiz = null, data_ajuizamento = null;
+    const fonteDetalhes = document.querySelector('#maisDetalhes')
+      || document.querySelector('.navbar, nav, header');
+    if (fonteDetalhes) {
+      const nos = Array.from(fonteDetalhes.querySelectorAll('td, dt, li, p'));
+      for (let i = 0; i < nos.length - 1; i++) {
+        const label = nos[i].textContent?.trim().replace(/:$/, '') || '';
+        const valor = nos[i + 1]?.textContent?.trim();
+        if (!valor || valor.length < 2) continue;
+        if (!vara             && /órgão julgador|vara/i.test(label))     vara             = valor;
+        if (!acao             && /classe|tipo de ação/i.test(label))      acao             = valor;
+        if (!juiz             && /magistrado|juiz|juíza/i.test(label))    juiz             = valor;
+        if (!data_ajuizamento && /autuação|ajuizamento/i.test(label))     data_ajuizamento = valor;
+      }
     }
-    return null;
-  }, { s: sel, labels: LABELS }).catch(() => null);
 
-  // Log diagnóstico: IDs de tabelas disponíveis no DOM
-  const tabelasIds = await page.evaluate(() =>
-    Array.from(document.querySelectorAll('table[id]')).map(t => t.id).join(', ')
-  ).catch(() => '');
-  if (tabelasIds) console.log(`[PJe] Tabelas no DOM: ${tabelasIds.slice(0, 400)}`);
+    const diag = {
+      temPoloAtivo:   !!document.querySelector('#poloAtivo'),
+      temPoloPassivo: !!document.querySelector('#poloPassivo'),
+      temDetalhes:    !!document.querySelector('#maisDetalhes'),
+    };
 
-  // Rejeita o conteúdo do select da tela de busca (lista de todas as varas do tribunal)
-  const isVaraValida = (v) =>
-    v && !v.includes('Selecione') && !v.includes('Órgão Julgador') &&
-    v.split('\n').length <= 3 && v.length <= 200;
+    return { polo_ativo, polo_passivo, vara, acao, juiz, data_ajuizamento, habilitados: [...oabSet], _diag: diag };
+  }).catch(err => ({
+    polo_ativo: null, polo_passivo: null, vara: null, acao: null,
+    juiz: null, data_ajuizamento: null, habilitados: [], _diag: { err: err.message },
+  }));
 
-  const varaRaw = await porSel('[id*="orgaoJulgador"]:not(th), [id*="OrgaoJulgador"]:not(th), .orgao-julgador') ||
-                  await porRotulo(['Órgão julgador', 'Órgão Julgador', 'Vara']);
-  if (varaRaw && !isVaraValida(varaRaw)) {
-    console.warn(`[PJe] Vara descartada (parece dropdown de busca): "${varaRaw.slice(0, 80)}"`);
-  }
-  const vara = isVaraValida(varaRaw) ? varaRaw : null;
-
-  const juiz = await porSel('[id*="magistrado"]:not(th), [id*="Magistrado"]:not(th)') ||
-               await porRotulo(['Magistrado', 'Juiz', 'Juíza']);
-
-  const acao = await porSel('[id*="classeProcessual"]:not(th), [id*="classePrincipal"]:not(th)') ||
-               await porRotulo(['Classe', 'Classe processual', 'Tipo de ação']);
-
-  const polo_ativo = await porSel('[id*="parteAtiva"] .nome, [id*="autor"] .nome, [id*="requerente"] .nome') ||
-                     await porRotulo(['Polo ativo', 'Requerente', 'Autor', 'Reclamante']);
-
-  const polo_passivo = await porSel('[id*="partePassiva"] .nome, [id*="reu"] .nome, [id*="requerido"] .nome') ||
-                       await porRotulo(['Polo passivo', 'Requerido', 'Réu', 'Reclamado']);
-
-  const habilitados = await page.evaluate(() =>
-    Array.from(document.querySelectorAll(
-      '[id*="tabelaAdvogados"] td, [id*="advogado"] td, td[title*="OAB"]'
-    ))
-    .map(el => el.innerText?.trim())
-    .filter(t => t && /OAB|^\d{3,6}$/.test(t))
-    .map(t => t.replace(/[^\d\w\/]/g, ''))
-  ).catch(() => []);
-
-  return { vara, juiz, polo_ativo, polo_passivo, acao, habilitados };
+  console.log(`[PJe] extrairDados: polo_ativo="${dados.polo_ativo}", polo_passivo="${dados.polo_passivo}", data_ajuizamento="${dados.data_ajuizamento}", vara="${dados.vara}"`);
+  console.log('[PJe] extrairDados DOM:', JSON.stringify(dados._diag));
+  const { _diag, ...resultado } = dados;
+  return resultado;
 }
 
 // ─────────────────────────────────────────────
@@ -995,44 +986,10 @@ export async function abrirSessao(url, cpf, senha, totpSecret) {
   return login(url, cpf, senha, totpSecret);
 }
 
-// Expande seções colapsadas na página do processo (botão ▼ acima do número)
-// O TJPB PJe usa painéis RichFaces colapsados por padrão — todos precisam ser abertos
-async function expandirSecoesColapsadas(page) {
-  const SELETORES_EXPAND = [
-    // RichFaces panel header links (mais comum no PJe TJPB)
-    'td.rich-panel-header a',
-    '[class*="rich-panel-header"] a',
-    'a[id*="headerLnk"]',
-    'a[id*="PanelLnk"]',
-    'a[id*="toggleLnk"]',
-    // Painéis com onclick de toggle
-    'a[onclick*="toggle"], a[onclick*="Toggle"]',
-    // Imagens de seta usadas como botão
-    'img[src*="seta"], img[src*="arrow"], img[src*="expand"]',
-    'input[type="image"][src*="seta"], input[type="image"][src*="expand"]',
-    // Genérico — links dentro de cabeçalhos de painel
-    '.panelHeader a, .panel-header a, [id*="panelHeader"] a',
-  ];
-
-  let expandidos = 0;
-  for (const sel of SELETORES_EXPAND) {
-    const btns = await page.$$(sel).catch(() => []);
-    for (const btn of btns) {
-      try {
-        await btn.click();
-        await new Promise(r => setTimeout(r, 800));
-        expandidos++;
-      } catch { /* botão pode não ser clicável — ignora */ }
-    }
-    if (expandidos > 0) break; // encontrou e clicou — para nos próximos seletores
-  }
-
-  if (expandidos > 0) {
-    console.log(`[PJe] ${expandidos} seção(ões) expandida(s) na página do processo`);
-    await new Promise(r => setTimeout(r, AJAX_WAIT)); // aguarda AJAX carregar conteúdo
-  } else {
-    console.log('[PJe] Nenhum painel colapsado encontrado — página já expandida ou estrutura diferente');
-  }
+// No-op mantido para compatibilidade — TJPB PJe usa Bootstrap tabs (não RichFaces).
+// O clique no toggle ▼ é feito diretamente dentro de extrairDados.
+async function expandirSecoesColapsadas(_page) {
+  // intencionalmente vazio
 }
 
 // Busca dados de um processo usando sessão existente (sem abrir novo browser)

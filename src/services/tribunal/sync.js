@@ -85,19 +85,21 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
     [processoId]
   ).catch(() => {});
 
-  if (dados.vara || dados.polo_ativo || dados.habilitados?.length) {
+  if (dados.vara || dados.polo_ativo || dados.habilitados?.length || dados.data_ajuizamento) {
+    const dataAjuiz = parsearDataPtBR(dados.data_ajuizamento);
     await db.execute(
       `UPDATE processos
-       SET vara            = COALESCE($1, vara),
-           juiz            = COALESCE($2, juiz),
-           polo_ativo      = COALESCE($3, polo_ativo),
-           polo_passivo    = COALESCE($4, polo_passivo),
-           acao            = COALESCE($5, acao),
-           habilitados_pje = COALESCE($6, habilitados_pje),
-           importado_pje   = true,
-           atualizado_em   = NOW()
-       WHERE id = $7`,
-      [dados.vara, dados.juiz, dados.polo_ativo, dados.polo_passivo, dados.acao, dados.habilitados, processoId]
+       SET vara              = COALESCE($1, vara),
+           juiz              = COALESCE($2, juiz),
+           polo_ativo        = COALESCE($3, polo_ativo),
+           polo_passivo      = COALESCE($4, polo_passivo),
+           acao              = COALESCE($5, acao),
+           habilitados_pje   = COALESCE($6, habilitados_pje),
+           data_ajuizamento  = COALESCE($7, data_ajuizamento),
+           importado_pje     = true,
+           atualizado_em     = NOW()
+       WHERE id = $8`,
+      [dados.vara, dados.juiz, dados.polo_ativo, dados.polo_passivo, dados.acao, dados.habilitados, dataAjuiz, processoId]
     );
     await resolverSeparacaoSocios(processo, dados.habilitados || []);
   }
@@ -576,10 +578,26 @@ async function registrarFalhaSyncProcesso(processoId) {
 // ─────────────────────────────────────────────
 function parsearData(str) {
   if (!str) return null;
-  // Fixa horário ao meio-dia UTC para evitar desvio de fuso — datas do tribunal são brasileiras (sem horário)
   const dmy = str.match(/(\d{2})\/(\d{2})\/(\d{4})/);
   if (dmy) return new Date(`${dmy[3]}-${dmy[2]}-${dmy[1]}T12:00:00Z`);
   const iso = str.match(/(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return new Date(`${iso[1]}-${iso[2]}-${iso[3]}T12:00:00Z`);
   return null;
+}
+
+// Parser para datas em português do PJe: "24 jan 2024", "5 fev 2023" etc.
+const MESES_PT = { jan:1,fev:2,mar:3,abr:4,mai:5,jun:6,jul:7,ago:8,set:9,out:10,nov:11,dez:12 };
+function parsearDataPtBR(str) {
+  if (!str) return null;
+  // Tenta formato "24 jan 2024" ou "24 de jan de 2024"
+  const m = str.toLowerCase().match(/(\d{1,2})\s+(?:de\s+)?([a-z]{3})\.?\s+(?:de\s+)?(\d{4})/);
+  if (m) {
+    const mes = MESES_PT[m[2]];
+    if (mes) {
+      const mm = String(mes).padStart(2, '0');
+      const dd = String(m[1]).padStart(2, '0');
+      return new Date(`${m[3]}-${mm}-${dd}T12:00:00Z`);
+    }
+  }
+  return parsearData(str); // fallback para dd/mm/yyyy ou ISO
 }
