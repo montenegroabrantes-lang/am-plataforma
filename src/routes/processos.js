@@ -52,7 +52,9 @@ processosRouter.get('/', async (req, res) => {
   if (busca) {
     params.push(`%${busca}%`);
     params.push(`%${busca}%`);
-    condicoes.push(`AND (p.numero ILIKE $${params.length - 1} OR c.nome ILIKE $${params.length})`);
+    params.push(`%${busca}%`);
+    params.push(`%${busca}%`);
+    condicoes.push(`AND (p.numero ILIKE $${params.length - 3} OR c.nome ILIKE $${params.length - 2} OR p.polo_ativo ILIKE $${params.length - 1} OR p.polo_passivo ILIKE $${params.length})`);
   }
 
   const where = condicoes.filter(Boolean).join(' ');
@@ -101,8 +103,8 @@ processosRouter.get('/exportar', async (req, res) => {
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
   if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
   if (busca) {
-    params.push(`%${busca}%`); params.push(`%${busca}%`);
-    condicoes.push(`AND (p.numero ILIKE $${params.length-1} OR c.nome ILIKE $${params.length})`);
+    params.push(`%${busca}%`); params.push(`%${busca}%`); params.push(`%${busca}%`); params.push(`%${busca}%`);
+    condicoes.push(`AND (p.numero ILIKE $${params.length-3} OR c.nome ILIKE $${params.length-2} OR p.polo_ativo ILIKE $${params.length-1} OR p.polo_passivo ILIKE $${params.length})`);
   }
 
   const rows = await db.query(
