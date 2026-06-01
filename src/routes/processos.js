@@ -26,55 +26,104 @@ function podeAcessarProcesso(user, processo) {
   return processo.master_responsavel_id === masterId || processo.compartilhado === true;
 }
 
+const FILTROS_PERIODO = {
+  '7d':     `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= NOW() - INTERVAL '7 days'`,
+  '30d':    `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= NOW() - INTERVAL '30 days'`,
+  'sem30d': `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) < NOW() - INTERVAL '30 days'`,
+  'sem60d': `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) < NOW() - INTERVAL '60 days'`,
+};
+
 // GET /api/processos
 processosRouter.get('/', async (req, res) => {
-  // Aceita tanto 'page' quanto 'pagina' (compatibilidade com frontend)
-  const { status, tribunal, busca, limite = 30 } = req.query;
+  const { status, tribunal, busca, situacao_atual, urgente, localizacao_processual, tipo_requisicao, periodo, limite = 30 } = req.query;
   const page   = Number(req.query.page || req.query.pagina || 1);
   const offset = (page - 1) * Number(limite);
 
   const params    = [];
   const condicoes = ['1=1', filtroMaster(req.user, params), filtroVisibilidade(req.user)];
 
-  if (status)   { params.push(status);   condicoes.push(`p.status = $${params.length}`); }
-  if (tribunal) { params.push(tribunal); condicoes.push(`p.tribunal = $${params.length}`); }
-  if (busca)    {
+  if (status)                { params.push(status);                condicoes.push(`AND p.status = $${params.length}`); }
+  if (tribunal)              { params.push(tribunal);              condicoes.push(`AND p.tribunal = $${params.length}`); }
+  if (situacao_atual)        { params.push(situacao_atual);        condicoes.push(`AND p.situacao_atual = $${params.length}`); }
+  if (localizacao_processual){ params.push(localizacao_processual);condicoes.push(`AND p.localizacao_processual = $${params.length}`); }
+  if (tipo_requisicao)       { params.push(tipo_requisicao);       condicoes.push(`AND p.tipo_requisicao = $${params.length}`); }
+  if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
+  if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
+  if (busca) {
     params.push(`%${busca}%`);
     params.push(`%${busca}%`);
-    condicoes.push(`(p.numero ILIKE $${params.length - 1} OR c.nome ILIKE $${params.length})`);
+    condicoes.push(`AND (p.numero ILIKE $${params.length - 1} OR c.nome ILIKE $${params.length})`);
   }
 
-  // Total para paginação
+  const where = condicoes.filter(Boolean).join(' ');
+
   const [{ total }] = await db.query(
     `SELECT COUNT(*) AS total
      FROM processos p
      LEFT JOIN clientes c ON c.id = p.cliente_id
-     WHERE ${condicoes.join(' ')}`,
+     WHERE ${where}`,
     params
   );
 
   params.push(Number(limite), offset);
 
   const rows = await db.query(
-    `SELECT p.id, p.numero, p.tribunal, p.sistema, p.vara, p.status,
+    `SELECT p.id, p.numero, p.tribunal, p.vara, p.status, p.acao,
+            p.polo_ativo, p.polo_passivo,
             p.visibilidade, p.compartilhado, p.master_responsavel_id,
-            p.valor_causa, p.valor_rpv, p.importado_pje, p.criado_em,
-            c.nome AS cliente_nome, c.cpf AS cliente_cpf,
-            pr.nome AS produto_nome,
-            u.nome AS master_nome,
-            (SELECT texto FROM movimentacoes WHERE processo_id = p.id ORDER BY data_movimentacao DESC LIMIT 1) AS ultima_movimentacao,
-            (SELECT diagnostico_urgencia FROM movimentacoes WHERE processo_id = p.id ORDER BY data_movimentacao DESC LIMIT 1) AS urgencia
+            p.situacao_atual, p.urgente, p.etapa_atual, p.localizacao_processual,
+            p.status_rpv, p.tipo_requisicao, p.requer_revisao,
+            p.classificado_por, p.classificado_em, p.criado_em,
+            c.nome AS cliente_nome,
+            (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) AS ultima_movimentacao
      FROM processos p
-     LEFT JOIN clientes c  ON c.id = p.cliente_id
-     LEFT JOIN produtos  pr ON pr.id = p.produto_id
-     LEFT JOIN usuarios  u  ON u.id = p.master_responsavel_id
-     WHERE ${condicoes.join(' ')}
-     ORDER BY p.atualizado_em DESC
+     LEFT JOIN clientes c ON c.id = p.cliente_id
+     WHERE ${where}
+     ORDER BY p.urgente DESC, p.atualizado_em DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );
 
   res.json({ ok: true, processos: rows, total: Number(total), page, limite: Number(limite) });
+});
+
+// GET /api/processos/exportar — lista filtrada em texto para WhatsApp
+processosRouter.get('/exportar', async (req, res) => {
+  const { status, situacao_atual, urgente, tribunal, busca, localizacao_processual, tipo_requisicao, periodo } = req.query;
+  const params    = [];
+  const condicoes = ['1=1', filtroMaster(req.user, params), filtroVisibilidade(req.user)];
+
+  if (status)                { params.push(status);                condicoes.push(`AND p.status = $${params.length}`); }
+  if (tribunal)              { params.push(tribunal);              condicoes.push(`AND p.tribunal = $${params.length}`); }
+  if (situacao_atual)        { params.push(situacao_atual);        condicoes.push(`AND p.situacao_atual = $${params.length}`); }
+  if (localizacao_processual){ params.push(localizacao_processual);condicoes.push(`AND p.localizacao_processual = $${params.length}`); }
+  if (tipo_requisicao)       { params.push(tipo_requisicao);       condicoes.push(`AND p.tipo_requisicao = $${params.length}`); }
+  if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
+  if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
+  if (busca) {
+    params.push(`%${busca}%`); params.push(`%${busca}%`);
+    condicoes.push(`AND (p.numero ILIKE $${params.length-1} OR c.nome ILIKE $${params.length})`);
+  }
+
+  const rows = await db.query(
+    `SELECT p.numero, c.nome AS cliente_nome, p.situacao_atual
+     FROM processos p
+     LEFT JOIN clientes c ON c.id = p.cliente_id
+     WHERE ${condicoes.filter(Boolean).join(' ')}
+     ORDER BY p.urgente DESC, p.atualizado_em DESC
+     LIMIT 500`,
+    params
+  );
+
+  const linhas = rows.map(r => {
+    const situacao = r.situacao_atual
+      ? r.situacao_atual.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+      : 'Sem classificação';
+    return `${r.numero} | ${r.cliente_nome || '—'} | ${situacao}`;
+  });
+
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.send(linhas.join('\n'));
 });
 
 // GET /api/processos/sync-status — status atual do sync (lock + última execução)
@@ -284,6 +333,197 @@ processosRouter.post('/:id/sync', async (req, res) => {
     console.error('[Sync individual]', err.message);
     res.status(500).json({ ok: false, erro: err.message });
   }
+});
+
+// PATCH /api/processos/:id/urgente — marcar/desmarcar urgência
+processosRouter.patch('/:id/urgente', async (req, res) => {
+  const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado FROM processos WHERE id = $1', [req.params.id]);
+  if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  if (!podeAcessarProcesso(req.user, dono)) return res.status(403).json({ ok: false, erro: 'Acesso negado.' });
+
+  const { urgente } = req.body;
+  await db.execute(
+    `UPDATE processos SET urgente = $1, classificado_por = $2, classificado_em = NOW(), atualizado_em = NOW() WHERE id = $3`,
+    [!!urgente, req.user.id, req.params.id]
+  );
+  res.json({ ok: true });
+});
+
+// PATCH /api/processos/:id/situacao — classificação manual
+processosRouter.patch('/:id/situacao', async (req, res) => {
+  const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, situacao_atual, etapa_atual FROM processos WHERE id = $1', [req.params.id]);
+  if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  if (!podeAcessarProcesso(req.user, dono)) return res.status(403).json({ ok: false, erro: 'Acesso negado.' });
+
+  const campos  = ['situacao_atual','etapa_atual','localizacao_processual','tipo_requisicao',
+                   'status_rpv','status_precatorio','status_alvara','valor_homologado','urgente'];
+  const updates = [];
+  const params  = [];
+
+  for (const campo of campos) {
+    if (req.body[campo] !== undefined) {
+      params.push(req.body[campo]);
+      updates.push(`${campo} = $${params.length}`);
+    }
+  }
+
+  if (updates.length === 0) return res.status(400).json({ ok: false, erro: 'Nenhum campo para atualizar.' });
+
+  // Detecta mudança de situação para registrar início
+  if (req.body.situacao_atual && req.body.situacao_atual !== dono.situacao_atual) {
+    updates.push(`data_inicio_situacao = NOW()`);
+  }
+
+  params.push(req.user.id);
+  updates.push(`classificado_por = $${params.length}`);
+  updates.push(`classificado_em = NOW()`);
+  updates.push(`requer_revisao = false`);
+  updates.push(`atualizado_em = NOW()`);
+  params.push(req.params.id);
+
+  await db.execute(`UPDATE processos SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
+
+  // Registra histórico se mudou situação
+  if (req.body.situacao_atual && req.body.situacao_atual !== dono.situacao_atual) {
+    await db.execute(
+      `INSERT INTO historico_situacao (processo_id, situacao_anterior, situacao_nova, etapa_anterior, etapa_nova, usuario_id, fonte)
+       VALUES ($1,$2,$3,$4,$5,$6,'manual')`,
+      [req.params.id, dono.situacao_atual, req.body.situacao_atual, dono.etapa_atual, req.body.etapa_atual || null, req.user.id]
+    ).catch(() => {});
+  }
+
+  res.json({ ok: true });
+});
+
+// POST /api/processos/:id/classificar — classifica com Claude
+processosRouter.post('/:id/classificar', async (req, res) => {
+  const processo = await db.queryOne(
+    `SELECT p.*, pr.nome AS produto_nome FROM processos p LEFT JOIN produtos pr ON pr.id = p.produto_id WHERE p.id = $1`,
+    [req.params.id]
+  );
+  if (!processo) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  if (!podeAcessarProcesso(req.user, processo)) return res.status(403).json({ ok: false, erro: 'Acesso negado.' });
+
+  const movimentacoes = await db.query(
+    `SELECT texto, data_movimentacao FROM movimentacoes WHERE processo_id = $1 ORDER BY data_movimentacao DESC LIMIT 8`,
+    [req.params.id]
+  );
+
+  const { ai } = await import('../services/ai/index.js');
+  const resultado = await ai.classificar({
+    numero: processo.numero, tribunal: processo.tribunal,
+    produto: processo.produto_nome, movimentacoes,
+  });
+
+  const situacaoMudou = resultado.situacao_atual && resultado.situacao_atual !== processo.situacao_atual;
+
+  await db.execute(
+    `UPDATE processos SET
+       situacao_atual = COALESCE($1, situacao_atual),
+       etapa_atual = COALESCE($2, etapa_atual),
+       localizacao_processual = COALESCE($3, localizacao_processual),
+       tipo_requisicao = COALESCE($4, tipo_requisicao),
+       status_rpv = COALESCE($5, status_rpv),
+       status_precatorio = COALESCE($6, status_precatorio),
+       status_alvara = COALESCE($7, status_alvara),
+       requer_revisao = $8,
+       classificado_por = 'claude',
+       classificado_em = NOW(),
+       data_inicio_situacao = CASE WHEN $9 THEN NOW()::date ELSE data_inicio_situacao END,
+       atualizado_em = NOW()
+     WHERE id = $10`,
+    [
+      resultado.situacao_atual, resultado.etapa_atual, resultado.localizacao_processual,
+      resultado.tipo_requisicao, resultado.status_rpv, resultado.status_precatorio,
+      resultado.status_alvara, resultado.confianca === 'BAIXA',
+      situacaoMudou, req.params.id,
+    ]
+  );
+
+  if (situacaoMudou) {
+    await db.execute(
+      `INSERT INTO historico_situacao (processo_id, situacao_anterior, situacao_nova, etapa_anterior, etapa_nova, usuario_id, fonte)
+       VALUES ($1,$2,$3,$4,$5,'claude','claude')`,
+      [req.params.id, processo.situacao_atual, resultado.situacao_atual, processo.etapa_atual, resultado.etapa_atual]
+    ).catch(() => {});
+  }
+
+  res.json({ ok: true, resultado, requer_revisao: resultado.confianca === 'BAIXA' });
+});
+
+// POST /api/processos/classificar-lote — classifica todos os 875 processos em background
+processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
+  res.json({ ok: true, mensagem: 'Classificação em lote iniciada em segundo plano.' });
+
+  setImmediate(async () => {
+    try {
+      const masterId = req.user.pode_marcar_restrito ? null : req.user.id;
+      const filtroM  = masterId ? `AND p.master_responsavel_id = '${masterId}'` : '';
+
+      const processos = await db.query(
+        `SELECT p.id, p.numero, p.tribunal, p.situacao_atual, pr.nome AS produto_nome
+         FROM processos p
+         LEFT JOIN produtos pr ON pr.id = p.produto_id
+         WHERE p.status = 'ativo' ${filtroM}
+         ORDER BY p.atualizado_em ASC`
+      );
+
+      const { ai } = await import('../services/ai/index.js');
+      let ok = 0, erros = 0;
+
+      for (const proc of processos) {
+        try {
+          const movs = await db.query(
+            `SELECT texto, data_movimentacao FROM movimentacoes WHERE processo_id = $1 ORDER BY data_movimentacao DESC LIMIT 8`,
+            [proc.id]
+          );
+          const resultado = await ai.classificar({
+            numero: proc.numero, tribunal: proc.tribunal,
+            produto: proc.produto_nome, movimentacoes: movs,
+          });
+
+          const mudou = resultado.situacao_atual && resultado.situacao_atual !== proc.situacao_atual;
+
+          await db.execute(
+            `UPDATE processos SET
+               situacao_atual = COALESCE($1, situacao_atual),
+               etapa_atual = COALESCE($2, etapa_atual),
+               localizacao_processual = COALESCE($3, localizacao_processual),
+               tipo_requisicao = COALESCE($4, tipo_requisicao),
+               status_rpv = COALESCE($5, status_rpv),
+               status_precatorio = COALESCE($6, status_precatorio),
+               status_alvara = COALESCE($7, status_alvara),
+               requer_revisao = $8,
+               classificado_por = 'claude',
+               classificado_em = NOW(),
+               data_inicio_situacao = CASE WHEN $9 THEN NOW()::date ELSE data_inicio_situacao END
+             WHERE id = $10`,
+            [
+              resultado.situacao_atual, resultado.etapa_atual, resultado.localizacao_processual,
+              resultado.tipo_requisicao, resultado.status_rpv, resultado.status_precatorio,
+              resultado.status_alvara, resultado.confianca === 'BAIXA', mudou, proc.id,
+            ]
+          );
+
+          if (mudou) {
+            await db.execute(
+              `INSERT INTO historico_situacao (processo_id, situacao_anterior, situacao_nova, etapa_anterior, etapa_nova, usuario_id, fonte)
+               VALUES ($1,$2,$3,$4,$5,'claude','claude')`,
+              [proc.id, proc.situacao_atual, resultado.situacao_atual, null, resultado.etapa_atual]
+            ).catch(() => {});
+          }
+          ok++;
+          await new Promise(r => setTimeout(r, 300));
+        } catch (e) {
+          console.error(`[Lote] Erro em ${proc.numero}:`, e.message);
+          erros++;
+        }
+      }
+      console.log(`[Lote] Concluído: ${ok} classificados, ${erros} erros de ${processos.length} processos`);
+    } catch (e) {
+      console.error('[Lote] Erro geral:', e.message);
+    }
+  });
 });
 
 // DELETE /api/processos/:id — apenas Master
