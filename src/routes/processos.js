@@ -315,15 +315,10 @@ processosRouter.post('/sync-todos', apenasMaster, async (req, res) => {
 processosRouter.post('/:id/sync', async (req, res) => {
   const { id } = req.params;
   try {
-    const { syncQueue } = await import('../workers/index.js');
-    if (syncQueue) {
-      await syncQueue.add('sincronizar-processo', { processoId: id }, {
-        removeOnComplete: 5,
-        removeOnFail: 10,
-      });
-      console.log(`[Sync individual] enfileirado: ${id}`);
-      return res.json({ ok: true, status: 'enfileirado' });
-    }
+    const { enfileirarSincronizarProcesso } = await import('../workers/index.js');
+    await enfileirarSincronizarProcesso(id);
+    console.log(`[Sync individual] enfileirado: ${id}`);
+    return res.json({ ok: true, status: 'enfileirado' });
   } catch { /* Redis indisponível — fallback síncrono */ }
 
   // Fallback sem Redis: roda direto mas pode exceder timeout HTTP do proxy

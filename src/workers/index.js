@@ -1,21 +1,24 @@
 import { Queue }        from 'bullmq';
 import { redis }        from '../cache/redis.js';
-import { criarSyncWorker }      from './sync.worker.js';
+import { criarSyncWorker, criarSyncIndividualWorker } from './sync.worker.js';
 import { criarBackupWorker }    from './backup.worker.js';
 import { criarAudienciaWorker }        from './audiencia.worker.js';
 import { criarSACWorker, agendarSACWorker } from './sac.worker.js';
 import { criarAlertasWorker }   from './alertas.worker.js';
 
 let syncQueue;
+let individualSyncQueue;
 let backupQueue;
 let alertasQueue;
 
 export async function iniciarWorkers() {
-  syncQueue    = new Queue('sync-tribunal', { connection: redis });
-  backupQueue  = new Queue('backup',        { connection: redis });
-  alertasQueue = new Queue('alertas',       { connection: redis });
+  syncQueue           = new Queue('sync-tribunal', { connection: redis });
+  individualSyncQueue = new Queue('sync-individual', { connection: redis });
+  backupQueue         = new Queue('backup',          { connection: redis });
+  alertasQueue        = new Queue('alertas',         { connection: redis });
 
   criarSyncWorker();
+  criarSyncIndividualWorker();
   criarBackupWorker();
   criarAudienciaWorker();
   criarSACWorker();
@@ -79,13 +82,14 @@ export async function iniciarWorkers() {
   console.log('[Workers] Sync (a cada hora), Backup (02h) e Alertas WhatsApp (08h) iniciados.');
 }
 
-// Dispara sync imediato de um processo (chamado pelas rotas)
+// Dispara sync imediato de um processo — fila separada, não bloqueia pelo lote
 export async function enfileirarSincronizarProcesso(processoId) {
-  await syncQueue.add('sincronizar-processo', { processoId }, {
-    attempts:      3,
-    backoff:       { type: 'exponential', delay: 5_000 },
+  await individualSyncQueue.add('sincronizar-processo', { processoId }, {
+    attempts:         2,
+    backoff:          { type: 'fixed', delay: 10_000 },
     removeOnComplete: 20,
+    removeOnFail:     10,
   });
 }
 
-export { syncQueue, backupQueue, alertasQueue };
+export { syncQueue, individualSyncQueue, backupQueue, alertasQueue };
