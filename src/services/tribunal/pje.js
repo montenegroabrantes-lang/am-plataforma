@@ -963,6 +963,9 @@ export async function buscarProcessoCompleto(url, cpf, senha, totpSecret, numero
     // procPage pode ser uma nova aba — browser.close() fecha tudo de qualquer forma
     const procPage = await navegarParaProcesso(page, base, numeroProcesso);
 
+    // Expande seções colapsadas (botão ▼ acima do número do processo no TJPB)
+    await expandirSecoesColapsadas(procPage).catch(() => {});
+
     let dados = {};
     let movimentacoes = [];
     let expedientes = [];
@@ -992,6 +995,46 @@ export async function abrirSessao(url, cpf, senha, totpSecret) {
   return login(url, cpf, senha, totpSecret);
 }
 
+// Expande seções colapsadas na página do processo (botão ▼ acima do número)
+// O TJPB PJe usa painéis RichFaces colapsados por padrão — todos precisam ser abertos
+async function expandirSecoesColapsadas(page) {
+  const SELETORES_EXPAND = [
+    // RichFaces panel header links (mais comum no PJe TJPB)
+    'td.rich-panel-header a',
+    '[class*="rich-panel-header"] a',
+    'a[id*="headerLnk"]',
+    'a[id*="PanelLnk"]',
+    'a[id*="toggleLnk"]',
+    // Painéis com onclick de toggle
+    'a[onclick*="toggle"], a[onclick*="Toggle"]',
+    // Imagens de seta usadas como botão
+    'img[src*="seta"], img[src*="arrow"], img[src*="expand"]',
+    'input[type="image"][src*="seta"], input[type="image"][src*="expand"]',
+    // Genérico — links dentro de cabeçalhos de painel
+    '.panelHeader a, .panel-header a, [id*="panelHeader"] a',
+  ];
+
+  let expandidos = 0;
+  for (const sel of SELETORES_EXPAND) {
+    const btns = await page.$$(sel).catch(() => []);
+    for (const btn of btns) {
+      try {
+        await btn.click();
+        await new Promise(r => setTimeout(r, 800));
+        expandidos++;
+      } catch { /* botão pode não ser clicável — ignora */ }
+    }
+    if (expandidos > 0) break; // encontrou e clicou — para nos próximos seletores
+  }
+
+  if (expandidos > 0) {
+    console.log(`[PJe] ${expandidos} seção(ões) expandida(s) na página do processo`);
+    await new Promise(r => setTimeout(r, AJAX_WAIT)); // aguarda AJAX carregar conteúdo
+  } else {
+    console.log('[PJe] Nenhum painel colapsado encontrado — página já expandida ou estrutura diferente');
+  }
+}
+
 // Busca dados de um processo usando sessão existente (sem abrir novo browser)
 export async function buscarProcessoCompletoComSessao(browser, url, numero) {
   const page = await browser.newPage();
@@ -1002,6 +1045,9 @@ export async function buscarProcessoCompletoComSessao(browser, url, numero) {
 
     // procPage pode ser página diferente de page se o PJe abriu o detalhe em nova aba
     procPage = await navegarParaProcesso(page, base, numero);
+
+    // Expande seções colapsadas (botão ▼ acima do número do processo no TJPB)
+    await expandirSecoesColapsadas(procPage).catch(() => {});
 
     // Sequencial: extrairDados e extrairMovimentacoes clicam em abas diferentes
     // — rodar em paralelo no mesmo page causa conflito e perde os dados
