@@ -85,7 +85,7 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
     [processoId]
   ).catch(() => {});
 
-  if (dados.vara || dados.polo_ativo || dados.habilitados?.length || dados.data_ajuizamento) {
+  if (dados.vara || dados.polo_ativo || dados.polo_passivo || dados.habilitados?.length || dados.data_ajuizamento) {
     const dataDistribuicao = parsearDataPtBR(dados.data_ajuizamento);
     await db.execute(
       `UPDATE processos

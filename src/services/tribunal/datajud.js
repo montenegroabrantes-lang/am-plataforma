@@ -88,16 +88,33 @@ export async function consultarLote(tribunal, numeros) {
 //  PARSER — _source DataJud → {dados, movimentacoes}
 // ─────────────────────────────────────────────
 function parsear(src) {
-  const vara = src.orgaoJulgador?.nome || null;
-  const acao = src.classe?.nome       || null;
+  const vara             = src.orgaoJulgador?.nome || null;
+  const acao             = src.classe?.nome        || null;
+  const data_ajuizamento = src.dataAjuizamento     ? src.dataAjuizamento.substring(0, 10) : null;
 
   const partes = src.partes || [];
 
+  // A API DataJud retorna p.polo = 'ATIVO'/'PASSIVO' (campo principal)
+  // e p.tipoParte.nome com o papel específico (Autor, Réu, etc.)
+  // O campo p.tipo não existe na resposta padrão — verificamos todos os formatos.
   const TIPOS_ATIVO   = ['Autor', 'Requerente', 'Reclamante', 'Impetrante', 'Embargante', 'Exequente', 'Apelante'];
   const TIPOS_PASSIVO = ['Réu', 'Requerido', 'Reclamado', 'Impetrado', 'Embargado', 'Executado', 'Apelado'];
 
-  const polo_ativo   = partes.filter(p => TIPOS_ATIVO.includes(p.tipo)).map(p => p.nome).filter(Boolean).join(', ') || null;
-  const polo_passivo = partes.filter(p => TIPOS_PASSIVO.includes(p.tipo)).map(p => p.nome).filter(Boolean).join(', ') || null;
+  const polo_ativo = partes
+    .filter(p =>
+      p.polo === 'ATIVO' ||
+      TIPOS_ATIVO.includes(p.tipo) ||
+      TIPOS_ATIVO.includes(p.tipoParte?.nome)
+    )
+    .map(p => p.nome).filter(Boolean).join(', ') || null;
+
+  const polo_passivo = partes
+    .filter(p =>
+      p.polo === 'PASSIVO' ||
+      TIPOS_PASSIVO.includes(p.tipo) ||
+      TIPOS_PASSIVO.includes(p.tipoParte?.nome)
+    )
+    .map(p => p.nome).filter(Boolean).join(', ') || null;
 
   // OABs dos advogados habilitados (todos os polos)
   const habilitados = [];
@@ -122,7 +139,7 @@ function parsear(src) {
   }).filter(m => m.texto && m.texto.length >= 5);
 
   return {
-    dados: { vara, acao, polo_ativo, polo_passivo, habilitados },
+    dados: { vara, acao, polo_ativo, polo_passivo, habilitados, data_ajuizamento },
     movimentacoes,
   };
 }
