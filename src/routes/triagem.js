@@ -83,7 +83,8 @@ triagemRouter.get('/', async (req, res) => {
       SELECT
         p.id, p.numero, p.tribunal,
         EXTRACT(YEAR FROM p.data_distribuicao)::int AS ano,
-        p.vara, p.polo_passivo,
+        NULLIF(TRIM(p.vara), '')         AS vara,
+        NULLIF(TRIM(p.polo_passivo), '') AS polo_passivo,
         COALESCE(c.nome, p.polo_ativo) AS cliente,
         pr.id   AS produto_id,
         pr.nome AS produto,
@@ -142,7 +143,7 @@ triagemRouter.get('/', async (req, res) => {
          ) r) AS por_etapa,
          (SELECT json_agg(r ORDER BY r.total DESC) FROM (
            SELECT COALESCE(vara,'Não informada') AS vara, COUNT(*)::int AS total
-           FROM base GROUP BY vara LIMIT 10
+           FROM base GROUP BY vara ORDER BY total DESC
          ) r) AS por_vara,
          (SELECT json_agg(r ORDER BY r.total DESC) FROM (
            SELECT COALESCE(produto,'Não informado') AS produto, COUNT(*)::int AS total
@@ -150,7 +151,7 @@ triagemRouter.get('/', async (req, res) => {
          ) r) AS por_produto,
          (SELECT json_agg(r ORDER BY r.total DESC) FROM (
            SELECT COALESCE(polo_passivo,'Não informado') AS polo_passivo, COUNT(*)::int AS total
-           FROM base GROUP BY polo_passivo LIMIT 10
+           FROM base GROUP BY polo_passivo ORDER BY total DESC LIMIT 30
          ) r) AS por_polo_passivo,
          (SELECT json_agg(r ORDER BY r.min_dias) FROM (
            SELECT
