@@ -495,6 +495,34 @@ processosRouter.post('/:id/classificar', async (req, res) => {
   res.json({ ok: true, resultado, requer_revisao: resultado.confianca === 'BAIXA' });
 });
 
+// ── COMPLETAR POLOS ──────────────────────────────────────────
+let polosProgress = { rodando: false, total: 0, ok: 0, erros: 0, iniciado_em: null, finalizado_em: null };
+
+processosRouter.get('/completar-polos/progresso', apenasMaster, (req, res) => {
+  res.json({ ok: true, progresso: polosProgress });
+});
+
+processosRouter.post('/completar-polos', apenasMaster, async (req, res) => {
+  if (polosProgress.rodando) {
+    return res.json({ ok: false, mensagem: 'Já em andamento.', progresso: polosProgress });
+  }
+
+  polosProgress = { rodando: true, total: 0, ok: 0, erros: 0, iniciado_em: new Date(), finalizado_em: null };
+  res.json({ ok: true, mensagem: 'Completar polos iniciado.' });
+
+  setImmediate(async () => {
+    try {
+      const { completarPolos } = await import('../services/tribunal/sync.js');
+      await completarPolos((prog) => { Object.assign(polosProgress, prog); });
+    } catch (e) {
+      console.error('[Polos] Erro geral:', e.message);
+    } finally {
+      polosProgress.rodando = false;
+      polosProgress.finalizado_em = new Date();
+    }
+  });
+});
+
 // Estado de progresso da classificação em lote (em memória)
 let classifProgress = {
   rodando: false, total: 0, ok: 0, erros: 0, pulados: 0,

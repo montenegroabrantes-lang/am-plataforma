@@ -477,6 +477,93 @@ export async function sincronizarTodos() {
 }
 
 // ─────────────────────────────────────────────
+//  COMPLETAR POLOS — preenche polo_ativo/passivo
+//  nos processos PJe que ainda estão sem essa info
+// ─────────────────────────────────────────────
+export async function completarPolos(onProgress) {
+  const processos = await db.query(
+    `SELECT id, numero, tribunal, grau, sistema, master_responsavel_id
+     FROM processos
+     WHERE sistema = 'pje' AND status IN ('ativo','suspenso')
+       AND (polo_ativo IS NULL OR polo_ativo = '')
+     ORDER BY master_responsavel_id, tribunal, grau`
+  );
+
+  if (processos.length === 0) return { total: 0, ok: 0, erros: 0 };
+
+  onProgress?.({ total: processos.length, ok: 0, erros: 0 });
+
+  // Agrupa por master + tribunal + grau para reutilizar sessão PJe
+  const grupos = new Map();
+  for (const p of processos) {
+    const key = `${p.master_responsavel_id}|${p.tribunal}|${p.grau}`;
+    if (!grupos.has(key)) grupos.set(key, []);
+    grupos.get(key).push(p);
+  }
+
+  let ok = 0, erros = 0;
+
+  for (const [, grupo] of grupos) {
+    const { tribunal, grau, master_responsavel_id } = grupo[0];
+    const url = URL_TRIBUNAL[tribunal]?.[grau];
+    if (!url) {
+      erros += grupo.length;
+      onProgress?.({ total: processos.length, ok, erros });
+      continue;
+    }
+
+    const cred = await lerCredencialGrau(master_responsavel_id, tribunal, grau);
+    if (!cred) {
+      console.warn(`[Polos] Credencial não encontrada: ${tribunal} ${grau}G master ${master_responsavel_id}`);
+      erros += grupo.length;
+      onProgress?.({ total: processos.length, ok, erros });
+      continue;
+    }
+
+    let browser = null;
+    try {
+      ({ browser } = await pje.abrirSessao(url, cred.cpf, cred.senha, cred.totp_secret));
+      console.log(`[Polos] Sessão aberta: ${tribunal} ${grau}G — ${grupo.length} processo(s)`);
+
+      for (const proc of grupo) {
+        try {
+          const resultado = await pje.buscarProcessoCompletoComSessao(browser, url, proc.numero);
+          const { polo_ativo, polo_passivo } = resultado.dados;
+
+          if (polo_ativo || polo_passivo) {
+            await db.execute(
+              `UPDATE processos SET
+                 polo_ativo   = COALESCE($1, polo_ativo),
+                 polo_passivo = COALESCE($2, polo_passivo),
+                 atualizado_em = NOW()
+               WHERE id = $3`,
+              [polo_ativo || null, polo_passivo || null, proc.id]
+            );
+            console.log(`[Polos] OK: ${proc.numero} — ativo="${polo_ativo}" passivo="${polo_passivo}"`);
+          }
+          ok++;
+        } catch (e) {
+          console.error(`[Polos] Erro em ${proc.numero}:`, e.message);
+          erros++;
+          if (e.message?.includes('Target closed') || e.message?.includes('Session closed')) break;
+        }
+        onProgress?.({ total: processos.length, ok, erros });
+        await new Promise(r => setTimeout(r, 1_500));
+      }
+    } catch (e) {
+      console.error(`[Polos] Falha ao abrir sessão ${tribunal} ${grau}G:`, e.message);
+      erros += grupo.length;
+      onProgress?.({ total: processos.length, ok, erros });
+    } finally {
+      await browser?.close().catch(() => {});
+    }
+  }
+
+  console.log(`[Polos] Concluído: ${ok} OK, ${erros} erros de ${processos.length} processos.`);
+  return { total: processos.length, ok, erros };
+}
+
+// ─────────────────────────────────────────────
 //  INSPECIONAR PAINEL — importa processos novos
 // ─────────────────────────────────────────────
 export async function importarDosPaineis(masterUserId) {
