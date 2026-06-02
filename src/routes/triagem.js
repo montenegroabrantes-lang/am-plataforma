@@ -36,24 +36,39 @@ triagemRouter.get('/', async (req, res) => {
     pagina = 1, por_pagina = 50,
   } = req.query;
 
-  // Constrói cláusulas WHERE dinâmicas para filtros base (sem etapa)
+  // Filtro de visibilidade e master (igual ao processos.js)
+  const { pode_marcar_restrito, perfil, id: userId, master_id } = req.user;
+  const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? userId : master_id);
+
   const filterParams = [];
+  function fp(val) { filterParams.push(val); return `$${filterParams.length}`; }
+
   const filterWheres = [`p.status IN ('ativo','suspenso')`];
 
-  function fp(val) { filterParams.push(val); return `$${filterParams.length}`; }
+  // Restrição por master (visibilidade de dados por sócio)
+  if (masterId) {
+    filterWheres.push(`(p.master_responsavel_id = ${fp(masterId)} OR p.compartilhado = true)`);
+  }
+  // Oculta processos restritos para quem não tem permissão
+  if (!pode_marcar_restrito) {
+    filterWheres.push(`(p.visibilidade = 'normal' OR p.visibilidade IS NULL)`);
+  }
 
   if (busca) {
     filterWheres.push(`(p.numero ILIKE ${fp('%' + busca + '%')}
       OR COALESCE(c.nome, p.polo_ativo) ILIKE ${fp('%' + busca + '%')}
       OR p.polo_passivo ILIKE ${fp('%' + busca + '%')})`);
   }
-  if (ano)          filterWheres.push(`EXTRACT(YEAR FROM p.data_distribuicao) = ${fp(Number(ano))}`);
+  const anoNum          = Number(ano);
+  const tempoParadoNum  = Number(tempo_parado_min);
+  if (ano && !isNaN(anoNum))
+    filterWheres.push(`EXTRACT(YEAR FROM p.data_distribuicao) = ${fp(anoNum)}`);
   if (tribunal)     filterWheres.push(`p.tribunal = ${fp(tribunal)}`);
   if (vara)         filterWheres.push(`p.vara ILIKE ${fp('%' + vara + '%')}`);
   if (produto_id)   filterWheres.push(`p.produto_id = ${fp(produto_id)}`);
   if (polo_passivo) filterWheres.push(`p.polo_passivo ILIKE ${fp('%' + polo_passivo + '%')}`);
-  if (tempo_parado_min) {
-    filterWheres.push(`EXTRACT(DAY FROM NOW() - ult.data_movimentacao) >= ${fp(Number(tempo_parado_min))}`);
+  if (tempo_parado_min && !isNaN(tempoParadoNum)) {
+    filterWheres.push(`EXTRACT(DAY FROM NOW() - ult.data_movimentacao) >= ${fp(tempoParadoNum)}`);
   }
   if (pagamento === 'true') {
     filterWheres.push(`(p.situacao_atual IN ('rpv_paga','pagamento_realizado')

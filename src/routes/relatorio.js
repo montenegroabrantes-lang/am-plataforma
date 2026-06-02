@@ -7,8 +7,10 @@ export const relatorioRouter = Router();
 relatorioRouter.get('/', async (req, res) => {
   const { id, perfil, master_id, pode_marcar_restrito } = req.user;
   const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? id : master_id);
-  const filtroMaster = masterId ? `AND master_responsavel_id = '${masterId}'` : '';
-  const filtroProcesso = masterId ? `AND p.master_responsavel_id = '${masterId}'` : '';
+  const params   = masterId ? [masterId] : [];
+  const fP = masterId ? 'AND p.master_responsavel_id = $1' : '';
+  const fM = masterId ? 'AND master_responsavel_id = $1'   : '';
+  const fT = masterId ? 'AND validado_por = $1'            : '';
 
   const [
     processos,
@@ -21,40 +23,40 @@ relatorioRouter.get('/', async (req, res) => {
     // Processos por status
     db.query(`
       SELECT status, COUNT(*) AS total
-      FROM processos WHERE 1=1 ${filtroProcesso.replace('AND p.','AND ')}
-      GROUP BY status`),
+      FROM processos WHERE 1=1 ${fP.replace('p.','')}
+      GROUP BY status`, params),
 
     // Financeiro — receita a receber e recebida
     db.query(`
       SELECT
-        COALESCE(SUM(valor_honorario) FILTER (WHERE status = 'a_receber'), 0)      AS a_receber,
-        COALESCE(SUM(valor_honorario) FILTER (WHERE status = 'recebido'), 0)       AS recebido,
+        COALESCE(SUM(valor_honorario) FILTER (WHERE status = 'a_receber'), 0)        AS a_receber,
+        COALESCE(SUM(valor_honorario) FILTER (WHERE status = 'recebido'), 0)         AS recebido,
         COALESCE(SUM(valor_honorario) FILTER (WHERE status = 'recebido_parcial'), 0) AS recebido_parcial,
-        COALESCE(SUM(valor_honorario), 0)                                           AS total_carteira
-      FROM honorarios WHERE 1=1 ${filtroMaster}`),
+        COALESCE(SUM(valor_honorario), 0)                                             AS total_carteira
+      FROM honorarios WHERE 1=1 ${fM}`, params),
 
     // Pipeline — leads por etapa
     db.query(`
       SELECT etapa, COUNT(*) AS total
-      FROM leads WHERE 1=1 ${filtroMaster}
-      GROUP BY etapa`),
+      FROM leads WHERE 1=1 ${fM}
+      GROUP BY etapa`, params),
 
     // Tarefas em aberto por urgência
     db.query(`
       SELECT urgencia, COUNT(*) AS total
       FROM tarefas
-      WHERE status NOT IN ('concluida') ${filtroMaster.replace('master_responsavel_id','validado_por')}
-      GROUP BY urgencia`),
+      WHERE status NOT IN ('concluida') ${fT}
+      GROUP BY urgencia`, params),
 
     // Próximas audiências (30 dias)
     db.query(`
       SELECT a.data_hora, a.tipo, p.numero, p.tribunal, c.nome AS cliente_nome
       FROM audiencias a
-      JOIN processos p ON p.id = a.processo_id ${masterId ? `AND p.master_responsavel_id = '${masterId}'` : ''}
+      JOIN processos p ON p.id = a.processo_id ${fP}
       LEFT JOIN clientes c ON c.id = p.cliente_id
       WHERE a.data_hora BETWEEN NOW() AND NOW() + INTERVAL '30 days'
       ORDER BY a.data_hora ASC
-      LIMIT 10`),
+      LIMIT 10`, params),
   ]);
 
   res.json({
@@ -136,8 +138,9 @@ relatorioRouter.get('/diligencias', async (req, res) => {
   const { id, perfil, master_id, pode_marcar_restrito } = req.user;
   const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? id : master_id);
 
-  const params = [dias];
-  const filtroM = masterId ? `AND p.master_responsavel_id = '${masterId}'` : '';
+  const params  = [dias];
+  const filtroM = masterId ? `AND p.master_responsavel_id = $2` : '';
+  if (masterId) params.push(masterId);
 
   const rows = await db.query(
     `SELECT

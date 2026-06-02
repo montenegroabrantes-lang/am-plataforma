@@ -86,8 +86,9 @@ processosRouter.get('/', async (req, res) => {
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
   if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
   if (etapa && ETAPA_WHERE[etapa]) condicoes.push(`AND ${ETAPA_WHERE[etapa]}`);
-  if (tempo_parado_min) {
-    params.push(Number(tempo_parado_min));
+  const tempoNum = Number(tempo_parado_min);
+  if (tempo_parado_min && !isNaN(tempoNum)) {
+    params.push(tempoNum);
     condicoes.push(`AND EXTRACT(DAY FROM NOW() - (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id)) >= $${params.length}`);
   }
   if (busca) {
@@ -511,13 +512,15 @@ processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
     return res.json({ ok: false, mensagem: 'Classificação já em andamento.', progresso: classifProgress });
   }
 
+  // Marca como rodando ANTES do setImmediate para evitar race condition com requisições simultâneas
+  classifProgress = { rodando: true, total: 0, ok: 0, erros: 0, pulados: 0, iniciado_em: new Date(), finalizado_em: null, ultimo_erro: null };
+
   const forcar       = req.body?.forcar === true;
   const concorrencia = Math.min(Number(req.body?.concorrencia) || 5, 10);
 
   res.json({ ok: true, mensagem: 'Classificação em lote iniciada.', forcar, concorrencia });
 
   setImmediate(async () => {
-    classifProgress = { rodando: true, total: 0, ok: 0, erros: 0, pulados: 0, iniciado_em: new Date(), finalizado_em: null, ultimo_erro: null };
 
     try {
       const masterId   = req.user.pode_marcar_restrito ? null : req.user.id;

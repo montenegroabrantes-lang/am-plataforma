@@ -8,9 +8,10 @@ dashboardRouter.get('/', async (req, res) => {
   const { id, perfil, master_id, pode_marcar_restrito } = req.user;
   const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? id : master_id);
 
-  const filtroP  = masterId ? `AND p.master_responsavel_id = '${masterId}'` : '';
-  const filtroT  = masterId ? `AND t.validado_por = '${masterId}'` : '';
-  const filtroM  = masterId ? `AND p.master_responsavel_id = '${masterId}'` : '';
+  const params   = masterId ? [masterId] : [];
+  const filtroP  = masterId ? 'AND p.master_responsavel_id = $1' : '';
+  const filtroT  = masterId ? 'AND t.validado_por = $1'          : '';
+  const filtroM  = masterId ? 'AND p.master_responsavel_id = $1' : '';
 
   const [
     totaisProcessos,
@@ -25,13 +26,11 @@ dashboardRouter.get('/', async (req, res) => {
     syncErros,
   ] = await Promise.all([
 
-    // Total de processos por status
     db.query(`
       SELECT status, COUNT(*) AS total
       FROM processos p WHERE 1=1 ${filtroP}
-      GROUP BY status`),
+      GROUP BY status`, params),
 
-    // Movimentações por urgência (não resolvidas — sem prazo cumprido)
     db.query(`
       SELECT m.diagnostico_urgencia AS urgencia, COUNT(*) AS total
       FROM movimentacoes m
@@ -40,26 +39,23 @@ dashboardRouter.get('/', async (req, res) => {
       AND m.criado_em >= NOW() - INTERVAL '7 days'
       GROUP BY m.diagnostico_urgencia
       ORDER BY CASE m.diagnostico_urgencia
-        WHEN 'CRITICO' THEN 1 WHEN 'ALTO' THEN 2 WHEN 'MEDIO' THEN 3 ELSE 4 END`),
+        WHEN 'CRITICO' THEN 1 WHEN 'ALTO' THEN 2 WHEN 'MEDIO' THEN 3 ELSE 4 END`, params),
 
-    // Movimentações novas nas últimas 24h
     db.query(`
       SELECT COUNT(*) AS total,
              COUNT(*) FILTER (WHERE m.diagnostico_urgencia IN ('CRITICO','ALTO')) AS urgentes
       FROM movimentacoes m
       JOIN processos p ON p.id = m.processo_id
-      WHERE m.criado_em >= NOW() - INTERVAL '24 hours' ${filtroM}`),
+      WHERE m.criado_em >= NOW() - INTERVAL '24 hours' ${filtroM}`, params),
 
-    // Tarefas pendentes por urgência
     db.query(`
       SELECT t.urgencia, COUNT(*) AS total
       FROM tarefas t
       WHERE t.status NOT IN ('concluida','nao_verificada') ${filtroT}
       GROUP BY t.urgencia
       ORDER BY CASE t.urgencia
-        WHEN 'CRITICO' THEN 1 WHEN 'ALTO' THEN 2 WHEN 'MEDIO' THEN 3 ELSE 4 END`),
+        WHEN 'CRITICO' THEN 1 WHEN 'ALTO' THEN 2 WHEN 'MEDIO' THEN 3 ELSE 4 END`, params),
 
-    // Próximas audiências — 7 dias
     db.query(`
       SELECT a.data_hora, a.tipo, p.numero, p.tribunal, c.nome AS cliente_nome
       FROM audiencias a
@@ -68,15 +64,13 @@ dashboardRouter.get('/', async (req, res) => {
       WHERE a.data_hora BETWEEN NOW() AND NOW() + INTERVAL '7 days'
       ${filtroP}
       ORDER BY a.data_hora ASC
-      LIMIT 5`),
+      LIMIT 5`, params),
 
-    // Processos por sync_status
     db.query(`
       SELECT sync_status, COUNT(*) AS total
       FROM processos p WHERE 1=1 ${filtroP}
-      GROUP BY sync_status`),
+      GROUP BY sync_status`, params),
 
-    // Cobertura por fonte + última atualização
     db.queryOne(`
       SELECT
         MAX(atualizado_em)                                              AS ultima_atualizacao,
@@ -90,27 +84,25 @@ dashboardRouter.get('/', async (req, res) => {
         COUNT(*) FILTER (WHERE polo_ativo  IS NOT NULL AND polo_ativo  <> '') AS com_polo_ativo,
         COUNT(*) FILTER (WHERE polo_passivo IS NOT NULL AND polo_passivo <> '') AS com_polo_passivo,
         COUNT(*)                                                        AS total_monitorados
-      FROM processos p WHERE status IN ('ativo','suspenso') ${filtroP}`),
+      FROM processos p WHERE status IN ('ativo','suspenso') ${filtroP}`, params),
 
-    // Última e penúltima execuções do sync completo
+    // sync_execucoes não tem filtro por master — sempre retorna tudo
     db.query(`SELECT * FROM sync_execucoes ORDER BY iniciado_em DESC LIMIT 5`),
 
-    // Movimentações novas nas últimas 24h e 7 dias
     db.queryOne(`
       SELECT
         COUNT(*) FILTER (WHERE m.criado_em >= NOW() - INTERVAL '24 hours') AS total_24h,
         COUNT(*) FILTER (WHERE m.criado_em >= NOW() - INTERVAL '7 days')   AS total_7d
       FROM movimentacoes m
       JOIN processos p ON p.id = m.processo_id
-      WHERE 1=1 ${filtroM}`),
+      WHERE 1=1 ${filtroM}`, params),
 
-    // Processos com erro de sync para exibir na lista de pendências
     db.query(`
       SELECT p.id, p.numero, p.tribunal, p.sync_falhas, p.atualizado_em
       FROM processos p
       WHERE p.sync_status = 'erro_sync' ${filtroP}
       ORDER BY p.sync_falhas DESC, p.atualizado_em ASC
-      LIMIT 10`),
+      LIMIT 10`, params),
   ]);
 
   // Métricas processuais operacionais
@@ -120,20 +112,20 @@ dashboardRouter.get('/', async (req, res) => {
       SELECT situacao_atual, COUNT(*) AS total
       FROM processos p
       WHERE status = 'ativo' AND situacao_atual IS NOT NULL ${filtroP}
-      GROUP BY situacao_atual ORDER BY total DESC`),
+      GROUP BY situacao_atual ORDER BY total DESC`, params),
 
     db.query(`
       SELECT localizacao_processual, COUNT(*) AS total
       FROM processos p
       WHERE status = 'ativo' AND localizacao_processual IS NOT NULL ${filtroP}
-      GROUP BY localizacao_processual ORDER BY total DESC`),
+      GROUP BY localizacao_processual ORDER BY total DESC`, params),
 
     db.query(`
       SELECT p.id, p.numero, p.situacao_atual, p.etapa_atual, c.nome AS cliente_nome
       FROM processos p
       LEFT JOIN clientes c ON c.id = p.cliente_id
       WHERE p.urgente = true AND p.status = 'ativo' ${filtroP}
-      ORDER BY p.classificado_em DESC LIMIT 20`),
+      ORDER BY p.classificado_em DESC LIMIT 20`, params),
 
     db.queryOne(`
       SELECT
@@ -147,7 +139,7 @@ dashboardRouter.get('/', async (req, res) => {
         COUNT(*) FILTER (WHERE tipo_requisicao = 'rpv')                                              AS total_rpv,
         COUNT(*) FILTER (WHERE tipo_requisicao = 'precatorio')                                       AS total_precatorio,
         COUNT(*) FILTER (WHERE tipo_requisicao = 'alvara')                                           AS total_alvara
-      FROM processos p WHERE status = 'ativo' ${filtroP}`),
+      FROM processos p WHERE status = 'ativo' ${filtroP}`, params),
   ]);
 
   // Movimentações críticas recentes (últimas 48h, urgência CRITICO ou ALTO)
@@ -162,7 +154,7 @@ dashboardRouter.get('/', async (req, res) => {
     ${filtroM}
     ORDER BY CASE m.diagnostico_urgencia WHEN 'CRITICO' THEN 1 ELSE 2 END,
              m.criado_em DESC
-    LIMIT 8`);
+    LIMIT 8`, params);
 
   const idx = (rows, chave, valor) => {
     const obj = {};

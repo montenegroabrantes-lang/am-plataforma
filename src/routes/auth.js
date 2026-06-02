@@ -77,11 +77,23 @@ authRouter.post('/refresh', async (req, res) => {
   }
 });
 
-// POST /api/auth/trocar-senha (primeiro acesso)
+// POST /api/auth/trocar-senha (primeiro acesso — sem auth, mas valida que é realmente primeiro acesso)
 authRouter.post('/trocar-senha', async (req, res) => {
   const { userId, novaSenha } = req.body;
   if (!userId || !novaSenha) return res.status(400).json({ ok: false, erro: 'Dados obrigatórios.' });
   if (novaSenha.length < 8)  return res.status(400).json({ ok: false, erro: 'Senha deve ter no mínimo 8 caracteres.' });
+
+  const user = await db.queryOne(
+    'SELECT id, criado_em, ultimo_acesso FROM usuarios WHERE id = $1 AND ativo = true',
+    [userId]
+  );
+  if (!user) return res.status(404).json({ ok: false, erro: 'Usuário não encontrado.' });
+
+  // Só permite se nunca fez login: criado_em == ultimo_acesso (estado inicial)
+  const primeiroAcesso = Math.abs(new Date(user.criado_em) - new Date(user.ultimo_acesso)) < 2000;
+  if (!primeiroAcesso) {
+    return res.status(403).json({ ok: false, erro: 'Operação não permitida.' });
+  }
 
   const hash = await bcrypt.hash(novaSenha, 12);
   await db.execute(

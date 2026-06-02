@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express            from 'express';
 import cors               from 'cors';
+import rateLimit          from 'express-rate-limit';
 import { db }             from './db/index.js';
 import { conectarRedis }  from './cache/redis.js';
 
@@ -28,13 +29,26 @@ import { auditar }    from './middleware/auditoria.js';
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
-app.use(cors({
-  origin: process.env.FRONTEND_URL || '*',
-}));
-app.use(express.json());
+const allowedOrigin = process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production' ? null : 'http://localhost:3000');
+if (!allowedOrigin) {
+  console.error('[FATAL] FRONTEND_URL não definida em produção. Defina a variável de ambiente.');
+  process.exit(1);
+}
+app.use(cors({ origin: allowedOrigin, credentials: true }));
+app.use(express.json({ limit: '2mb' }));
 app.use(auditar);
 
+// Rate limiting no login — máx 20 tentativas por 15 min por IP
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, erro: 'Muitas tentativas. Aguarde 15 minutos.' },
+});
+
 // Rotas públicas
+app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth', authRouter);
 
 // Rotas protegidas
