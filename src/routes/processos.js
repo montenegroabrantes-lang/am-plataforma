@@ -27,6 +27,7 @@ function podeAcessarProcesso(user, processo) {
 }
 
 const FILTROS_PERIODO = {
+  'hoje':   `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= CURRENT_DATE`,
   '7d':     `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= NOW() - INTERVAL '7 days'`,
   '30d':    `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= NOW() - INTERVAL '30 days'`,
   'sem30d': `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) < NOW() - INTERVAL '30 days'`,
