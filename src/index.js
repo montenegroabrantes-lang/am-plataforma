@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express            from 'express';
 import cors               from 'cors';
+import cookieParser       from 'cookie-parser';
 import rateLimit          from 'express-rate-limit';
 import { db }             from './db/index.js';
 import { conectarRedis }  from './cache/redis.js';
@@ -35,6 +36,7 @@ if (!allowedOrigin) {
   process.exit(1);
 }
 app.use(cors({ origin: allowedOrigin, credentials: true }));
+app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
 app.use(auditar);
 

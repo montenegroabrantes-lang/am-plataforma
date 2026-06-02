@@ -8,13 +8,39 @@ import { autenticar }         from '../middleware/auth.js';
 
 export const authRouter = Router();
 
-const JWT_EXPIRA         = '15m';
+const JWT_EXPIRA         = '1d';
 const JWT_REFRESH_EXPIRA = '7d';
+const PROD               = process.env.NODE_ENV === 'production';
+
+const COOKIE_ACCESS = {
+  httpOnly: true,
+  secure:   PROD,
+  sameSite: PROD ? 'none' : 'lax',
+  maxAge:   24 * 60 * 60 * 1000,       // 1 dia
+  path:     '/',
+};
+const COOKIE_REFRESH = {
+  httpOnly: true,
+  secure:   PROD,
+  sameSite: PROD ? 'none' : 'lax',
+  maxAge:   7 * 24 * 60 * 60 * 1000,  // 7 dias
+  path:     '/api/auth/refresh',       // escopo restrito
+};
 
 function gerarTokens(payload) {
   const access  = jwt.sign(payload, process.env.JWT_SECRET,         { expiresIn: JWT_EXPIRA });
   const refresh = jwt.sign(payload, process.env.JWT_REFRESH_SECRET, { expiresIn: JWT_REFRESH_EXPIRA });
   return { access, refresh };
+}
+
+function setTokenCookies(res, access, refresh) {
+  res.cookie('am_token',   access,  COOKIE_ACCESS);
+  res.cookie('am_refresh', refresh, COOKIE_REFRESH);
+}
+
+function clearTokenCookies(res) {
+  res.clearCookie('am_token',   { path: '/' });
+  res.clearCookie('am_refresh', { path: '/api/auth/refresh' });
 }
 
 // POST /api/auth/login
@@ -54,26 +80,29 @@ authRouter.post('/login', async (req, res) => {
   };
 
   const { access, refresh } = gerarTokens(payload);
+  setTokenCookies(res, access, refresh);
 
   await db.execute('UPDATE usuarios SET ultimo_acesso = NOW() WHERE id = $1', [user.id]);
   await registrarAuditoria({ usuarioId: user.id, acao: 'login', entidade: 'usuario', entidadeId: user.id, ip: req._ip });
 
-  res.json({ ok: true, access, refresh, user: payload });
+  // Retorna dados do usuário mas NÃO os tokens (estão nos cookies)
+  res.json({ ok: true, user: payload });
 });
 
 // POST /api/auth/refresh
 authRouter.post('/refresh', async (req, res) => {
-  const { refresh } = req.body;
-  if (!refresh) return res.status(400).json({ ok: false, erro: 'Refresh token obrigatório.' });
+  const refresh = req.cookies?.am_refresh;
+  if (!refresh) return res.status(400).json({ ok: false, erro: 'Refresh token não encontrado.' });
 
   try {
     const decoded = jwt.verify(refresh, process.env.JWT_REFRESH_SECRET);
-    // Remove campos gerados pelo JWT antes de reassinar
     const { iat, exp, ...payload } = decoded;
     const { access, refresh: newRefresh } = gerarTokens(payload);
-    res.json({ ok: true, access, refresh: newRefresh });
+    setTokenCookies(res, access, newRefresh);
+    res.json({ ok: true });
   } catch {
-    res.status(401).json({ ok: false, erro: 'Refresh token inválido ou expirado.' });
+    clearTokenCookies(res);
+    res.status(401).json({ ok: false, erro: 'Sessão expirada. Faça login novamente.' });
   }
 });
 
@@ -89,7 +118,6 @@ authRouter.post('/trocar-senha', async (req, res) => {
   );
   if (!user) return res.status(404).json({ ok: false, erro: 'Usuário não encontrado.' });
 
-  // Só permite se nunca fez login: criado_em == ultimo_acesso (estado inicial)
   const primeiroAcesso = Math.abs(new Date(user.criado_em) - new Date(user.ultimo_acesso)) < 2000;
   if (!primeiroAcesso) {
     return res.status(403).json({ ok: false, erro: 'Operação não permitida.' });
@@ -103,18 +131,15 @@ authRouter.post('/trocar-senha', async (req, res) => {
   res.json({ ok: true, mensagem: 'Senha atualizada.' });
 });
 
-// GET /api/auth/2fa/setup — gera secret e QR para o usuário ativar 2FA
+// GET /api/auth/2fa/setup
 authRouter.get('/2fa/setup', autenticar, async (req, res) => {
   const secret = authenticator.generateSecret();
   const otpauth = authenticator.keyuri(req.user.email, 'AM Advogados', secret);
-
-  // Salva secret temporário (não ativo ainda)
   await db.execute('UPDATE usuarios SET totp_secret = $1 WHERE id = $2', [secret, req.user.id]);
-
   res.json({ ok: true, secret, otpauth });
 });
 
-// POST /api/auth/2fa/ativar — confirma o código e ativa 2FA
+// POST /api/auth/2fa/ativar
 authRouter.post('/2fa/ativar', autenticar, async (req, res) => {
   const { totp } = req.body;
   const user = await db.queryOne('SELECT * FROM usuarios WHERE id = $1', [req.user.id]);
@@ -125,7 +150,6 @@ authRouter.post('/2fa/ativar', autenticar, async (req, res) => {
     return res.status(401).json({ ok: false, erro: 'Código inválido.' });
   }
 
-  // Gera 8 códigos de recuperação
   const codigos = Array.from({ length: 8 }, () =>
     Math.random().toString(36).slice(2, 10).toUpperCase()
   );
@@ -140,6 +164,7 @@ authRouter.post('/2fa/ativar', autenticar, async (req, res) => {
 
 // POST /api/auth/logout
 authRouter.post('/logout', autenticar, async (req, res) => {
+  clearTokenCookies(res);
   await registrarAuditoria({ usuarioId: req.user.id, acao: 'logout', entidade: 'usuario', entidadeId: req.user.id, ip: req._ip });
   res.json({ ok: true });
 });
