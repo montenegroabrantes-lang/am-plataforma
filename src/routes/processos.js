@@ -447,7 +447,7 @@ processosRouter.post('/:id/classificar', async (req, res) => {
   if (!podeAcessarProcesso(req.user, processo)) return res.status(403).json({ ok: false, erro: 'Acesso negado.' });
 
   const movimentacoes = await db.query(
-    `SELECT texto, data_movimentacao FROM movimentacoes WHERE processo_id = $1 ORDER BY data_movimentacao DESC LIMIT 8`,
+    `SELECT texto, data_movimentacao FROM movimentacoes WHERE processo_id = $1 ORDER BY data_movimentacao DESC LIMIT 15`,
     [req.params.id]
   );
 
@@ -455,6 +455,7 @@ processosRouter.post('/:id/classificar', async (req, res) => {
   const resultado = await ai.classificar({
     numero: processo.numero, tribunal: processo.tribunal,
     produto: processo.produto_nome, movimentacoes,
+    situacao_atual: processo.situacao_atual,
   });
 
   const situacaoMudou = resultado.situacao_atual && resultado.situacao_atual !== processo.situacao_atual;
@@ -493,79 +494,117 @@ processosRouter.post('/:id/classificar', async (req, res) => {
   res.json({ ok: true, resultado, requer_revisao: resultado.confianca === 'BAIXA' });
 });
 
-// POST /api/processos/classificar-lote — classifica todos os 875 processos em background
+// Estado de progresso da classificação em lote (em memória)
+let classifProgress = {
+  rodando: false, total: 0, ok: 0, erros: 0, pulados: 0,
+  iniciado_em: null, finalizado_em: null, ultimo_erro: null,
+};
+
+// GET /api/processos/classificar-lote/progresso
+processosRouter.get('/classificar-lote/progresso', apenasMaster, (req, res) => {
+  res.json({ ok: true, progresso: classifProgress });
+});
+
+// POST /api/processos/classificar-lote — classifica em paralelo com rastreamento de progresso
 processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
-  res.json({ ok: true, mensagem: 'Classificação em lote iniciada em segundo plano.' });
+  if (classifProgress.rodando) {
+    return res.json({ ok: false, mensagem: 'Classificação já em andamento.', progresso: classifProgress });
+  }
+
+  const forcar       = req.body?.forcar === true;
+  const concorrencia = Math.min(Number(req.body?.concorrencia) || 5, 10);
+
+  res.json({ ok: true, mensagem: 'Classificação em lote iniciada.', forcar, concorrencia });
 
   setImmediate(async () => {
+    classifProgress = { rodando: true, total: 0, ok: 0, erros: 0, pulados: 0, iniciado_em: new Date(), finalizado_em: null, ultimo_erro: null };
+
     try {
-      const masterId = req.user.pode_marcar_restrito ? null : req.user.id;
+      const masterId   = req.user.pode_marcar_restrito ? null : req.user.id;
       const loteParams = masterId ? [masterId] : [];
       const filtroM    = masterId ? `AND p.master_responsavel_id = $1` : '';
+      const filtroPend = forcar ? '' : `AND (p.classificado_em IS NULL OR p.requer_revisao = true)`;
 
       const processos = await db.query(
-        `SELECT p.id, p.numero, p.tribunal, p.situacao_atual, pr.nome AS produto_nome
+        `SELECT p.id, p.numero, p.tribunal, p.situacao_atual, p.etapa_atual, pr.nome AS produto_nome
          FROM processos p
          LEFT JOIN produtos pr ON pr.id = p.produto_id
-         WHERE p.status = 'ativo' ${filtroM}
-         ORDER BY p.atualizado_em ASC`,
+         WHERE p.status IN ('ativo','suspenso') ${filtroM} ${filtroPend}
+         ORDER BY p.classificado_em ASC NULLS FIRST`,
         loteParams
       );
 
+      classifProgress.total = processos.length;
       const { ai } = await import('../services/ai/index.js');
-      let ok = 0, erros = 0;
 
-      for (const proc of processos) {
-        try {
-          const movs = await db.query(
-            `SELECT texto, data_movimentacao FROM movimentacoes WHERE processo_id = $1 ORDER BY data_movimentacao DESC LIMIT 8`,
-            [proc.id]
-          );
-          const resultado = await ai.classificar({
-            numero: proc.numero, tribunal: proc.tribunal,
-            produto: proc.produto_nome, movimentacoes: movs,
-          });
+      for (let i = 0; i < processos.length; i += concorrencia) {
+        const chunk = processos.slice(i, i + concorrencia);
 
-          const mudou = resultado.situacao_atual && resultado.situacao_atual !== proc.situacao_atual;
+        await Promise.allSettled(chunk.map(async (proc) => {
+          try {
+            const movs = await db.query(
+              `SELECT texto, data_movimentacao FROM movimentacoes WHERE processo_id = $1 ORDER BY data_movimentacao DESC LIMIT 15`,
+              [proc.id]
+            );
 
-          await db.execute(
-            `UPDATE processos SET
-               situacao_atual = COALESCE($1, situacao_atual),
-               etapa_atual = COALESCE($2, etapa_atual),
-               localizacao_processual = COALESCE($3, localizacao_processual),
-               tipo_requisicao = COALESCE($4, tipo_requisicao),
-               status_rpv = COALESCE($5, status_rpv),
-               status_precatorio = COALESCE($6, status_precatorio),
-               status_alvara = COALESCE($7, status_alvara),
-               requer_revisao = $8,
-               classificado_por = 'claude',
-               classificado_em = NOW(),
-               data_inicio_situacao = CASE WHEN $9 THEN NOW()::date ELSE data_inicio_situacao END
-             WHERE id = $10`,
-            [
-              resultado.situacao_atual, resultado.etapa_atual, resultado.localizacao_processual,
-              resultado.tipo_requisicao, resultado.status_rpv, resultado.status_precatorio,
-              resultado.status_alvara, resultado.confianca === 'BAIXA', mudou, proc.id,
-            ]
-          );
+            const resultado = await ai.classificar({
+              numero: proc.numero, tribunal: proc.tribunal,
+              produto: proc.produto_nome, movimentacoes: movs,
+              situacao_atual: proc.situacao_atual,
+            });
 
-          if (mudou) {
+            const mudou = resultado.situacao_atual && resultado.situacao_atual !== proc.situacao_atual;
+
             await db.execute(
-              `INSERT INTO historico_situacao (processo_id, situacao_anterior, situacao_nova, etapa_anterior, etapa_nova, usuario_id, fonte)
-               VALUES ($1,$2,$3,$4,$5,'claude','claude')`,
-              [proc.id, proc.situacao_atual, resultado.situacao_atual, null, resultado.etapa_atual]
-            ).catch(() => {});
+              `UPDATE processos SET
+                 situacao_atual = COALESCE($1, situacao_atual),
+                 etapa_atual = COALESCE($2, etapa_atual),
+                 localizacao_processual = COALESCE($3, localizacao_processual),
+                 tipo_requisicao = COALESCE($4, tipo_requisicao),
+                 status_rpv = COALESCE($5, status_rpv),
+                 status_precatorio = COALESCE($6, status_precatorio),
+                 status_alvara = COALESCE($7, status_alvara),
+                 requer_revisao = $8,
+                 classificado_por = 'claude',
+                 classificado_em = NOW(),
+                 data_inicio_situacao = CASE WHEN $9 THEN NOW()::date ELSE data_inicio_situacao END,
+                 atualizado_em = NOW()
+               WHERE id = $10`,
+              [
+                resultado.situacao_atual, resultado.etapa_atual, resultado.localizacao_processual,
+                resultado.tipo_requisicao, resultado.status_rpv, resultado.status_precatorio,
+                resultado.status_alvara, resultado.confianca === 'BAIXA', mudou, proc.id,
+              ]
+            );
+
+            if (mudou) {
+              await db.execute(
+                `INSERT INTO historico_situacao (processo_id, situacao_anterior, situacao_nova, etapa_anterior, etapa_nova, usuario_id, fonte)
+                 VALUES ($1,$2,$3,$4,$5,'claude','claude')`,
+                [proc.id, proc.situacao_atual, resultado.situacao_atual, proc.etapa_atual, resultado.etapa_atual]
+              ).catch(() => {});
+            }
+
+            classifProgress.ok++;
+          } catch (e) {
+            console.error(`[Lote] Erro em ${proc.numero}:`, e.message);
+            classifProgress.erros++;
+            classifProgress.ultimo_erro = `${proc.numero}: ${e.message}`;
           }
-          ok++;
-          await new Promise(r => setTimeout(r, 300));
-        } catch (e) {
-          console.error(`[Lote] Erro em ${proc.numero}:`, e.message);
-          erros++;
+        }));
+
+        if (i + concorrencia < processos.length) {
+          await new Promise(r => setTimeout(r, 500));
         }
       }
-      console.log(`[Lote] Concluído: ${ok} classificados, ${erros} erros de ${processos.length} processos`);
+
+      console.log(`[Lote] Concluído: ${classifProgress.ok} ok, ${classifProgress.erros} erros de ${processos.length} processos`);
     } catch (e) {
       console.error('[Lote] Erro geral:', e.message);
+      classifProgress.ultimo_erro = e.message;
+    } finally {
+      classifProgress.rodando = false;
+      classifProgress.finalizado_em = new Date();
     }
   });
 });
