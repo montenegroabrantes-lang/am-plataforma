@@ -30,10 +30,9 @@ import { auditar }    from './middleware/auditoria.js';
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
-const allowedOrigin = process.env.FRONTEND_URL || (process.env.NODE_ENV === 'production' ? null : 'http://localhost:3000');
-if (!allowedOrigin) {
-  console.error('[FATAL] FRONTEND_URL não definida em produção. Defina a variável de ambiente.');
-  process.exit(1);
+const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:3000';
+if (!process.env.FRONTEND_URL) {
+  console.warn('[WARN] FRONTEND_URL não definida — usando localhost. Defina em produção.');
 }
 app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(cookieParser());
