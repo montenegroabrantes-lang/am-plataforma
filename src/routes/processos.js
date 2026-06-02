@@ -66,7 +66,7 @@ const ETAPA_CASE = `
 // GET /api/processos
 processosRouter.get('/', async (req, res) => {
   const {
-    status, tribunal, busca, situacao_atual, urgente,
+    status, tribunal, vara, busca, situacao_atual, urgente,
     localizacao_processual, tipo_requisicao, periodo,
     produto_id, etapa, tempo_parado_min,
     limite = 30,
@@ -79,6 +79,7 @@ processosRouter.get('/', async (req, res) => {
 
   if (status)                { params.push(status);                condicoes.push(`AND p.status = $${params.length}`); }
   if (tribunal)              { params.push(tribunal);              condicoes.push(`AND p.tribunal = $${params.length}`); }
+  if (vara)                  { params.push(`%${vara}%`);           condicoes.push(`AND p.vara ILIKE $${params.length}`); }
   if (situacao_atual)        { params.push(situacao_atual);        condicoes.push(`AND p.situacao_atual = $${params.length}`); }
   if (localizacao_processual){ params.push(localizacao_processual);condicoes.push(`AND p.localizacao_processual = $${params.length}`); }
   if (tipo_requisicao)       { params.push(tipo_requisicao);       condicoes.push(`AND p.tipo_requisicao = $${params.length}`); }
