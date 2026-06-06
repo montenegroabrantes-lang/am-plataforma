@@ -127,62 +127,67 @@ export async function consultarComSessao(browser, numero) {
     if (!jaTemResultados) {
       const INP_SEL = 'input[placeholder*="Número do Processo"]';
 
-      // 4. Angular setter hack: atualiza o modelo do FormControl via native setter
-      //    (page.type() e Enter não trigam o ngModel — só o evento 'input' via setter nativo faz isso)
-      const setado = await page.evaluate((sel, val) => {
-        const inp = document.querySelector(sel);
-        if (!inp) return false;
-        // Hack necessário para Angular/React: bypass do getter/setter do framework
-        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
-        if (setter) setter.call(inp, val); else inp.value = val;
-        inp.dispatchEvent(new Event('input',  { bubbles: true }));
-        inp.dispatchEvent(new Event('change', { bubbles: true }));
-        inp.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', bubbles: true }));
-        return true;
-      }, INP_SEL, numero).catch(() => false);
+      // 4. Garante que o input está no DOM antes de interagir
+      await page.waitForSelector(INP_SEL, { timeout: 8_000 }).catch(() => {});
 
-      console.log(`[ConsultaPublica] ${numero} — Angular setter: ${setado}`);
-      await new Promise(r => setTimeout(r, 500));
+      // 5. Clica no primeiro radio para garantir que estamos na aba "Por número de processo"
+      await page.evaluate(() => {
+        const radios = Array.from(document.querySelectorAll('input[type="radio"]'));
+        if (radios[0]) radios[0].click();
+      }).catch(() => {});
+      await new Promise(r => setTimeout(r, 300));
 
-      // 5. Clica no botão "Consultar" — mais confiável que Enter para apps Angular
-      const clicado = await page.evaluate(() => {
-        const btns = Array.from(document.querySelectorAll('button, input[type="submit"], a[role="button"]'));
-        const btn = btns.find(b => /^consultar$/i.test((b.textContent || b.value || '').trim()));
-        if (btn) { btn.click(); return btn.textContent?.trim() || 'submit'; }
-        return null;
-      }).catch(() => null);
+      // 6. page.type() — injeta teclas reais via CDP, único método que o Zone.js do Angular detecta.
+      //    page.evaluate() com eventos sintéticos corre fora da zona Angular e é ignorado pelo ngModel.
+      try {
+        await page.click(INP_SEL, { clickCount: 3 });  // seleciona tudo
+        await page.keyboard.press('Backspace');          // limpa
+        await page.type(INP_SEL, numero, { delay: 60 }); // digita char a char
+        console.log(`[ConsultaPublica] ${numero} — digitado via page.type()`);
+      } catch (typeErr) {
+        console.warn(`[ConsultaPublica] ${numero} — page.type() falhou: ${typeErr.message}`);
+      }
+      await new Promise(r => setTimeout(r, 600));
 
-      if (clicado) {
-        console.log(`[ConsultaPublica] ${numero} — botão "${clicado}" clicado`);
-      } else {
-        // Fallback: Enter via Puppeteer nativo
-        await page.focus(INP_SEL).catch(() => {});
-        await page.keyboard.press('Enter');
-        console.log(`[ConsultaPublica] ${numero} — fallback Enter (botão Consultar não encontrado)`);
+      // 7. Clica no botão Consultar via handle Puppeteer (não via evaluate — também fora do Zone.js)
+      let clicado = false;
+      for (const sel of ['button[type="submit"]', 'button:not([type="button"])']) {
+        try {
+          const btns = await page.$$(sel);
+          for (const btn of btns) {
+            const txt = await btn.evaluate(el => (el.textContent || el.value || '').trim());
+            if (/consultar/i.test(txt) || sel.includes('submit')) {
+              await btn.click();
+              console.log(`[ConsultaPublica] ${numero} — botão "${txt || sel}" clicado`);
+              clicado = true;
+              break;
+            }
+          }
+          if (clicado) break;
+        } catch { /* tenta próximo seletor */ }
       }
 
-      // 6. Aguarda AJAX completar
+      if (!clicado) {
+        await page.focus(INP_SEL).catch(() => {});
+        await page.keyboard.press('Enter');
+        console.log(`[ConsultaPublica] ${numero} — fallback Enter`);
+      }
+
+      // 8. Aguarda AJAX
       await page.waitForNetworkIdle({ idleTime: 1_000, timeout: 20_000 }).catch(() => {});
 
-      // 7. Se ainda não tem resultado, tenta form.requestSubmit() como último recurso
-      const temResultadoAposAjax = await page.evaluate(() => {
-        return Array.from(document.querySelectorAll('table')).some(t =>
+      // 9. Último recurso: Enter direto no input
+      const temResultadoAposAjax = await page.evaluate(() =>
+        Array.from(document.querySelectorAll('table')).some(t =>
           t.querySelectorAll('tbody tr').length > 0
-        );
-      }).catch(() => false);
+        )
+      ).catch(() => false);
 
       if (!temResultadoAposAjax) {
-        await page.evaluate((sel) => {
-          const inp = document.querySelector(sel);
-          if (!inp) return;
-          let el = inp;
-          while (el && el.tagName !== 'FORM') el = el.parentElement;
-          if (el?.tagName === 'FORM') {
-            try { el.requestSubmit(); } catch { el.dispatchEvent(new Event('submit', { bubbles: true })); }
-          }
-        }, INP_SEL).catch(() => {});
+        await page.focus(INP_SEL).catch(() => {});
+        await page.keyboard.press('Enter');
         await page.waitForNetworkIdle({ idleTime: 1_000, timeout: 15_000 }).catch(() => {});
-        console.log(`[ConsultaPublica] ${numero} — requestSubmit executado`);
+        console.log(`[ConsultaPublica] ${numero} — Enter final`);
       }
     } else {
       console.log(`[ConsultaPublica] ${numero} — busca auto disparou via ?npu=`);
