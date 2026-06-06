@@ -193,6 +193,16 @@ export async function consultarComSessao(browser, numero) {
       console.log(`[ConsultaPublica] ${numero} — busca auto disparou via ?npu=`);
     }
 
+    // Verifica se o site retornou "Nenhum resultado" — processo não indexado publicamente
+    const semResultado = await page.evaluate(() =>
+      /nenhum resultado|não encontrado|no results/i.test(document.body?.innerText || '')
+    ).catch(() => false);
+    if (semResultado) {
+      console.log(`[ConsultaPublica] ${numero} — não encontrado na consulta pública (segredo/arquivado/não indexado)`);
+      return { polo_ativo: null, polo_passivo: null, vara: null, acao: null, data_ajuizamento: null,
+        _diag: { textoLen: 0, snippet: 'sem_resultado_publico', tabelas: 0 } };
+    }
+
     // 8. Aguarda tabela de resultados aparecer (com linhas de dados reais)
     await page.waitForFunction(
       () => Array.from(document.querySelectorAll('table')).some(t =>

@@ -761,7 +761,10 @@ export async function completarPolosPublico(onProgress) {
       try {
         const dados = await publica.consultarComSessao(browser, proc.numero);
 
-        if (dados.polo_ativo || dados.polo_passivo) {
+        if (dados._diag?.snippet === 'sem_resultado_publico') {
+          console.log(`[PolosPub] ${proc.numero} — não indexado publicamente, pulando`);
+          erros++;
+        } else if (dados.polo_ativo || dados.polo_passivo) {
           await db.execute(
             `UPDATE processos SET
                polo_ativo    = COALESCE($1, polo_ativo),
