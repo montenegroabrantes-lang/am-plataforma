@@ -478,6 +478,148 @@ export async function sincronizarTodos() {
 }
 
 // ─────────────────────────────────────────────
+//  SINCRONIZAR URGENTES — redundância em tempo real
+//  Roda a cada hora (minuto :30), independente do sync lote.
+//  Para cada credencial ativa:
+//    1. Abre sessão PJe/eProc
+//    2. Coleta processos com expediente no painel (ação pendente)
+//    3. Mescla com processos CRÍTICO/ALTO do banco
+//    4. Sincroniza via Puppeteer (dados em tempo real)
+// ─────────────────────────────────────────────
+export async function sincronizarUrgentes() {
+  const LOCK_KEY = 'sync:urgentes:lock';
+  const acquired = await redis.set(LOCK_KEY, '1', 'NX', 'EX', 90 * 60);
+  if (!acquired) {
+    console.log('[SyncUrgentes] Ignorado: execução anterior ainda em andamento.');
+    return { ignorado: true };
+  }
+
+  try {
+    // Busca todas as credenciais ativas para iterar por grupo
+    const credenciais = await db.query(
+      `SELECT ct.usuario_id AS master_id, ct.tribunal, ct.grau, ct.sistema
+       FROM credenciais_tribunal ct
+       JOIN usuarios u ON u.id = ct.usuario_id
+       WHERE ct.ativo = true AND u.perfil = 'master'
+       ORDER BY ct.tribunal, ct.grau`
+    );
+
+    if (credenciais.length === 0) {
+      console.log('[SyncUrgentes] Nenhuma credencial ativa.');
+      return { total: 0, ok: 0, falhas: 0 };
+    }
+
+    // Processos CRÍTICO/ALTO por master (para mesclar com expedientes do painel)
+    const urgentesDb = await db.query(
+      `SELECT DISTINCT p.id, p.numero, p.tribunal, p.grau, p.sistema, p.master_responsavel_id
+       FROM processos p
+       JOIN movimentacoes m ON m.processo_id = p.id
+       WHERE p.status IN ('ativo','suspenso')
+         AND m.diagnostico_urgencia IN ('CRITICO','ALTO')
+         AND m.pendencia_status_prazo IS DISTINCT FROM 'RESOLVIDO'
+         AND m.data_movimentacao = (
+           SELECT MAX(m2.data_movimentacao) FROM movimentacoes m2 WHERE m2.processo_id = p.id
+         )`
+    );
+
+    // Indexa por numero para lookup rápido
+    const urgentesMap = new Map(urgentesDb.map(p => [p.numero, p]));
+
+    const resultados = [];
+
+    for (const credInfo of credenciais) {
+      const { master_id, tribunal, grau, sistema } = credInfo;
+      const url = URL_TRIBUNAL[tribunal]?.[grau];
+      if (!url) continue;
+
+      const cred = await lerCredencialGrau(master_id, tribunal, grau).catch(() => null);
+      if (!cred) {
+        console.warn(`[SyncUrgentes] Credencial não encontrada — ${tribunal} ${grau}G master ${master_id}`);
+        continue;
+      }
+
+      let browser = null;
+      try {
+        if (sistema !== 'pje') {
+          ({ browser } = await eproc.abrirSessao(url, cred.cpf, cred.senha, cred.totp_secret));
+        } else {
+          ({ browser } = await pje.abrirSessao(url, cred.cpf, cred.senha, cred.totp_secret));
+        }
+
+        const page = (await browser.pages()).pop();
+
+        // Coleta expedientes do painel PJe (processos com ação pendente — tempo real)
+        const numerosExpedientes = sistema === 'pje'
+          ? await pje.coletarExpedientesDoPainel(page, url)
+          : [];
+
+        // Busca IDs de processos do painel que ainda não estão na lista CRÍTICO/ALTO
+        const novosNums = numerosExpedientes.filter(n => !urgentesMap.has(n));
+        if (novosNums.length > 0) {
+          const novos = await db.query(
+            `SELECT id, numero, tribunal, grau, sistema, master_responsavel_id
+             FROM processos WHERE numero = ANY($1) AND status IN ('ativo','suspenso')`,
+            [novosNums]
+          );
+          for (const p of novos) urgentesMap.set(p.numero, p);
+        }
+
+        // Filtra apenas processos deste grupo (mesmo tribunal + grau + master)
+        const processosSyncList = [...urgentesMap.values()].filter(
+          p => p.tribunal === tribunal && p.grau === grau && p.master_responsavel_id === master_id
+        );
+
+        if (processosSyncList.length === 0) {
+          console.log(`[SyncUrgentes] ${tribunal} ${grau}G: nenhum processo urgente/painel.`);
+          continue;
+        }
+
+        console.log(`[SyncUrgentes] ${tribunal} ${grau}G: ${processosSyncList.length} processo(s) ` +
+          `(${urgentesDb.filter(p => p.tribunal === tribunal && p.grau === grau).length} CRIT/ALTO ` +
+          `+ ${numerosExpedientes.length} painel)`);
+
+        for (const { id, numero } of processosSyncList) {
+          try {
+            let resultado;
+            if (sistema !== 'pje') {
+              resultado = await eproc.buscarProcessoCompletoComSessao(browser, url, numero, grau);
+            } else {
+              resultado = await pje.buscarProcessoCompletoComSessao(browser, url, numero);
+            }
+            const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
+            const novasMovs = await salvarResultadoSync(id, processo, resultado.dados, resultado.movimentacoes);
+            await db.execute(`UPDATE processos SET sync_fonte = 'puppeteer_urgente' WHERE id = $1`, [id]).catch(() => {});
+            resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs });
+            console.log(`[SyncUrgentes] OK: ${numero} (${novasMovs} novas)`);
+          } catch (err) {
+            resultados.push({ processoId: id, numero, ok: false, erro: err.message });
+            console.error(`[SyncUrgentes] Falha ${numero}:`, err.message);
+            await registrarFalhaSyncProcesso(id);
+            if (err.message?.includes('Target closed') || err.message?.includes('Session closed') || err.message?.includes('detached')) {
+              console.warn(`[SyncUrgentes] Sessão encerrada — interrompendo ${tribunal} ${grau}G`);
+              break;
+            }
+          }
+          await new Promise(r => setTimeout(r, 2_000));
+        }
+      } catch (err) {
+        console.error(`[SyncUrgentes] Falha ao abrir sessão ${tribunal} ${grau}G:`, err.message);
+      } finally {
+        await browser?.close().catch(() => {});
+      }
+    }
+
+    const ok   = resultados.filter(r => r.ok).length;
+    const fail = resultados.filter(r => !r.ok).length;
+    console.log(`[SyncUrgentes] Concluído: ${ok} OK, ${fail} falhas de ${resultados.length}.`);
+    return { total: resultados.length, ok, falhas: fail };
+
+  } finally {
+    await redis.del(LOCK_KEY).catch(err => console.warn('[SyncUrgentes] Falha ao liberar lock:', err.message));
+  }
+}
+
+// ─────────────────────────────────────────────
 //  PREENCHER POLOS VIA DATAJUD
 //  Sem browser, sem login — consulta a API pública do CNJ em lote.
 //  Rápido (~1 min para 800 processos). Cobertura ~80-90% dos processos TJPB.

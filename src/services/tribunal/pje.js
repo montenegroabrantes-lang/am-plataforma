@@ -463,6 +463,55 @@ export async function inspecionarPainel(url, cpf, senha, totpSecret, oab = null)
 }
 
 // ─────────────────────────────────────────────
+//  COLETAR EXPEDIENTES DO PAINEL (sessão existente)
+//  Navega para o painel PJe e extrai CNJs de expedientes pendentes.
+//  Reutiliza browser já autenticado — não faz novo login.
+// ─────────────────────────────────────────────
+export async function coletarExpedientesDoPainel(page, url) {
+  const base        = new URL(url).origin + '/pje';
+  const urlPainel   = `${base}/Painel/painel_usuario/advogado.seam`;
+  const CNJ_RE      = /\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}/g;
+  const PLACEHOLDER = '9999999-99.9999.9.99.9999';
+  const numeros     = new Set();
+
+  const coletarDOM = async () => {
+    const txt = await page.evaluate(() => document.body?.innerText || '').catch(() => '');
+    for (const m of txt.matchAll(CNJ_RE)) {
+      if (m[0] !== PLACEHOLDER) numeros.add(m[0]);
+    }
+  };
+
+  try {
+    if (!page.url().includes('Painel')) {
+      await page.goto(urlPainel, { waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => {});
+      await page.waitForNetworkIdle({ timeout: 8_000, idleTime: 400 }).catch(() => {});
+      await new Promise(r => setTimeout(r, 800));
+    }
+
+    await coletarDOM();
+
+    // Expande grupos de expedientes (até 7 grupos RichFaces)
+    for (let g = 0; g <= 6; g++) {
+      const btnId = `formAbaExpediente:listaAgrSitExp:${g}:j_id162`;
+      const btn   = await page.$(`[id="${btnId}"]`).catch(() => null);
+      if (!btn) continue;
+      const titulo = await page.$eval(`[id="${btnId}"]`, el => el.title || '').catch(() => '');
+      if (!titulo.includes('fechar')) {
+        await page.click(`[id="${btnId}"]`).catch(() => {});
+        await page.waitForNetworkIdle({ timeout: 5_000, idleTime: 400 }).catch(() => {});
+      }
+      await coletarDOM();
+    }
+
+    console.log(`[PJe] Painel expedientes: ${numeros.size} processo(s) com ação pendente`);
+  } catch (err) {
+    console.warn('[PJe] Painel expedientes: falha parcial —', err.message);
+  }
+
+  return [...numeros];
+}
+
+// ─────────────────────────────────────────────
 //  CLICAR NO LINK E ENTRAR NO PROCESSO
 //  O PJe frequentemente abre o detalhe em nova aba (popup/window).
 //  Detecta a nova aba e a retorna. Se o detalhe abrir na mesma aba,
