@@ -478,6 +478,76 @@ export async function sincronizarTodos() {
 }
 
 // ─────────────────────────────────────────────
+//  PREENCHER POLOS VIA DATAJUD
+//  Sem browser, sem login — consulta a API pública do CNJ em lote.
+//  Rápido (~1 min para 800 processos). Cobertura ~80-90% dos processos TJPB.
+//  Deve ser rodado ANTES do completarPolosPublico para reduzir a carga do Puppeteer.
+// ─────────────────────────────────────────────
+export async function preencherPolosDataJud(onProgress) {
+  const processos = await db.query(
+    `SELECT id, numero, tribunal
+     FROM processos
+     WHERE status IN ('ativo','suspenso')
+       AND (polo_ativo IS NULL OR polo_ativo = '' OR polo_passivo IS NULL OR polo_passivo = '')
+     ORDER BY tribunal, id`
+  );
+
+  console.log(`[PolosDataJud] ${processos.length} processo(s) sem polo`);
+  if (processos.length === 0) return { total: 0, ok: 0, sem_dados: 0 };
+
+  // Agrupa por tribunal para aproveitar o consultarLote
+  const porTribunal = new Map();
+  for (const p of processos) {
+    if (!porTribunal.has(p.tribunal)) porTribunal.set(p.tribunal, []);
+    porTribunal.get(p.tribunal).push(p);
+  }
+
+  let ok = 0, sem_dados = 0;
+  onProgress?.({ total: processos.length, ok, sem_dados });
+
+  for (const [tribunal, procs] of porTribunal) {
+    const numeros = procs.map(p => p.numero);
+    let map = new Map();
+    try {
+      map = await datajud.consultarLote(tribunal, numeros);
+      console.log(`[PolosDataJud] ${tribunal}: DataJud retornou ${map.size}/${procs.length}`);
+    } catch (err) {
+      console.warn(`[PolosDataJud] DataJud falhou para ${tribunal}:`, err.message);
+      sem_dados += procs.length;
+      onProgress?.({ total: processos.length, ok, sem_dados });
+      continue;
+    }
+
+    for (const proc of procs) {
+      const r = map.get(proc.numero);
+      if (!r) { sem_dados++; onProgress?.({ total: processos.length, ok, sem_dados }); continue; }
+      const { polo_ativo, polo_passivo, vara, acao, data_ajuizamento } = r.dados;
+      if (!polo_ativo && !polo_passivo) { sem_dados++; onProgress?.({ total: processos.length, ok, sem_dados }); continue; }
+
+      const dataDistribuicao = data_ajuizamento ? new Date(data_ajuizamento + 'T12:00:00Z') : null;
+      await db.execute(
+        `UPDATE processos SET
+           polo_ativo        = COALESCE($1, polo_ativo),
+           polo_passivo      = COALESCE($2, polo_passivo),
+           vara              = COALESCE($3, vara),
+           acao              = COALESCE($4, acao),
+           data_distribuicao = COALESCE($5, data_distribuicao),
+           atualizado_em     = NOW()
+         WHERE id = $6`,
+        [polo_ativo || null, polo_passivo || null, vara || null, acao || null, dataDistribuicao, proc.id]
+      ).catch(err => console.warn(`[PolosDataJud] update falhou ${proc.numero}:`, err.message));
+
+      console.log(`[PolosDataJud] OK: ${proc.numero} — ativo="${polo_ativo}" passivo="${polo_passivo}"`);
+      ok++;
+      onProgress?.({ total: processos.length, ok, sem_dados });
+    }
+  }
+
+  console.log(`[PolosDataJud] Concluído: ${ok} OK, ${sem_dados} sem dados de ${processos.length}`);
+  return { total: processos.length, ok, sem_dados };
+}
+
+// ─────────────────────────────────────────────
 //  COMPLETAR POLOS VIA CONSULTA PÚBLICA TJPB
 //  Usa www.tjpb.jus.br/consulta-processual (sem login)
 //  Muito mais rápido que o PJe interno (~5-10s por processo)
