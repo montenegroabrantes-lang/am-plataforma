@@ -526,6 +526,15 @@ export async function completarPolosPublico(onProgress) {
       () => !/só um momento|just a moment/i.test(document.title),
       { timeout: 30_000 }
     ).catch(() => {});
+    // Dispensa banner de cookies no warm-up para que as páginas seguintes não o vejam
+    await wPage.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('button, a'));
+      const alvo = btns.find(b =>
+        /recusar tudo|rejeitar tudo|recusar|rejeitar|aceitar tudo|aceitar todos/i.test(b.textContent.trim())
+      );
+      if (alvo) alvo.click();
+    }).catch(() => {});
+    await new Promise(r => setTimeout(r, 800));
     const wTitle = await wPage.title().catch(() => '');
     console.log(`[PolosPub] Warm-up concluído — título: "${wTitle}"`);
     await wPage.close().catch(() => {});

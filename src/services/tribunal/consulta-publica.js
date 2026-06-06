@@ -48,6 +48,29 @@ export async function consultarProcesso(numero) {
 }
 
 // ─────────────────────────────────────────────
+//  DISPENSAR BANNER DE COOKIES
+//  O banner de cookies do TJPB sobrepõe o formulário e bloqueia cliques.
+//  Clica em "Recusar tudo" (preferível) ou "Aceitar tudo" para dispensar.
+// ─────────────────────────────────────────────
+async function dispensarCookies(page) {
+  try {
+    const dispensado = await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('button, a'));
+      const alvo = btns.find(b =>
+        /recusar tudo|rejeitar tudo|não aceitar|recusar|rejeitar/i.test(b.textContent.trim()) ||
+        /aceitar tudo|aceitar todos|accept all/i.test(b.textContent.trim())
+      );
+      if (alvo) { alvo.click(); return alvo.textContent.trim(); }
+      return null;
+    });
+    if (dispensado) {
+      console.log(`[ConsultaPublica] Banner de cookies dispensado: "${dispensado}"`);
+      await new Promise(r => setTimeout(r, 600));
+    }
+  } catch { /* ignora */ }
+}
+
+// ─────────────────────────────────────────────
 //  CONSULTAR REUTILIZANDO BROWSER (lote)
 // ─────────────────────────────────────────────
 export async function consultarComSessao(browser, numero) {
@@ -61,12 +84,11 @@ export async function consultarComSessao(browser, numero) {
   let xhrPayload = null;
   page.on('response', async (resp) => {
     try {
-      if (xhrPayload) return; // já capturou
+      if (xhrPayload) return;
       const ct = resp.headers()['content-type'] || '';
       if (!ct.includes('json')) return;
       if (resp.status() !== 200) return;
       const u = resp.url();
-      // Ignora manifests, chunks de framework e assets estáticos
       if (/\.(js|css|png|svg|ico|woff|map)(\?|$)/i.test(u)) return;
       const json = await resp.json().catch(() => null);
       if (json && JSON.stringify(json).length > 100) {
@@ -78,15 +100,17 @@ export async function consultarComSessao(browser, numero) {
   try {
     const url = `${BASE_URL}?npu=${encodeURIComponent(numero)}`;
 
-    // 1. Navega e aguarda networkidle2 para o Angular inicializar E o ?npu= disparar a busca.
-    //    Race com 25s: se o Angular tiver polling em background, networkidle2 nunca settle.
+    // 1. Navega — race com 25s para não travar em polling Angular infinito
     const gotoPromise = page.goto(url, { waitUntil: 'networkidle2', timeout: 30_000 });
     await Promise.race([gotoPromise, new Promise(r => setTimeout(r, 25_000))]).catch(() => {});
 
     const [pUrl, pTitle] = await Promise.all([page.url(), page.title()]);
     console.log(`[ConsultaPublica] ${numero} — url="${pUrl}" title="${pTitle}"`);
 
-    // 2. Verifica se a busca automática (via ?npu=) já retornou resultados
+    // 2. Dispensa banner de cookies antes de qualquer interação
+    await dispensarCookies(page);
+
+    // 3. Verifica se ?npu= já disparou a busca automaticamente
     const jaTemResultados = await page.evaluate(() => {
       const ths = Array.from(document.querySelectorAll('th, thead td'))
         .map(e => e.textContent.trim().toLowerCase());
@@ -95,48 +119,51 @@ export async function consultarComSessao(browser, numero) {
     });
 
     if (!jaTemResultados) {
-      // 3. Busca automática não disparou. Tentamos em sequência:
-      //    A) page.focus() (Puppeteer nativo — rastreado antes do keypress) + Enter
-      //    B) Despachar eventos de teclado diretamente no input (Angular ouve keydown)
-      //    C) form.requestSubmit() — dispara o evento "submit" que (ngSubmit) escuta
-
       const INP_SEL = 'input[placeholder*="Número do Processo"]';
 
-      // Lê o valor do FormControl para diagnóstico
-      const valInput = await page.evaluate((sel) => {
-        return document.querySelector(sel)?.value || '';
-      }, INP_SEL).catch(() => '');
-      console.log(`[ConsultaPublica] ${numero} — input="${valInput}", tentando submeter`);
+      // 4. Angular setter hack: atualiza o modelo do FormControl via native setter
+      //    (page.type() e Enter não trigam o ngModel — só o evento 'input' via setter nativo faz isso)
+      const setado = await page.evaluate((sel, val) => {
+        const inp = document.querySelector(sel);
+        if (!inp) return false;
+        // Hack necessário para Angular/React: bypass do getter/setter do framework
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+        if (setter) setter.call(inp, val); else inp.value = val;
+        inp.dispatchEvent(new Event('input',  { bubbles: true }));
+        inp.dispatchEvent(new Event('change', { bubbles: true }));
+        inp.dispatchEvent(new KeyboardEvent('keyup', { key: 'a', bubbles: true }));
+        return true;
+      }, INP_SEL, numero).catch(() => false);
 
-      // A) page.focus() garante que o Puppeteer rastreia o foco ANTES do keypress
-      const focusei = await page.focus(INP_SEL).then(() => true).catch(() => false);
-      if (focusei) {
+      console.log(`[ConsultaPublica] ${numero} — Angular setter: ${setado}`);
+      await new Promise(r => setTimeout(r, 500));
+
+      // 5. Clica no botão "Consultar" — mais confiável que Enter para apps Angular
+      const clicado = await page.evaluate(() => {
+        const btns = Array.from(document.querySelectorAll('button, input[type="submit"], a[role="button"]'));
+        const btn = btns.find(b => /^consultar$/i.test((b.textContent || b.value || '').trim()));
+        if (btn) { btn.click(); return btn.textContent?.trim() || 'submit'; }
+        return null;
+      }).catch(() => null);
+
+      if (clicado) {
+        console.log(`[ConsultaPublica] ${numero} — botão "${clicado}" clicado`);
+      } else {
+        // Fallback: Enter via Puppeteer nativo
+        await page.focus(INP_SEL).catch(() => {});
         await page.keyboard.press('Enter');
-        console.log(`[ConsultaPublica] ${numero} — Enter via page.focus()`);
+        console.log(`[ConsultaPublica] ${numero} — fallback Enter (botão Consultar não encontrado)`);
       }
 
-      // Aguarda 3s para ver se o AJAX disparou
-      await new Promise(r => setTimeout(r, 3_000));
+      // 6. Aguarda AJAX completar
+      await page.waitForNetworkIdle({ idleTime: 1_000, timeout: 20_000 }).catch(() => {});
 
-      // Verifica se já tem resultado; se não, tenta B e C
-      const temResultadoIntermedio = await page.evaluate(() =>
+      // 7. Se ainda não tem resultado, tenta form.requestSubmit() como último recurso
+      const temResultadoAposAjax = await page.evaluate(() =>
         document.querySelectorAll('th, thead td').length > 0
       ).catch(() => false);
 
-      if (!temResultadoIntermedio) {
-        // B) Despacha keydown/keyup Enter diretamente no input via eventos sintéticos
-        await page.evaluate((sel) => {
-          const inp = document.querySelector(sel);
-          if (!inp) return;
-          ['keydown', 'keypress', 'keyup'].forEach(type => {
-            inp.dispatchEvent(new KeyboardEvent(type, {
-              key: 'Enter', code: 'Enter', keyCode: 13,
-              which: 13, bubbles: true, cancelable: true,
-            }));
-          });
-        }, INP_SEL).catch(() => {});
-
-        // C) form.requestSubmit() — mais correto que form.submit() (dispara validação + ngSubmit)
+      if (!temResultadoAposAjax) {
         await page.evaluate((sel) => {
           const inp = document.querySelector(sel);
           if (!inp) return;
@@ -146,17 +173,14 @@ export async function consultarComSessao(browser, numero) {
             try { el.requestSubmit(); } catch { el.dispatchEvent(new Event('submit', { bubbles: true })); }
           }
         }, INP_SEL).catch(() => {});
-
-        console.log(`[ConsultaPublica] ${numero} — tentativas B+C concluídas`);
+        await page.waitForNetworkIdle({ idleTime: 1_000, timeout: 15_000 }).catch(() => {});
+        console.log(`[ConsultaPublica] ${numero} — requestSubmit executado`);
       }
-
-      // Aguarda o AJAX completar
-      await page.waitForNetworkIdle({ idleTime: 1_000, timeout: 20_000 }).catch(() => {});
     } else {
-      console.log(`[ConsultaPublica] ${numero} — busca auto disparou`);
+      console.log(`[ConsultaPublica] ${numero} — busca auto disparou via ?npu=`);
     }
 
-    // 4. Aguarda tabela de resultados aparecer
+    // 8. Aguarda tabela de resultados aparecer
     await page.waitForFunction(
       () => Array.from(document.querySelectorAll('th, thead td'))
         .map(e => e.textContent.trim().toLowerCase())
@@ -164,7 +188,7 @@ export async function consultarComSessao(browser, numero) {
       { timeout: 15_000 }
     ).catch(() => {});
 
-    // 6. Espera AJAX estabilizar
+    // 9. Espera AJAX estabilizar
     await new Promise(r => setTimeout(r, 1_500));
 
     const dados = await page.evaluate(extrairDoDom);
