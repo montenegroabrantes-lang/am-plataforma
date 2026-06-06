@@ -110,12 +110,18 @@ export async function consultarComSessao(browser, numero) {
     // 2. Dispensa banner de cookies antes de qualquer interação
     await dispensarCookies(page);
 
-    // 3. Verifica se ?npu= já disparou a busca automaticamente
+    // 3. Verifica se ?npu= já disparou a busca automaticamente.
+    //    Critério mais estrito: precisa de tabela com linhas de dados (tbody > tr),
+    //    não apenas um <th> com a palavra "parte" (que aparece na aba "Por parte" da nav).
     const jaTemResultados = await page.evaluate(() => {
-      const ths = Array.from(document.querySelectorAll('th, thead td'))
-        .map(e => e.textContent.trim().toLowerCase());
-      return ths.some(h => h.includes('parte')) ||
-             /Resultados para/i.test(document.body?.innerText || '');
+      const tabelas = Array.from(document.querySelectorAll('table'));
+      return tabelas.some(t => {
+        const ths = Array.from(t.querySelectorAll('th, thead td'))
+          .map(e => e.textContent.trim().toLowerCase());
+        const temColunaParte = ths.some(h => h.includes('parte'));
+        const temLinhasDados = t.querySelectorAll('tbody tr').length > 0;
+        return temColunaParte && temLinhasDados;
+      });
     });
 
     if (!jaTemResultados) {
@@ -159,9 +165,11 @@ export async function consultarComSessao(browser, numero) {
       await page.waitForNetworkIdle({ idleTime: 1_000, timeout: 20_000 }).catch(() => {});
 
       // 7. Se ainda não tem resultado, tenta form.requestSubmit() como último recurso
-      const temResultadoAposAjax = await page.evaluate(() =>
-        document.querySelectorAll('th, thead td').length > 0
-      ).catch(() => false);
+      const temResultadoAposAjax = await page.evaluate(() => {
+        return Array.from(document.querySelectorAll('table')).some(t =>
+          t.querySelectorAll('tbody tr').length > 0
+        );
+      }).catch(() => false);
 
       if (!temResultadoAposAjax) {
         await page.evaluate((sel) => {
@@ -180,11 +188,13 @@ export async function consultarComSessao(browser, numero) {
       console.log(`[ConsultaPublica] ${numero} — busca auto disparou via ?npu=`);
     }
 
-    // 8. Aguarda tabela de resultados aparecer
+    // 8. Aguarda tabela de resultados aparecer (com linhas de dados reais)
     await page.waitForFunction(
-      () => Array.from(document.querySelectorAll('th, thead td'))
-        .map(e => e.textContent.trim().toLowerCase())
-        .some(h => h.includes('parte')),
+      () => Array.from(document.querySelectorAll('table')).some(t =>
+        Array.from(t.querySelectorAll('th, thead td'))
+          .some(th => th.textContent.trim().toLowerCase().includes('parte')) &&
+        t.querySelectorAll('tbody tr').length > 0
+      ),
       { timeout: 15_000 }
     ).catch(() => {});
 
