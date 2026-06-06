@@ -39,6 +39,17 @@ app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
 app.use(auditar);
 
+let dbOk = false;
+
+// Healthcheck SEMPRE responde — Railway depende disso
+app.get('/health', (_req, res) => res.json({ ok: true, db: dbOk, env: process.env.NODE_ENV }));
+
+// Gate: até o DB conectar, rejeita o resto com 503 (não 500 silencioso)
+app.use((req, res, next) => {
+  if (!dbOk) return res.status(503).json({ ok: false, erro: 'Serviço iniciando — tente novamente em alguns segundos.' });
+  next();
+});
+
 // Rate limiting no login — máx 20 tentativas por 15 min por IP
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -68,9 +79,6 @@ app.use('/api/produtos',      autenticar, produtosRouter);
 app.use('/api/dashboard',    autenticar, dashboardRouter);
 app.use('/api/triagem',      autenticar, triagemRouter);
 
-let dbOk = false;
-app.get('/health', (_req, res) => res.json({ ok: true, db: dbOk, env: process.env.NODE_ENV }));
-
 // Sobe o servidor imediatamente para o healthcheck passar
 app.listen(PORT, () => {
   console.log(`[API] AM Plataforma escutando na porta ${PORT}`);
@@ -98,12 +106,17 @@ async function iniciar() {
     try {
       await conectarRedis();
 
-      // Restart sempre mata qualquer sync em andamento — limpa o lock incondicionalmente
+      // Restart sempre mata qualquer sync em andamento — limpa locks e flags incondicionalmente
       try {
         const { redis } = await import('./cache/redis.js');
         await redis.del('sync:global:lock');
-        console.log('[BOOT] Lock de sync liberado (restart).');
-      } catch { /* não bloqueia o boot */ }
+        // Flags de progresso (polos/classif): se o processo morreu no meio, rodando=true ficaria preso
+        await redis.del('polos:progress');
+        await redis.del('classif:progress');
+        console.log('[BOOT] Locks e flags de progresso liberados (restart).');
+      } catch (err) {
+        console.warn('[BOOT] Falha ao limpar locks:', err.message);
+      }
 
       const { iniciarWorkers } = await import('./workers/index.js');
       await iniciarWorkers();
@@ -117,4 +130,7 @@ async function iniciar() {
   console.log('[BOOT] Inicialização concluída.');
 }
 
-iniciar();
+iniciar().catch(err => {
+  console.error('[FATAL] Erro fatal durante boot:', err);
+  process.exit(1);
+});

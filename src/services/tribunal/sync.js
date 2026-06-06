@@ -83,7 +83,7 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
   await db.execute(
     `UPDATE processos SET sync_status = 'ok', sync_falhas = 0, atualizado_em = NOW() WHERE id = $1`,
     [processoId]
-  ).catch(() => {});
+  ).catch(err => console.warn(`[Sync] sync_status update falhou ${processo.numero}:`, err.message));
 
   if (dados.vara || dados.polo_ativo || dados.polo_passivo || dados.habilitados?.length || dados.data_ajuizamento) {
     const dataDistribuicao = parsearDataPtBR(dados.data_ajuizamento);
@@ -111,7 +111,8 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
     if (!mov.texto || mov.texto.length < 10) continue;
     if (CNJ_PURO.test(mov.texto.trim())) continue;
     if (/^[\d\s\-\/\.\:,;()]+$/.test(mov.texto)) continue;
-    const data = parsearData(mov.data) || new Date();
+    const data = parsearData(mov.data);
+    if (!data) continue;
     try {
       const [inserida] = await db.query(
         `INSERT INTO movimentacoes (processo_id, data_movimentacao, tipo, texto)
@@ -336,7 +337,7 @@ export async function sincronizarTodos() {
               const resultado = await eproc.buscarProcessoCompletoComSessao(eprocBrowser, url, numero, grau);
               const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
               const novasMovs = await salvarResultadoSync(id, processo, resultado.dados, resultado.movimentacoes);
-              await db.execute(`UPDATE processos SET sync_fonte = 'eproc' WHERE id = $1`, [id]).catch(() => {});
+              await db.execute(`UPDATE processos SET sync_fonte = 'eproc' WHERE id = $1`, [id]).catch(err => console.warn(`[Sync eProc] sync_fonte update falhou ${numero}:`, err.message));
               resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs, fonte: 'eproc' });
               console.log(`[Sync eProc] OK: ${numero} (${novasMovs} novas movimentações)`);
             } catch (err) {
@@ -382,7 +383,7 @@ export async function sincronizarTodos() {
             const resultado = datajudMap.get(proc.numero);
             const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [proc.id]);
             const novasMovs = await salvarResultadoSync(proc.id, processo, resultado.dados, resultado.movimentacoes);
-            await db.execute(`UPDATE processos SET sync_fonte = 'datajud' WHERE id = $1`, [proc.id]).catch(() => {});
+            await db.execute(`UPDATE processos SET sync_fonte = 'datajud' WHERE id = $1`, [proc.id]).catch(err => console.warn(`[Sync DataJud] sync_fonte update falhou ${proc.numero}:`, err.message));
             resultados.push({ processoId: proc.id, numero: proc.numero, ok: true, novasMovimentacoes: novasMovs, fonte: 'datajud' });
             console.log(`[Sync DataJud] OK: ${proc.numero} (${novasMovs} novas movimentações)`);
           } catch (err) {
@@ -418,7 +419,7 @@ export async function sincronizarTodos() {
             const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
             const novasMovs = await salvarResultadoSync(id, processo, resultado.dados, resultado.movimentacoes);
             const fonteUsada = resultado._fonte || 'puppeteer';
-            await db.execute(`UPDATE processos SET sync_fonte = $1 WHERE id = $2`, [fonteUsada, id]).catch(() => {});
+            await db.execute(`UPDATE processos SET sync_fonte = $1 WHERE id = $2`, [fonteUsada, id]).catch(err => console.warn(`[Sync ${fonteUsada}] sync_fonte update falhou ${numero}:`, err.message));
             resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs, fonte: fonteUsada });
             console.log(`[Sync ${fonteUsada}] OK: ${numero} (${novasMovs} novas movimentações)`);
           } catch (err) {
@@ -444,7 +445,7 @@ export async function sincronizarTodos() {
       }
     }
   } finally {
-    await redis.del(LOCK_KEY).catch(() => {});
+    await redis.del(LOCK_KEY).catch(err => console.warn('[Sync] Falha ao liberar lock:', err.message));
   }
 
   const ok   = resultados.filter(r => r.ok).length;
@@ -470,22 +471,125 @@ export async function sincronizarTodos() {
         fail,
         execucaoId,
       ]
-    ).catch(() => {});
+    ).catch(err => console.warn('[Sync] sync_execucoes update falhou:', err.message));
   }
 
   return resultados;
 }
 
 // ─────────────────────────────────────────────
+//  COMPLETAR POLOS VIA CONSULTA PÚBLICA TJPB
+//  Usa www.tjpb.jus.br/consulta-processual (sem login)
+//  Muito mais rápido que o PJe interno (~5-10s por processo)
+// ─────────────────────────────────────────────
+export async function completarPolosPublico(onProgress) {
+  console.log('[PolosPub] Início — buscando processos sem polo no TJPB');
+
+  const processos = await db.query(
+    `SELECT id, numero, tribunal
+     FROM processos
+     WHERE tribunal = 'TJPB' AND status IN ('ativo','suspenso')
+       AND (polo_ativo IS NULL OR polo_ativo = '' OR polo_passivo IS NULL OR polo_passivo = '')
+     ORDER BY id`
+  );
+
+  console.log(`[PolosPub] Encontrados ${processos.length} processo(s) sem polo`);
+
+  if (processos.length === 0) return { total: 0, ok: 0, erros: 0 };
+  onProgress?.({ total: processos.length, ok: 0, erros: 0 });
+
+  const publica = await import('./consulta-publica.js');
+  console.log('[PolosPub] Abrindo browser Puppeteer...');
+  let browser;
+  try {
+    // Timeout duro de 60s no launch — se Chromium pendurar, falha rápido
+    browser = await Promise.race([
+      publica.abrirBrowser(),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('puppeteer.launch timeout 60s')), 60_000)),
+    ]);
+    console.log('[PolosPub] Browser pronto');
+
+    // Warm-up: primeira navegação para passar o Cloudflare e setar cookie de sessão.
+    // O primeiro acesso sempre recebe o challenge "Só um momento..." — processos
+    // subsequentes da mesma sessão passam direto. Aqui navegamos e aguardamos até
+    // o challenge se resolver (ou expirar), sem processar dados.
+    console.log('[PolosPub] Warm-up Cloudflare...');
+    const wPage = await browser.newPage();
+    await wPage.setUserAgent(
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    );
+    await wPage.goto('https://www.tjpb.jus.br/consulta-processual', {
+      waitUntil: 'domcontentloaded', timeout: 45_000,
+    }).catch(() => {});
+    // Aguarda até a página real aparecer (não o challenge) ou timeout de 30s
+    await wPage.waitForFunction(
+      () => !/só um momento|just a moment/i.test(document.title),
+      { timeout: 30_000 }
+    ).catch(() => {});
+    const wTitle = await wPage.title().catch(() => '');
+    console.log(`[PolosPub] Warm-up concluído — título: "${wTitle}"`);
+    await wPage.close().catch(() => {});
+  } catch (err) {
+    console.error('[PolosPub] Falha ao abrir browser:', err.message);
+    throw err;
+  }
+  let ok = 0, erros = 0;
+
+  try {
+    for (const proc of processos) {
+      try {
+        const dados = await publica.consultarComSessao(browser, proc.numero);
+
+        if (dados.polo_ativo || dados.polo_passivo) {
+          await db.execute(
+            `UPDATE processos SET
+               polo_ativo    = COALESCE($1, polo_ativo),
+               polo_passivo  = COALESCE($2, polo_passivo),
+               vara          = COALESCE($3, vara),
+               acao          = COALESCE($4, acao),
+               atualizado_em = NOW()
+             WHERE id = $5`,
+            [dados.polo_ativo || null, dados.polo_passivo || null,
+             dados.vara || null, dados.acao || null, proc.id]
+          ).catch(err => console.warn(`[PolosPub] update falhou ${proc.numero}:`, err.message));
+          console.log(`[PolosPub] OK: ${proc.numero} — ativo="${dados.polo_ativo}" passivo="${dados.polo_passivo}"`);
+          ok++;
+        } else {
+          console.warn(`[PolosPub] Sem polo em ${proc.numero}. textoLen=${dados._diag?.textoLen} tabelas=${dados._diag?.tabelas} xhr=${dados._diag?.xhrUrl || 'nenhuma'}`);
+          console.warn(`[PolosPub]   inputs:  ${dados._diag?.inputs?.slice(0, 300) || '(nenhum)'}`);
+          console.warn(`[PolosPub]   botoes:  ${dados._diag?.botoes?.slice(0, 200) || '(nenhum)'}`);
+          console.warn(`[PolosPub]   snippet: ${dados._diag?.snippet?.slice(0, 400)}`);
+          if (dados._diag?.tail) console.warn(`[PolosPub]   tail:    ${dados._diag.tail.slice(0, 300)}`);
+          erros++;
+        }
+      } catch (e) {
+        console.error(`[PolosPub] Erro em ${proc.numero}:`, e.message);
+        erros++;
+      }
+      onProgress?.({ total: processos.length, ok, erros });
+      await new Promise(r => setTimeout(r, 800));
+    }
+  } finally {
+    await browser.close().catch(() => {});
+  }
+
+  console.log(`[PolosPub] Concluído: ${ok} OK, ${erros} erros/sem dados de ${processos.length}.`);
+  return { total: processos.length, ok, erros };
+}
+
+// ─────────────────────────────────────────────
 //  COMPLETAR POLOS — preenche polo_ativo/passivo
-//  nos processos PJe que ainda estão sem essa info
+//  nos processos PJe que ainda estão sem essa info.
+//  Usa Puppeteer porque MNI dá 403 no TJPB para processos sem habilitação
+//  formal do advogado, e DataJud não expõe o campo `partes`.
+//  Mantido como fallback — use completarPolosPublico (mais rápido).
 // ─────────────────────────────────────────────
 export async function completarPolos(onProgress) {
   const processos = await db.query(
     `SELECT id, numero, tribunal, grau, sistema, master_responsavel_id
      FROM processos
      WHERE sistema = 'pje' AND status IN ('ativo','suspenso')
-       AND (polo_ativo IS NULL OR polo_ativo = '')
+       AND (polo_ativo IS NULL OR polo_ativo = '' OR polo_passivo IS NULL OR polo_passivo = '')
      ORDER BY master_responsavel_id, tribunal, grau`
   );
 

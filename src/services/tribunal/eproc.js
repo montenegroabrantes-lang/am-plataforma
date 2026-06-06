@@ -26,13 +26,22 @@ async function abrirBrowser() {
   });
 }
 
+const MAX_SHOTS_EPROC = 200;
 async function screenshot(page, nome) {
   if (!DEBUG_SHOTS) return;
   try {
     const dir = '/tmp/pje-debug';
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     await page.screenshot({ path: path.join(dir, `${Date.now()}-eproc-${nome}.png`), fullPage: true });
-  } catch { /* ignora */ }
+
+    const arquivos = fs.readdirSync(dir)
+      .filter(f => f.endsWith('.png'))
+      .map(f => ({ f, t: fs.statSync(path.join(dir, f)).mtimeMs }))
+      .sort((a, b) => b.t - a.t);
+    for (const { f } of arquivos.slice(MAX_SHOTS_EPROC)) {
+      try { fs.unlinkSync(path.join(dir, f)); } catch { /* ignora */ }
+    }
+  } catch (err) { console.warn('[eProc] screenshot falhou:', err.message); }
 }
 
 // ─────────────────────────────────────────────

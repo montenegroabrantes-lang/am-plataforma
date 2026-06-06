@@ -39,14 +39,25 @@ async function abrirBrowser() {
   });
 }
 
-// Salva screenshot para diagnóstico — ativa com PJE_DEBUG_SCREENSHOTS=true
+// Salva screenshot para diagnóstico — ativa com PJE_DEBUG_SCREENSHOTS=true.
+// Mantém apenas os últimos MAX_SHOTS arquivos para não encher o disco em produção.
+const MAX_SHOTS = 200;
 async function screenshot(page, nome) {
   if (!DEBUG_SHOTS) return;
   try {
     const dir = '/tmp/pje-debug';
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     await page.screenshot({ path: path.join(dir, `${Date.now()}-${nome}.png`), fullPage: true });
-  } catch { /* ignora erro de screenshot */ }
+
+    // Rotação: remove arquivos mais antigos quando passa do limite
+    const arquivos = fs.readdirSync(dir)
+      .filter(f => f.endsWith('.png'))
+      .map(f => ({ f, t: fs.statSync(path.join(dir, f)).mtimeMs }))
+      .sort((a, b) => b.t - a.t);
+    for (const { f } of arquivos.slice(MAX_SHOTS)) {
+      try { fs.unlinkSync(path.join(dir, f)); } catch { /* ignora */ }
+    }
+  } catch (err) { console.warn('[PJe] screenshot falhou:', err.message); }
 }
 
 // Aguarda AJAX do RichFaces estabilizar (sem navegação de página)
@@ -821,25 +832,22 @@ async function extrairMovimentacoes(page) {
 //  e lê diretamente dos IDs corretos.
 // ─────────────────────────────────────────────
 async function extrairDados(page) {
-  // O toggle ▼ (Bootstrap dropdown) carrega #poloAtivo/#poloPassivo/#maisDetalhes via AJAX.
-  // Usa waitForSelector para esperar o toggle aparecer no DOM antes de clicar.
+  // O toggle ▼ (Bootstrap dropdown) carrega #poloAtivo/#poloPassivo/#maisDetalhes via AJAX,
+  // mas com frequência o click pendura indefinidamente. Tenta SEM bloquear — se o toggle
+  // não responder rápido, segue com a estratégia navbar/body (sempre visível).
   await screenshot(page, 'pre-toggle');
   try {
     const toggle = await page.waitForSelector(
       'a.titulo-topo.dropdown-toggle, a[class*="titulo-topo"][data-toggle="dropdown"]',
-      { timeout: 15_000 }
+      { timeout: 5_000 }
     );
-    await toggle.click();
-    console.log('[PJe] Toggle ▼ clicado — aguardando #poloAtivo no DOM');
-    // Aguarda AJAX injetar o conteúdo das abas
-    await page.waitForSelector('#poloAtivo, #maisDetalhes', { timeout: 12_000 }).catch(() => {});
-    await new Promise(r => setTimeout(r, 800));
+    // Promise.race: se o click demorar > 4s, segue em frente sem esperar
+    await Promise.race([
+      toggle.click().then(() => page.waitForSelector('#poloAtivo, #maisDetalhes', { timeout: 4_000 }).catch(() => {})),
+      new Promise(r => setTimeout(r, 4_500)),
+    ]);
   } catch {
-    // Diagnóstico: mostra snippet do body para entender o que carregou
-    const bodySnip = await page.evaluate(() =>
-      (document.body?.innerText || '').slice(0, 600)
-    ).catch(() => '');
-    console.log('[PJe] Toggle ▼ não encontrado após 15s. Body snippet:', bodySnip);
+    // Toggle não apareceu — segue com fallback (navbar/body)
   }
   await screenshot(page, 'pos-toggle');
 
@@ -851,17 +859,36 @@ async function extrairDados(page) {
     let polo_ativo  = limparNome(document.querySelector('#poloAtivo tbody td > span > span')?.textContent);
     let polo_passivo = limparNome(document.querySelector('#poloPassivo tbody td > span > span')?.textContent);
 
-    // ── Estratégia 2: ler do subtítulo do navbar "NOME X OUTRA_PARTE" (sempre visível) ──
+    // ── Estratégia 2: ler do subtítulo/navbar "NOME A X NOME B" (sempre visível) ──
     if (!polo_ativo || !polo_passivo) {
-      const navEl = document.querySelector('a.titulo-topo.dropdown-toggle, a[class*="titulo-topo"]')
-        ?.closest('.navbar, nav, header, .navbar-header, .navbar-collapse');
-      const navText = navEl?.innerText || document.querySelector('.navbar, nav')?.innerText || '';
-      // Procura linha "NOME A X NOME B" — letras maiúsculas separadas por " X "
-      const match = navText.match(/^([A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÜÇ][^\n]+?)\s+X\s+([A-ZÁÀÂÃÉÈÊÍÏÓÔÕÖÚÜÇ][^\n]+)$/m);
+      // Tenta vários seletores de onde o PJe exibe as partes
+      const fontes = [
+        document.querySelector('a.titulo-topo.dropdown-toggle, a[class*="titulo-topo"]')?.closest('.navbar, nav, header'),
+        document.querySelector('.navbar, nav, header'),
+        document.querySelector('.processo-cabecalho, .header-processo, #cabecalho'),
+        document.body,
+      ];
+      let match = null;
+      for (const el of fontes) {
+        if (!el) continue;
+        const txt = (el.innerText || el.textContent || '').replace(/\s+/g, ' ');
+        // Aceita qualquer texto com " X " separando dois nomes com pelo menos 3 chars cada
+        const m = txt.match(/([A-Za-zÀ-ÿ][^\n]{2,80?}?)\s+X\s+([A-Za-zÀ-ÿ][^\n]{2,}?)(?:\s*[-–|]|$)/m);
+        if (m && m[1]?.trim().length > 2 && m[2]?.trim().length > 2) { match = m; break; }
+      }
       if (match) {
-        if (!polo_ativo)  polo_ativo  = match[1].trim();
+        if (!polo_ativo)   polo_ativo   = match[1].trim();
         if (!polo_passivo) polo_passivo = match[2].trim();
       }
+    }
+
+    // ── Estratégia 3: blocos de texto com rótulo "Polo Ativo" / "Polo Passivo" ──
+    if (!polo_ativo || !polo_passivo) {
+      const txt = (document.body.innerText || '').replace(/\s+/g, ' ');
+      const mAtivo   = txt.match(/Polo\s+Ativo[:\s]+([A-Za-zÀ-ÿ][^\/\n]{3,80}?)(?:\s*Polo|\s*$)/i);
+      const mPassivo = txt.match(/Polo\s+Passivo[:\s]+([A-Za-zÀ-ÿ][^\/\n]{3,80}?)(?:\s*Polo|\s*$)/i);
+      if (mAtivo   && !polo_ativo)   polo_ativo   = mAtivo[1].trim();
+      if (mPassivo && !polo_passivo) polo_passivo = mPassivo[1].trim();
     }
 
     // ── Habilitados (OAB) das árvores dos polos ──

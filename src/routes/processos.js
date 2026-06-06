@@ -27,12 +27,20 @@ function podeAcessarProcesso(user, processo) {
 }
 
 const FILTROS_PERIODO = {
-  'hoje':   `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= CURRENT_DATE`,
+  'hoje':   `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date`,
   '7d':     `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= NOW() - INTERVAL '7 days'`,
   '30d':    `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= NOW() - INTERVAL '30 days'`,
   'sem30d': `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) < NOW() - INTERVAL '30 days'`,
   'sem60d': `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) < NOW() - INTERVAL '60 days'`,
 };
+
+// Formato CNJ: NNNNNNN-DD.AAAA.J.TR.OOOO (com pontuação) ou só dígitos (20 chars)
+const CNJ_FORMATADO = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
+const CNJ_PURO      = /^\d{20}$/;
+function validarNumeroCNJ(numero) {
+  const limpo = String(numero || '').trim();
+  return CNJ_FORMATADO.test(limpo) || CNJ_PURO.test(limpo.replace(/\D/g, ''));
+}
 
 const ETAPA_WHERE = {
   'Pagamento':               `(p.situacao_atual IN ('rpv_paga','pagamento_realizado') OR p.status_rpv = 'paga' OR p.status_alvara = 'pagamento_realizado')`,
@@ -83,7 +91,10 @@ processosRouter.get('/', async (req, res) => {
   if (vara)                  { params.push(`%${vara}%`);           condicoes.push(`AND p.vara ILIKE $${params.length}`); }
   if (polo_passivo)          { params.push(`%${polo_passivo}%`);   condicoes.push(`AND p.polo_passivo ILIKE $${params.length}`); }
   const anoNum = Number(ano);
-  if (ano && !isNaN(anoNum)) { params.push(anoNum); condicoes.push(`AND EXTRACT(YEAR FROM p.data_distribuicao) = $${params.length}`); }
+  const anoAtual = new Date().getFullYear();
+  if (ano && Number.isInteger(anoNum) && anoNum >= 1990 && anoNum <= anoAtual + 1) {
+    params.push(anoNum); condicoes.push(`AND EXTRACT(YEAR FROM p.data_distribuicao) = $${params.length}`);
+  }
   if (situacao_atual)        { params.push(situacao_atual);        condicoes.push(`AND p.situacao_atual = $${params.length}`); }
   if (localizacao_processual){ params.push(localizacao_processual);condicoes.push(`AND p.localizacao_processual = $${params.length}`); }
   if (tipo_requisicao)       { params.push(tipo_requisicao);       condicoes.push(`AND p.tipo_requisicao = $${params.length}`); }
@@ -113,6 +124,7 @@ processosRouter.get('/', async (req, res) => {
 
   params.push(Number(limite), offset);
 
+  // JOIN LATERAL evita 3 subqueries por linha — uma única busca da última movimentação.
   const rows = await db.query(
     `SELECT p.id, p.numero, p.tribunal, p.vara, p.status, p.acao,
             p.polo_ativo, p.polo_passivo,
@@ -124,15 +136,22 @@ processosRouter.get('/', async (req, res) => {
             EXTRACT(YEAR FROM p.data_distribuicao)::int AS ano,
             c.nome AS cliente_nome,
             pr.nome AS produto_nome,
-            (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) AS ultima_movimentacao,
-            (SELECT m.texto FROM movimentacoes m WHERE m.processo_id = p.id ORDER BY m.data_movimentacao DESC LIMIT 1) AS ultima_mov_texto,
-            EXTRACT(DAY FROM NOW() - (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id))::int AS dias_parado,
+            ult.data_movimentacao AS ultima_movimentacao,
+            ult.texto             AS ultima_mov_texto,
+            EXTRACT(DAY FROM NOW() - ult.data_movimentacao)::int AS dias_parado,
             ${ETAPA_CASE} AS etapa
      FROM processos p
      LEFT JOIN clientes c  ON c.id  = p.cliente_id
      LEFT JOIN produtos  pr ON pr.id = p.produto_id
+     LEFT JOIN LATERAL (
+       SELECT data_movimentacao, texto
+       FROM movimentacoes
+       WHERE processo_id = p.id
+       ORDER BY data_movimentacao DESC
+       LIMIT 1
+     ) ult ON true
      WHERE ${where}
-     ORDER BY p.urgente DESC, p.atualizado_em DESC
+     ORDER BY p.urgente DESC, ult.data_movimentacao DESC NULLS LAST
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );
@@ -159,11 +178,12 @@ processosRouter.get('/exportar', async (req, res) => {
   }
 
   const rows = await db.query(
-    `SELECT p.numero, c.nome AS cliente_nome, p.situacao_atual
+    `SELECT p.numero, c.nome AS cliente_nome, p.situacao_atual,
+            (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) AS ultima_movimentacao
      FROM processos p
      LEFT JOIN clientes c ON c.id = p.cliente_id
      WHERE ${condicoes.filter(Boolean).join(' ')}
-     ORDER BY p.urgente DESC, p.atualizado_em DESC
+     ORDER BY p.urgente DESC, ultima_movimentacao DESC NULLS LAST
      LIMIT 500`,
     params
   );
@@ -230,8 +250,14 @@ processosRouter.post('/', async (req, res) => {
   if (!numero || !tribunal || !sistema) {
     return res.status(400).json({ ok: false, erro: 'numero, tribunal e sistema são obrigatórios.' });
   }
+  if (!validarNumeroCNJ(numero)) {
+    return res.status(400).json({ ok: false, erro: 'Número fora do padrão CNJ (NNNNNNN-DD.AAAA.J.TR.OOOO).' });
+  }
   if (!['1','2'].includes(grau)) {
     return res.status(400).json({ ok: false, erro: 'grau deve ser 1 ou 2.' });
+  }
+  if (!['pje','eproc'].includes(sistema)) {
+    return res.status(400).json({ ok: false, erro: 'sistema deve ser pje ou eproc.' });
   }
 
   // Master responsável: quem cadastrou (ou o informado, se Master 01)
@@ -340,13 +366,20 @@ processosRouter.post('/sync-todos', apenasMaster, async (req, res) => {
   try {
     const { syncQueue } = await import('../workers/index.js');
     if (syncQueue) {
-      // Remove jobs pendentes do mesmo tipo para não empilhar
-      await syncQueue.obliterate({ force: false }).catch(() => {});
+      // Remove apenas o último job pendente desse tipo (não obliterate — preservaria o cron)
+      const pendentes = await syncQueue.getJobs(['waiting', 'delayed']).catch(() => []);
+      for (const j of pendentes) {
+        if (j.name === 'sincronizar-todos' && j.id !== 'sync-todos-recorrente') {
+          await j.remove().catch(err => console.warn('[Sync] Falha ao remover job pendente:', err.message));
+        }
+      }
       await syncQueue.add('sincronizar-todos', {}, { removeOnComplete: 5, removeOnFail: 5 });
       console.log('[Sync] Sync manual de todos os processos enfileirado');
       return res.json({ ok: true, status: 'enfileirado', mensagem: 'Sync iniciado. Pode levar alguns minutos dependendo do número de processos.' });
     }
-  } catch { /* Redis indisponível */ }
+  } catch (err) {
+    console.warn('[Sync] Redis indisponível para enfileirar:', err.message);
+  }
 
   // Fallback: roda direto (bloqueia a requisição — evitar em produção com 800+ processos)
   try {
@@ -425,7 +458,10 @@ processosRouter.patch('/:id/situacao', async (req, res) => {
   params.push(req.user.id);
   updates.push(`classificado_por = $${params.length}`);
   updates.push(`classificado_em = NOW()`);
-  updates.push(`requer_revisao = false`);
+  // Só marca como revisado se a situação realmente mudou
+  if (req.body.situacao_atual && req.body.situacao_atual !== dono.situacao_atual) {
+    updates.push(`requer_revisao = false`);
+  }
   updates.push(`atualizado_em = NOW()`);
   params.push(req.params.id);
 
@@ -437,7 +473,7 @@ processosRouter.patch('/:id/situacao', async (req, res) => {
       `INSERT INTO historico_situacao (processo_id, situacao_anterior, situacao_nova, etapa_anterior, etapa_nova, usuario_id, fonte)
        VALUES ($1,$2,$3,$4,$5,$6,'manual')`,
       [req.params.id, dono.situacao_atual, req.body.situacao_atual, dono.etapa_atual, req.body.etapa_atual || null, req.user.id]
-    ).catch(() => {});
+    ).catch(err => console.warn(`[Situacao] historico_situacao falhou ${req.params.id}:`, err.message));
   }
 
   res.json({ ok: true });
@@ -494,59 +530,114 @@ processosRouter.post('/:id/classificar', async (req, res) => {
       `INSERT INTO historico_situacao (processo_id, situacao_anterior, situacao_nova, etapa_anterior, etapa_nova, usuario_id, fonte)
        VALUES ($1,$2,$3,$4,$5,'claude','claude')`,
       [req.params.id, processo.situacao_atual, resultado.situacao_atual, processo.etapa_atual, resultado.etapa_atual]
-    ).catch(() => {});
+    ).catch(err => console.warn(`[Classificar] historico_situacao falhou ${req.params.id}:`, err.message));
   }
 
   res.json({ ok: true, resultado, requer_revisao: resultado.confianca === 'BAIXA' });
 });
 
 // ── COMPLETAR POLOS ──────────────────────────────────────────
-let polosProgress = { rodando: false, total: 0, ok: 0, erros: 0, iniciado_em: null, finalizado_em: null };
+// Estado persistido em Redis com TTL — sobrevive a restart e funciona com múltiplas instâncias.
+const POLOS_KEY = 'polos:progress';
+const POLOS_TTL = 24 * 3600; // 24h
 
-processosRouter.get('/completar-polos/progresso', apenasMaster, (req, res) => {
-  res.json({ ok: true, progresso: polosProgress });
+async function lerPolosProgress() {
+  try {
+    const { redis } = await import('../cache/redis.js');
+    const raw = await redis.get(POLOS_KEY);
+    if (!raw) return { rodando: false, total: 0, ok: 0, erros: 0, iniciado_em: null, finalizado_em: null };
+    return JSON.parse(raw);
+  } catch {
+    return { rodando: false, total: 0, ok: 0, erros: 0, iniciado_em: null, finalizado_em: null };
+  }
+}
+async function salvarPolosProgress(estado) {
+  try {
+    const { redis } = await import('../cache/redis.js');
+    await redis.set(POLOS_KEY, JSON.stringify(estado), 'EX', POLOS_TTL);
+  } catch (err) { console.warn('[Polos] Falha ao salvar progresso:', err.message); }
+}
+
+processosRouter.get('/completar-polos/progresso', apenasMaster, async (req, res) => {
+  res.json({ ok: true, progresso: await lerPolosProgress() });
 });
 
+// Força destravar o flag se travado (job pendurado por crash do puppeteer, etc)
+processosRouter.post('/completar-polos/reset', apenasMaster, async (req, res) => {
+  try {
+    const { redis } = await import('../cache/redis.js');
+    await redis.del('polos:progress');
+    res.json({ ok: true, mensagem: 'Flag de polos resetado.' });
+  } catch (err) {
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// Via consulta pública TJPB (sem login) — força=true ignora flag travado
 processosRouter.post('/completar-polos', apenasMaster, async (req, res) => {
-  if (polosProgress.rodando) {
-    return res.json({ ok: false, mensagem: 'Já em andamento.', progresso: polosProgress });
+  const force = req.body?.force === true || req.query?.force === 'true';
+  const atual = await lerPolosProgress();
+  if (atual.rodando && !force) {
+    return res.json({ ok: false, mensagem: 'Já em andamento. Use force=true para destravar.', progresso: atual });
   }
 
-  polosProgress = { rodando: true, total: 0, ok: 0, erros: 0, iniciado_em: new Date(), finalizado_em: null };
+  const estadoInicial = { rodando: true, total: 0, ok: 0, erros: 0, iniciado_em: new Date(), finalizado_em: null };
+  await salvarPolosProgress(estadoInicial);
   res.json({ ok: true, mensagem: 'Completar polos iniciado.' });
 
   setImmediate(async () => {
+    let snapshot = estadoInicial;
     try {
-      const { completarPolos } = await import('../services/tribunal/sync.js');
-      await completarPolos((prog) => { Object.assign(polosProgress, prog); });
+      // completarPolosPublico usa a consulta pública do TJPB (sem login, sem MNI 403)
+      // Cai para completarPolos (PJe interno) só se a pública falhar para todos
+      const { completarPolosPublico } = await import('../services/tribunal/sync.js');
+      await completarPolosPublico(async (prog) => {
+        snapshot = { ...snapshot, ...prog };
+        await salvarPolosProgress(snapshot);
+      });
     } catch (e) {
       console.error('[Polos] Erro geral:', e.message);
     } finally {
-      polosProgress.rodando = false;
-      polosProgress.finalizado_em = new Date();
+      await salvarPolosProgress({ ...snapshot, rodando: false, finalizado_em: new Date() });
     }
   });
 });
 
-// Estado de progresso da classificação em lote (em memória)
-let classifProgress = {
-  rodando: false, total: 0, ok: 0, erros: 0, pulados: 0,
-  iniciado_em: null, finalizado_em: null, ultimo_erro: null,
-};
+// Estado de classificação em lote — também persistido em Redis
+const CLASSIF_KEY = 'classif:progress';
+const CLASSIF_TTL = 24 * 3600;
+
+async function lerClassifProgress() {
+  try {
+    const { redis } = await import('../cache/redis.js');
+    const raw = await redis.get(CLASSIF_KEY);
+    if (!raw) return { rodando: false, total: 0, ok: 0, erros: 0, pulados: 0, iniciado_em: null, finalizado_em: null, ultimo_erro: null };
+    return JSON.parse(raw);
+  } catch {
+    return { rodando: false, total: 0, ok: 0, erros: 0, pulados: 0, iniciado_em: null, finalizado_em: null, ultimo_erro: null };
+  }
+}
+async function salvarClassifProgress(estado) {
+  try {
+    const { redis } = await import('../cache/redis.js');
+    await redis.set(CLASSIF_KEY, JSON.stringify(estado), 'EX', CLASSIF_TTL);
+  } catch (err) { console.warn('[Classif] Falha ao salvar progresso:', err.message); }
+}
 
 // GET /api/processos/classificar-lote/progresso
-processosRouter.get('/classificar-lote/progresso', apenasMaster, (req, res) => {
-  res.json({ ok: true, progresso: classifProgress });
+processosRouter.get('/classificar-lote/progresso', apenasMaster, async (req, res) => {
+  res.json({ ok: true, progresso: await lerClassifProgress() });
 });
 
 // POST /api/processos/classificar-lote — classifica em paralelo com rastreamento de progresso
 processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
-  if (classifProgress.rodando) {
-    return res.json({ ok: false, mensagem: 'Classificação já em andamento.', progresso: classifProgress });
+  const atual = await lerClassifProgress();
+  if (atual.rodando) {
+    return res.json({ ok: false, mensagem: 'Classificação já em andamento.', progresso: atual });
   }
 
-  // Marca como rodando ANTES do setImmediate para evitar race condition com requisições simultâneas
-  classifProgress = { rodando: true, total: 0, ok: 0, erros: 0, pulados: 0, iniciado_em: new Date(), finalizado_em: null, ultimo_erro: null };
+  const estadoInicial = { rodando: true, total: 0, ok: 0, erros: 0, pulados: 0, iniciado_em: new Date(), finalizado_em: null, ultimo_erro: null };
+  await salvarClassifProgress(estadoInicial);
 
   const forcar       = req.body?.forcar === true;
   const concorrencia = Math.min(Number(req.body?.concorrencia) || 5, 10);
@@ -554,6 +645,11 @@ processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
   res.json({ ok: true, mensagem: 'Classificação em lote iniciada.', forcar, concorrencia });
 
   setImmediate(async () => {
+    let snapshot = estadoInicial;
+    let inflightWrite = Promise.resolve();
+    function persistir() {
+      inflightWrite = inflightWrite.then(() => salvarClassifProgress(snapshot)).catch(() => {});
+    }
 
     try {
       const masterId   = req.user.pode_marcar_restrito ? null : req.user.id;
@@ -570,7 +666,8 @@ processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
         loteParams
       );
 
-      classifProgress.total = processos.length;
+      snapshot = { ...snapshot, total: processos.length };
+      persistir();
       const { ai } = await import('../services/ai/index.js');
 
       for (let i = 0; i < processos.length; i += concorrencia) {
@@ -618,29 +715,31 @@ processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
                 `INSERT INTO historico_situacao (processo_id, situacao_anterior, situacao_nova, etapa_anterior, etapa_nova, usuario_id, fonte)
                  VALUES ($1,$2,$3,$4,$5,'claude','claude')`,
                 [proc.id, proc.situacao_atual, resultado.situacao_atual, proc.etapa_atual, resultado.etapa_atual]
-              ).catch(() => {});
+              ).catch(err => console.warn(`[Lote] historico_situacao falhou ${proc.numero}:`, err.message));
             }
 
-            classifProgress.ok++;
+            snapshot.ok++;
           } catch (e) {
             console.error(`[Lote] Erro em ${proc.numero}:`, e.message);
-            classifProgress.erros++;
-            classifProgress.ultimo_erro = `${proc.numero}: ${e.message}`;
+            snapshot.erros++;
+            snapshot.ultimo_erro = `${proc.numero}: ${e.message}`;
           }
         }));
 
+        persistir();
         if (i + concorrencia < processos.length) {
           await new Promise(r => setTimeout(r, 500));
         }
       }
 
-      console.log(`[Lote] Concluído: ${classifProgress.ok} ok, ${classifProgress.erros} erros de ${processos.length} processos`);
+      console.log(`[Lote] Concluído: ${snapshot.ok} ok, ${snapshot.erros} erros de ${processos.length} processos`);
     } catch (e) {
       console.error('[Lote] Erro geral:', e.message);
-      classifProgress.ultimo_erro = e.message;
+      snapshot.ultimo_erro = e.message;
     } finally {
-      classifProgress.rodando = false;
-      classifProgress.finalizado_em = new Date();
+      snapshot = { ...snapshot, rodando: false, finalizado_em: new Date() };
+      await inflightWrite.catch(() => {});
+      await salvarClassifProgress(snapshot);
     }
   });
 });

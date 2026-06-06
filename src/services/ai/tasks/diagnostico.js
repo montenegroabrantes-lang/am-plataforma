@@ -8,8 +8,9 @@ const TIPOS_PENDENCIA = [
   'SEM_PROVIDENCIA_IMEDIATA', 'ERRO_DE_LEITURA',
 ];
 
-function buildSistema(hoje) {
-  return `Você é um classificador operacional de movimentações processuais do escritório Abrantes & Montenegro Advogados.
+// System prompt ESTÁTICO (sem data interpolada) — condição para o prompt caching
+// reaproveitar o prefixo entre chamadas. A data de hoje vai no prompt do usuário.
+const SISTEMA = `Você é um classificador operacional de movimentações processuais do escritório Abrantes & Montenegro Advogados.
 Sua função é transformar movimentações e expedientes em uma pendência objetiva para o escritório.
 
 Não explique o processo.
@@ -38,23 +39,23 @@ Campos obrigatórios:
 Tipos permitidos (use exatamente um destes):
 ${TIPOS_PENDENCIA.join(', ')}
 
-Regras:
+Regras (a "data de hoje" é informada na primeira linha do input):
 1. Se houver expediente com prazo para manifestação → tipo = PETICIONAR.
 2. Se houver expediente mas o teor do ato não estiver descrito → precisaConferenciaPJe = true.
-3. Se prazoFinal for anterior a ${hoje} → statusPrazo = VENCIDO.
-4. Se prazoFinal estiver entre hoje e 2 dias à frente → statusPrazo = VENCENDO.
-5. Se prazoFinal for posterior a 2 dias → statusPrazo = ATIVO.
+3. Se prazoFinal for anterior à data de hoje → statusPrazo = VENCIDO.
+4. Se prazoFinal estiver entre a data de hoje e 2 dias à frente → statusPrazo = VENCENDO.
+5. Se prazoFinal for posterior a 2 dias da data de hoje → statusPrazo = ATIVO.
 6. Se não houver prazoFinal identificável → statusPrazo = null.
 7. Se o texto indicar apenas conclusão ao juiz → tipo = AGUARDAR_CONCLUSAO.
 8. Se não houver nenhuma providência para o escritório → tipo = SEM_PROVIDENCIA_IMEDIATA.
 9. Se o prazo vier como "SIM" ou texto não-data → prazoFinal = null.
 10. prioridade = CRITICO se statusPrazo = VENCIDO ou VENCENDO; ALTO se expediente aberto sem prazo iminente; MEDIO para demais pendências ativas; BAIXO se SEM_PROVIDENCIA_IMEDIATA.`;
-}
 
 export async function diagnosticarMovimentacao(movimentacao, provedor) {
   const hoje = new Date().toISOString().substring(0, 10);
 
-  const prompt = `Processo: ${movimentacao.numero}
+  const prompt = `Data de hoje: ${hoje}
+Processo: ${movimentacao.numero}
 Tribunal: ${movimentacao.tribunal}
 Produto/Ação: ${movimentacao.produto || 'não informado'}
 Data da movimentação: ${movimentacao.data}
@@ -63,7 +64,7 @@ Histórico recente (últimas movimentações):
 ${movimentacao.historico || 'Não disponível'}`;
 
   const texto = await provedor.gerarTexto({
-    sistema: buildSistema(hoje),
+    sistema: SISTEMA,
     prompt,
     maxTokens: 512,
   });

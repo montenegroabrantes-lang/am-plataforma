@@ -7,8 +7,14 @@
 import axios from 'axios';
 
 const BASE    = 'https://api-publica.datajud.cnj.jus.br';
+// Chave pública do CNJ — disponível em datajud-wiki.cnj.jus.br.
+// Mesmo sendo pública, prefira definir DATAJUD_API_KEY no env para facilitar rotação.
 const API_KEY = process.env.DATAJUD_API_KEY ||
                 'cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==';
+
+if (!process.env.DATAJUD_API_KEY) {
+  console.warn('[DataJud] DATAJUD_API_KEY não definida — usando chave pública padrão do CNJ.');
+}
 
 // Mapeamento tribunal → índice DataJud
 const INDICE = {
