@@ -147,31 +147,13 @@ export async function consultarComSessao(browser, numero) {
       } catch (typeErr) {
         console.warn(`[ConsultaPublica] ${numero} — page.type() falhou: ${typeErr.message}`);
       }
-      await new Promise(r => setTimeout(r, 600));
+      await new Promise(r => setTimeout(r, 800));
 
-      // 7. Clica no botão Consultar via handle Puppeteer (não via evaluate — também fora do Zone.js)
-      let clicado = false;
-      for (const sel of ['button[type="submit"]', 'button:not([type="button"])']) {
-        try {
-          const btns = await page.$$(sel);
-          for (const btn of btns) {
-            const txt = await btn.evaluate(el => (el.textContent || el.value || '').trim());
-            if (/consultar/i.test(txt) || sel.includes('submit')) {
-              await btn.click();
-              console.log(`[ConsultaPublica] ${numero} — botão "${txt || sel}" clicado`);
-              clicado = true;
-              break;
-            }
-          }
-          if (clicado) break;
-        } catch { /* tenta próximo seletor */ }
-      }
-
-      if (!clicado) {
-        await page.focus(INP_SEL).catch(() => {});
-        await page.keyboard.press('Enter');
-        console.log(`[ConsultaPublica] ${numero} — fallback Enter`);
-      }
+      // 7. Enter no input focado — aciona o formulário correto sem risco de clicar
+      //    em outro botão da página (busca geral do site, nav, etc.)
+      //    page.type() já ativou o Zone.js do Angular, então o Enter é processado.
+      await page.keyboard.press('Enter');
+      console.log(`[ConsultaPublica] ${numero} — Enter após page.type()`);
 
       // 8. Aguarda AJAX
       await page.waitForNetworkIdle({ idleTime: 1_000, timeout: 20_000 }).catch(() => {});
@@ -184,10 +166,32 @@ export async function consultarComSessao(browser, numero) {
       ).catch(() => false);
 
       if (!temResultadoAposAjax) {
-        await page.focus(INP_SEL).catch(() => {});
-        await page.keyboard.press('Enter');
+        // Tenta clicar no botão Consultar do formulário (próximo ao input, não o da nav)
+        const clicado = await page.evaluate((sel) => {
+          const inp = document.querySelector(sel);
+          if (!inp) return false;
+          // Sobe na DOM até encontrar o contêiner do formulário e busca o botão dentro dele
+          let el = inp;
+          for (let i = 0; i < 10; i++) {
+            el = el.parentElement;
+            if (!el) break;
+            const btn = el.querySelector('button');
+            if (btn && /consultar/i.test(btn.textContent?.trim() || '')) {
+              btn.click();
+              return true;
+            }
+          }
+          return false;
+        }, INP_SEL).catch(() => false);
+
+        if (!clicado) {
+          // Último recurso: Tab para o botão + Enter
+          await page.focus(INP_SEL).catch(() => {});
+          await page.keyboard.press('Tab');
+          await page.keyboard.press('Enter');
+        }
         await page.waitForNetworkIdle({ idleTime: 1_000, timeout: 15_000 }).catch(() => {});
-        console.log(`[ConsultaPublica] ${numero} — Enter final`);
+        console.log(`[ConsultaPublica] ${numero} — fallback botão próximo / Tab+Enter`);
       }
     } else {
       console.log(`[ConsultaPublica] ${numero} — busca auto disparou via ?npu=`);
