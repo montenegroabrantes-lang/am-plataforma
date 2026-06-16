@@ -364,17 +364,16 @@ export async function sincronizarTodos() {
         continue;
       }
 
-      // ── CAMADA 1: DataJud (lote, sem browser, ~15 min para 865 processos) ──
-      const numeros        = grupoProcessos.map(p => p.numero);
-      const naoEncontrados = [];
-
+      // DataJud — única fonte para PJe (MNI bloqueado no Railway, Puppeteer instável)
+      const numeros = grupoProcessos.map(p => p.numero);
       console.log(`[Sync DataJud] Consultando ${numeros.length} processo(s) — ${tribunal} ${grau}G`);
+
       let datajudMap = new Map();
       try {
         datajudMap = await datajud.consultarLote(tribunal, numeros);
         console.log(`[Sync DataJud] Encontrados: ${datajudMap.size}/${numeros.length}`);
       } catch (djErr) {
-        console.warn(`[Sync DataJud] Falha geral — usando MNI/Puppeteer para todos:`, djErr.message);
+        console.warn(`[Sync DataJud] Falha — ${djErr.message}`);
       }
 
       for (const proc of grupoProcessos) {
@@ -383,65 +382,18 @@ export async function sincronizarTodos() {
             const resultado = datajudMap.get(proc.numero);
             const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [proc.id]);
             const novasMovs = await salvarResultadoSync(proc.id, processo, resultado.dados, resultado.movimentacoes);
-            await db.execute(`UPDATE processos SET sync_fonte = 'datajud' WHERE id = $1`, [proc.id]).catch(err => console.warn(`[Sync DataJud] sync_fonte update falhou ${proc.numero}:`, err.message));
+            await db.execute(`UPDATE processos SET sync_fonte = 'datajud' WHERE id = $1`, [proc.id]).catch(() => {});
             resultados.push({ processoId: proc.id, numero: proc.numero, ok: true, novasMovimentacoes: novasMovs, fonte: 'datajud' });
-            console.log(`[Sync DataJud] OK: ${proc.numero} (${novasMovs} novas movimentações)`);
+            console.log(`[Sync DataJud] OK: ${proc.numero} (${novasMovs} novas)`);
           } catch (err) {
-            console.warn(`[Sync DataJud] Salvar falhou para ${proc.numero}:`, err.message);
-            naoEncontrados.push(proc); // tenta pelo browser
+            console.warn(`[Sync DataJud] Salvar falhou ${proc.numero}:`, err.message);
+            resultados.push({ processoId: proc.id, numero: proc.numero, ok: false, erro: err.message });
           }
         } else {
-          naoEncontrados.push(proc);
+          // Processo não indexado no DataJud — registra como não encontrado (sem retry via browser)
+          resultados.push({ processoId: proc.id, numero: proc.numero, ok: false, erro: 'não encontrado no DataJud' });
+          console.log(`[Sync DataJud] Não encontrado: ${proc.numero}`);
         }
-      }
-
-      // ── CAMADA 2: MNI + Puppeteer para o que o DataJud não cobriu ──
-      if (naoEncontrados.length === 0) continue;
-
-      console.log(`[Sync] ${naoEncontrados.length} processo(s) não cobertos pelo DataJud — MNI/Puppeteer`);
-      let browser = null;
-      try {
-        ({ browser } = await pje.abrirSessao(url, cred.cpf, cred.senha, cred.totp_secret));
-
-        for (const { id, numero } of naoEncontrados) {
-          try {
-            let resultado;
-            try {
-              resultado = await mni.consultarProcesso(url, cred.cpf, cred.senha, numero);
-              resultado._fonte = 'mni';
-              console.log(`[Sync MNI] OK: ${numero}`);
-            } catch (mniErr) {
-              console.warn(`[Sync MNI] Falhou (${mniErr.message}) — Puppeteer para ${numero}`);
-              resultado = await pje.buscarProcessoCompletoComSessao(browser, url, numero);
-              resultado._fonte = 'puppeteer';
-            }
-
-            const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
-            const novasMovs = await salvarResultadoSync(id, processo, resultado.dados, resultado.movimentacoes);
-            const fonteUsada = resultado._fonte || 'puppeteer';
-            await db.execute(`UPDATE processos SET sync_fonte = $1 WHERE id = $2`, [fonteUsada, id]).catch(err => console.warn(`[Sync ${fonteUsada}] sync_fonte update falhou ${numero}:`, err.message));
-            resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs, fonte: fonteUsada });
-            console.log(`[Sync ${fonteUsada}] OK: ${numero} (${novasMovs} novas movimentações)`);
-          } catch (err) {
-            resultados.push({ processoId: id, numero, ok: false, erro: err.message });
-            console.error(`[Sync] Falha ${numero}:`, err.message);
-            await registrarFalhaSyncProcesso(id);
-            if (err.message?.includes('Target closed') || err.message?.includes('Session closed') || err.message?.includes('detached')) {
-              console.warn(`[Sync] Sessão PJe encerrada — interrompendo fallback ${tribunal} ${grau}G`);
-              break;
-            }
-          }
-          await new Promise(r => setTimeout(r, 2_000));
-        }
-      } catch (err) {
-        console.error(`[Sync] Falha ao abrir sessão ${tribunal} ${grau}G:`, err.message);
-        for (const { id, numero } of naoEncontrados) {
-          if (!resultados.find(r => r.processoId === id)) {
-            resultados.push({ processoId: id, numero, ok: false, erro: `Sessão falhou: ${err.message}` });
-          }
-        }
-      } finally {
-        await browser?.close().catch(() => {});
       }
     }
   } finally {

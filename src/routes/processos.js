@@ -573,9 +573,7 @@ processosRouter.post('/completar-polos/reset', apenasMaster, async (req, res) =>
   }
 });
 
-// Completa polo_ativo/passivo em 2 etapas:
-//   1) DataJud (rápido, sem browser, ~1 min para 800 proc.)
-//   2) Consulta pública TJPB via Puppeteer para o que DataJud não cobriu
+// Completa polo_ativo/passivo via DataJud (sem browser, sem Puppeteer)
 processosRouter.post('/completar-polos', apenasMaster, async (req, res) => {
   const force = req.body?.force === true || req.query?.force === 'true';
   const atual = await lerPolosProgress();
@@ -588,41 +586,20 @@ processosRouter.post('/completar-polos', apenasMaster, async (req, res) => {
     iniciado_em: new Date(), finalizado_em: null,
   };
   await salvarPolosProgress(estadoInicial);
-  res.json({ ok: true, mensagem: 'Completar polos iniciado (DataJud → TJPB público).' });
+  res.json({ ok: true, mensagem: 'Completar polos via DataJud iniciado.' });
 
   setImmediate(async () => {
     let snapshot = estadoInicial;
     try {
-      const { preencherPolosDataJud, completarPolosPublico } = await import('../services/tribunal/sync.js');
-
-      // Etapa 1: DataJud — sem browser, cobre ~80-90% dos processos
-      console.log('[Polos] Etapa 1: DataJud');
-      const resDataJud = await preencherPolosDataJud(async (prog) => {
+      const { preencherPolosDataJud } = await import('../services/tribunal/sync.js');
+      const resultado = await preencherPolosDataJud(async (prog) => {
         snapshot = { ...snapshot, ...prog, etapa: 'datajud' };
         await salvarPolosProgress(snapshot);
       });
-      snapshot = { ...snapshot, ...resDataJud, etapa: 'puppeteer', ok: resDataJud.ok };
-      await salvarPolosProgress(snapshot);
-      console.log(`[Polos] Etapa 1 concluída: ${resDataJud.ok} via DataJud, ${resDataJud.sem_dados} pendentes`);
-
-      // Etapa 2: Consulta pública TJPB — apenas para quem DataJud não cobriu
-      if (resDataJud.sem_dados > 0) {
-        console.log('[Polos] Etapa 2: Consulta pública TJPB');
-        await completarPolosPublico(async (prog) => {
-          snapshot = {
-            ...snapshot,
-            total:    prog.total,
-            ok:       resDataJud.ok + (prog.ok  || 0),
-            erros:    prog.erros || 0,
-            etapa:    'puppeteer',
-          };
-          await salvarPolosProgress(snapshot);
-        });
-      } else {
-        console.log('[Polos] Etapa 2 pulada — DataJud cobriu tudo');
-      }
+      snapshot = { ...snapshot, ...resultado };
+      console.log(`[Polos] DataJud: ${resultado.ok} OK, ${resultado.sem_dados} sem dados`);
     } catch (e) {
-      console.error('[Polos] Erro geral:', e.message);
+      console.error('[Polos] Erro:', e.message);
     } finally {
       await salvarPolosProgress({ ...snapshot, rodando: false, etapa: 'concluido', finalizado_em: new Date() });
     }

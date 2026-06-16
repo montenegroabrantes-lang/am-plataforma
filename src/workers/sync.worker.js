@@ -1,6 +1,6 @@
 import { Worker } from 'bullmq';
 import { redis }  from '../cache/redis.js';
-import { sincronizarProcesso, sincronizarTodos, sincronizarUrgentes } from '../services/tribunal/sync.js';
+import { sincronizarProcesso, sincronizarTodos } from '../services/tribunal/sync.js';
 
 // Worker do sync em lote — concorrência 1, pode demorar horas
 export function criarSyncWorker() {
@@ -17,26 +17,6 @@ export function criarSyncWorker() {
   });
   worker.on('failed', (job, err) => {
     console.error(`[Sync] Job ${job?.name} falhou:`, err.message);
-  });
-
-  return worker;
-}
-
-// Worker de urgentes — Puppeteer para painel + CRÍTICO/ALTO, a cada hora no :30
-export function criarUrgentesWorker() {
-  const worker = new Worker(
-    'sync-urgentes',
-    async (job) => {
-      if (job.name === 'sincronizar-urgentes') return sincronizarUrgentes();
-    },
-    { connection: redis, concurrency: 1 }
-  );
-
-  worker.on('completed', (job, result) => {
-    console.log(`[SyncUrgentes] Job concluído:`, JSON.stringify(result).slice(0, 200));
-  });
-  worker.on('failed', (job, err) => {
-    console.error(`[SyncUrgentes] Job falhou:`, err.message);
   });
 
   return worker;
