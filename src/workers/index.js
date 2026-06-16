@@ -7,7 +7,6 @@ import { criarSACWorker, agendarSACWorker } from './sac.worker.js';
 import { criarAlertasWorker }   from './alertas.worker.js';
 
 let syncQueue;
-let urgentesQueue;
 let individualSyncQueue;
 let backupQueue;
 let alertasQueue;
