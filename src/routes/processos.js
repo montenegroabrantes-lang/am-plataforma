@@ -205,7 +205,7 @@ processosRouter.get('/sync-status', apenasMaster, async (req, res) => {
     const { redis } = await import('../cache/redis.js');
     const lockAtivo = await redis.exists('sync:global:lock').catch(() => 0);
     const ultima = await db.queryOne(
-      `SELECT iniciado_em, concluido_em, total, via_datajud, via_mni, via_puppeteer, via_eproc, falhas
+      `SELECT iniciado_em, concluido_em, total, via_datajud, falhas, novas_movimentacoes
        FROM sync_execucoes ORDER BY iniciado_em DESC LIMIT 1`
     ).catch(() => null);
     const emAndamento = lockAtivo && ultima && !ultima.concluido_em;

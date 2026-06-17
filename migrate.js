@@ -188,7 +188,10 @@ try {
     ON historico_situacao(processo_id, criado_em DESC)
   `).catch(() => {});
 
-  // 17. jusbrasil_monitorado — controla quais processos foram registrados na API JusBrasil
+  // 17. novas_movimentacoes em sync_execucoes — total de movimentações salvas por execução
+  await db.execute(`ALTER TABLE sync_execucoes ADD COLUMN IF NOT EXISTS novas_movimentacoes INTEGER NOT NULL DEFAULT 0`).catch(() => {});
+
+  // 18. jusbrasil_monitorado — controla quais processos foram registrados na API JusBrasil
   await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS jusbrasil_monitorado BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_processos_jusbrasil ON processos(jusbrasil_monitorado) WHERE jusbrasil_monitorado = false`).catch(() => {});
 

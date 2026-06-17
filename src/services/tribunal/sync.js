@@ -258,14 +258,19 @@ export async function sincronizarTodos() {
     await redis.del(LOCK_KEY).catch(() => {});
   }
 
-  const ok   = resultados.filter(r => r.ok).length;
-  const fail = resultados.filter(r => !r.ok).length;
-  console.log(`[Sync] Concluído: ${ok} OK, ${fail} não encontrados/falhas de ${processos.length}.`);
+  const ok         = resultados.filter(r => r.ok).length;
+  const fail       = resultados.filter(r => !r.ok).length;
+  const novasMovs  = resultados.reduce((acc, r) => acc + (r.novasMovimentacoes || 0), 0);
+  const agora      = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+  console.log(`[Sync] ✅ Concluído em ${agora}`);
+  console.log(`[Sync]    Processos: ${ok} atualizados, ${fail} não encontrados de ${processos.length} total`);
+  console.log(`[Sync]    Movimentações novas: ${novasMovs}`);
 
   if (execucaoId) {
     await db.execute(
-      `UPDATE sync_execucoes SET concluido_em = NOW(), via_datajud = $1, falhas = $2 WHERE id = $3`,
-      [ok, fail, execucaoId]
+      `UPDATE sync_execucoes SET concluido_em = NOW(), via_datajud = $1, falhas = $2, novas_movimentacoes = $3 WHERE id = $4`,
+      [ok, fail, novasMovs, execucaoId]
     ).catch(() => {});
   }
 
