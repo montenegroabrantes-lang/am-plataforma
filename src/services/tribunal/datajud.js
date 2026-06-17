@@ -178,11 +178,13 @@ function parsear(src) {
     const data = m.dataHora ? m.dataHora.substring(0, 10) : null;
 
     let texto = m.nome || '';
+    // complementosTabelados.nome = texto legível (ex: "competência exclusiva")
+    // complementosTabelados.descricao = tipo do campo (ex: "tipo_de_distribuicao_redistribuicao")
     const comps = [
       ...(m.complementosTabelados      || []),
       ...(m.complementosExtrasTabelados || []),
-    ].map(c => c.descricao ? `${c.descricao}: ${c.valor || ''}` : (c.valor || '')).filter(Boolean);
-    if (comps.length) texto += ' — ' + comps.join(' | ');
+    ].map(c => c.nome || c.descricao || '').filter(Boolean);
+    if (comps.length) texto += ' — ' + comps.join(', ');
 
     return { data, tipo: m.codigo ? String(m.codigo) : null, texto: texto.trim() };
   }).filter(m => m.texto && m.texto.length >= 5);
