@@ -1,11 +1,24 @@
 /**
- * Sync — DataJud (CNJ) como única fonte de dados.
- * Cobre movimentações, vara, classe e data de ajuizamento.
- * Polos não disponíveis para TJPB via DataJud — cadastro manual no cliente.
+ * Sync — DataJud (CNJ) como fonte de movimentações.
+ * importarDosPaineis usa Puppeteer PJe/eProc para descobrir processos novos por OAB.
  */
 import { db }       from '../../db/index.js';
 import { redis }    from '../../cache/redis.js';
 import * as datajud from './datajud.js';
+import * as pje     from './pje.js';
+import * as eproc   from './eproc.js';
+import { lerCredencialGrau, descriptografarCredencial } from '../../routes/credenciais.js';
+
+const URL_TRIBUNAL = {
+  TJPB: { '1': process.env.PJE_TJPB_1G_URL || 'https://pje.tjpb.jus.br/pje/login.seam',   '2': process.env.PJE_TJPB_2G_URL || 'https://pje.tjpb.jus.br/pje2g/login.seam' },
+  TJRN: { '1': process.env.PJE_TJRN_1G_URL || 'https://pje1g.tjrn.jus.br/pje/login.seam', '2': process.env.PJE_TJRN_2G_URL || 'https://pje2g.tjrn.jus.br/pje/login.seam' },
+  TJPE: { '1': process.env.PJE_TJPE_1G_URL || 'https://pje.cloud.tjpe.jus.br/1g/login.seam','2': process.env.PJE_TJPE_2G_URL || 'https://pje.cloud.tjpe.jus.br/2g/login.seam' },
+  TRF1: { '1': process.env.PJE_TRF1_1G_URL || 'https://pje1g.trf1.jus.br/pje/login.seam',  '2': process.env.PJE_TRF1_2G_URL || 'https://pje2g.trf1.jus.br/pje/login.seam' },
+  TRF5: { '1': process.env.EPROC_TRF5_URL  || 'https://eproc.trf5.jus.br/eproc/',          '2': process.env.EPROC_TRF5_URL  || 'https://eproc.trf5.jus.br/eproc/' },
+  TRF3: { '1': process.env.EPROC_TRF3_URL  || 'https://eproc.trf3.jus.br/eproc/',          '2': process.env.EPROC_TRF3_URL  || 'https://eproc.trf3.jus.br/eproc/' },
+  TRF4: { '1': process.env.EPROC_TRF4_URL  || 'https://eproc.trf4.jus.br/eproc/',          '2': process.env.EPROC_TRF4_URL  || 'https://eproc.trf4.jus.br/eproc/' },
+  TRF6: { '1': process.env.EPROC_TRF6_URL  || 'https://eproc.trf6.jus.br/eproc/',          '2': process.env.EPROC_TRF6_URL  || 'https://eproc.trf6.jus.br/eproc/' },
+};
 
 // ─────────────────────────────────────────────
 //  PRIORIDADE DETERMINÍSTICA
@@ -343,6 +356,57 @@ export async function preencherPolosDataJud(onProgress) {
 
   console.log(`[PolosDataJud] Concluído: ${ok} OK, ${sem_dados} sem dados de ${processos.length}`);
   return { total: processos.length, ok, sem_dados };
+}
+
+// ─────────────────────────────────────────────
+//  IMPORTAR PROCESSOS DO PAINEL PJe/eProc
+//  Faz login com a credencial do advogado e busca todos os
+//  CNJs associados ao número OAB — sem abrir cada processo.
+//  Roda manualmente quando precisar importar processos novos.
+// ─────────────────────────────────────────────
+export async function importarDosPaineis(masterUserId) {
+  const credenciais = await db.query(
+    `SELECT * FROM credenciais_tribunal WHERE usuario_id = $1 AND ativo = true`,
+    [masterUserId]
+  );
+
+  const importados = [];
+
+  for (const credRaw of credenciais) {
+    const cred = descriptografarCredencial(credRaw);
+    const grau = cred.grau || '1';
+    const url  = URL_TRIBUNAL[cred.tribunal]?.[grau];
+    if (!url) continue;
+
+    console.log(`[Painel] Acessando ${cred.tribunal} ${grau}G: ${url}`);
+
+    try {
+      let numeros = [];
+      if (cred.sistema === 'pje') {
+        numeros = await pje.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret, cred.oab);
+      } else {
+        numeros = await eproc.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret);
+      }
+
+      for (const numero of numeros) {
+        const existe = await db.queryOne(`SELECT id FROM processos WHERE numero = $1`, [numero]);
+        if (existe) continue;
+        await db.execute(
+          `INSERT INTO processos (numero, tribunal, sistema, grau, status, master_responsavel_id, importado_pje)
+           VALUES ($1, $2, $3, $4, 'ativo', $5, false)
+           ON CONFLICT (numero) DO NOTHING`,
+          [numero, cred.tribunal, cred.sistema, grau, masterUserId]
+        );
+        importados.push({ numero, tribunal: cred.tribunal, grau });
+      }
+      console.log(`[Painel] ${cred.tribunal} ${grau}G: ${numeros.length} processos encontrados, ${importados.length} novos`);
+    } catch (err) {
+      console.error(`[Painel] ${cred.tribunal} ${grau}G falhou:`, err.message);
+    }
+  }
+
+  console.log(`[Painel] ${importados.length} processos novos importados.`);
+  return importados;
 }
 
 // ─────────────────────────────────────────────
