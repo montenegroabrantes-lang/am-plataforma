@@ -200,94 +200,108 @@ export async function sincronizarProcesso(processoId) {
 }
 
 // ─────────────────────────────────────────────
-//  SINCRONIZAR TODOS — DataJud em lote
-//  Roda a cada hora via BullMQ.
+//  SINCRONIZAR TODOS — DataJud inteligente por data
+//  Em vez de consultar 864 processos um a um, faz UMA query
+//  por tribunal pedindo só os atualizados desde o último sync.
+//  Roda a cada hora via BullMQ em segundos (não minutos).
 // ─────────────────────────────────────────────
 export async function sincronizarTodos() {
   const LOCK_KEY = 'sync:global:lock';
-  const acquired = await redis.set(LOCK_KEY, '1', 'NX', 'EX', 3 * 60 * 60);
+  const acquired = await redis.set(LOCK_KEY, '1', 'NX', 'EX', 30 * 60); // 30 min — bem mais rápido agora
   if (!acquired) {
     console.log('[Sync] Ignorado: execução anterior ainda em andamento (lock ativo).');
     return { ignorado: true, motivo: 'lock ativo' };
   }
 
-  const processos = await db.query(
-    `SELECT id, numero, tribunal
-     FROM processos
-     WHERE status IN ('ativo', 'suspenso')
-     ORDER BY tribunal, atualizado_em ASC NULLS FIRST`
-  );
-
-  console.log(`[Sync] Iniciando sync DataJud de ${processos.length} processos...`);
-
-  const execucao = await db.queryOne(
-    `INSERT INTO sync_execucoes (total) VALUES ($1) RETURNING id`,
-    [processos.length]
-  ).catch(() => null);
-  const execucaoId = execucao?.id || null;
-
-  // Agrupa por tribunal para aproveitar o consultarLote
-  const porTribunal = new Map();
-  for (const p of processos) {
-    if (!porTribunal.has(p.tribunal)) porTribunal.set(p.tribunal, []);
-    porTribunal.get(p.tribunal).push(p);
-  }
-
-  const resultados = [];
-
   try {
-    for (const [tribunal, grupo] of porTribunal) {
-      const numeros = grupo.map(p => p.numero);
-      console.log(`[Sync DataJud] ${tribunal}: consultando ${numeros.length} processo(s)`);
+    // Determina ponto de partida: último sync concluído - 2h de buffer (para não perder nada)
+    const ultimaExecucao = await db.queryOne(
+      `SELECT concluido_em FROM sync_execucoes WHERE concluido_em IS NOT NULL ORDER BY concluido_em DESC LIMIT 1`
+    ).catch(() => null);
 
-      let datajudMap = new Map();
+    const desde = ultimaExecucao?.concluido_em
+      ? new Date(new Date(ultimaExecucao.concluido_em).getTime() - 2 * 60 * 60 * 1000).toISOString()
+      : new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(); // primeira vez: últimas 48h
+
+    console.log(`[Sync] Iniciando sync DataJud — atualizações desde ${desde.slice(0, 16).replace('T', ' ')}`);
+
+    // Busca todos os nossos processos ativos e monta lookup por número puro (20 dígitos)
+    const processos = await db.query(
+      `SELECT id, numero, tribunal FROM processos WHERE status IN ('ativo', 'suspenso')`
+    );
+
+    const nossosPorPuro = new Map();
+    for (const p of processos) {
+      nossosPorPuro.set(p.numero.replace(/\D/g, ''), p);
+    }
+
+    // Agrupa por tribunal para fazer uma query por tribunal
+    const tribunais = [...new Set(processos.map(p => p.tribunal))];
+
+    const execucao = await db.queryOne(
+      `INSERT INTO sync_execucoes (total) VALUES ($1) RETURNING id`,
+      [processos.length]
+    ).catch(() => null);
+    const execucaoId = execucao?.id || null;
+
+    const resultados = [];
+
+    for (const tribunal of tribunais) {
+      console.log(`[Sync DataJud] ${tribunal}: buscando atualizados desde ${desde.slice(0, 10)}...`);
+
+      let atualizadosMap = new Map();
       try {
-        datajudMap = await datajud.consultarLote(tribunal, numeros);
-        console.log(`[Sync DataJud] ${tribunal}: ${datajudMap.size}/${numeros.length} encontrados`);
+        atualizadosMap = await datajud.consultarAtualizados(tribunal, desde);
+        console.log(`[Sync DataJud] ${tribunal}: ${atualizadosMap.size} processos com novidades no DataJud`);
       } catch (err) {
         console.warn(`[Sync DataJud] ${tribunal}: falha —`, err.message);
+        continue;
       }
 
-      for (const proc of grupo) {
-        if (datajudMap.has(proc.numero)) {
-          try {
-            const resultado = datajudMap.get(proc.numero);
-            const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [proc.id]);
-            const novasMovs = await salvarResultadoSync(proc.id, processo, resultado.dados, resultado.movimentacoes);
-            await db.execute(`UPDATE processos SET sync_fonte = 'datajud' WHERE id = $1`, [proc.id]).catch(() => {});
-            resultados.push({ processoId: proc.id, numero: proc.numero, ok: true, novasMovimentacoes: novasMovs });
-            if (novasMovs > 0) console.log(`[Sync DataJud] OK: ${proc.numero} (${novasMovs} novas)`);
-          } catch (err) {
-            console.warn(`[Sync DataJud] Salvar falhou ${proc.numero}:`, err.message);
-            resultados.push({ processoId: proc.id, numero: proc.numero, ok: false, erro: err.message });
-            await registrarFalhaSyncProcesso(proc.id);
-          }
-        } else {
-          resultados.push({ processoId: proc.id, numero: proc.numero, ok: false, erro: 'não encontrado no DataJud' });
+      // Cruza com nossos processos
+      let nossosTribunal = 0;
+      for (const [numeroPuro, resultado] of atualizadosMap) {
+        const proc = nossosPorPuro.get(numeroPuro);
+        if (!proc) continue; // Processo do DataJud que não é nosso — ignora
+
+        nossosTribunal++;
+        try {
+          const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [proc.id]);
+          const novasMovs = await salvarResultadoSync(proc.id, processo, resultado.dados, resultado.movimentacoes);
+          await db.execute(`UPDATE processos SET sync_fonte = 'datajud' WHERE id = $1`, [proc.id]).catch(() => {});
+          resultados.push({ processoId: proc.id, numero: proc.numero, ok: true, novasMovimentacoes: novasMovs });
+          if (novasMovs > 0) console.log(`[Sync DataJud] ✦ ${proc.numero}: ${novasMovs} nova(s) movimentação(ões)`);
+        } catch (err) {
+          console.warn(`[Sync DataJud] Salvar falhou ${proc.numero}:`, err.message);
+          resultados.push({ processoId: proc.id, numero: proc.numero, ok: false, erro: err.message });
+          await registrarFalhaSyncProcesso(proc.id);
         }
       }
+
+      console.log(`[Sync DataJud] ${tribunal}: ${nossosTribunal} dos nossos processos tinham novidades`);
     }
+
+    const ok        = resultados.filter(r => r.ok).length;
+    const fail      = resultados.filter(r => !r.ok).length;
+    const novasMovs = resultados.reduce((acc, r) => acc + (r.novasMovimentacoes || 0), 0);
+    const agora     = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+    console.log(`[Sync] ✅ Concluído em ${agora}`);
+    console.log(`[Sync]    ${ok} processos com novidades, ${fail} falhas`);
+    console.log(`[Sync]    Movimentações novas: ${novasMovs}`);
+
+    if (execucaoId) {
+      await db.execute(
+        `UPDATE sync_execucoes SET concluido_em = NOW(), via_datajud = $1, falhas = $2, novas_movimentacoes = $3 WHERE id = $4`,
+        [ok, fail, novasMovs, execucaoId]
+      ).catch(() => {});
+    }
+
+    return resultados;
+
   } finally {
     await redis.del(LOCK_KEY).catch(() => {});
   }
-
-  const ok         = resultados.filter(r => r.ok).length;
-  const fail       = resultados.filter(r => !r.ok).length;
-  const novasMovs  = resultados.reduce((acc, r) => acc + (r.novasMovimentacoes || 0), 0);
-  const agora      = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-
-  console.log(`[Sync] ✅ Concluído em ${agora}`);
-  console.log(`[Sync]    Processos: ${ok} atualizados, ${fail} não encontrados de ${processos.length} total`);
-  console.log(`[Sync]    Movimentações novas: ${novasMovs}`);
-
-  if (execucaoId) {
-    await db.execute(
-      `UPDATE sync_execucoes SET concluido_em = NOW(), via_datajud = $1, falhas = $2, novas_movimentacoes = $3 WHERE id = $4`,
-      [ok, fail, novasMovs, execucaoId]
-    ).catch(() => {});
-  }
-
-  return resultados;
 }
 
 // ─────────────────────────────────────────────

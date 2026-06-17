@@ -91,6 +91,49 @@ export async function consultarLote(tribunal, numeros) {
 }
 
 // ─────────────────────────────────────────────
+//  CONSULTAR PROCESSOS ATUALIZADOS DESDE UMA DATA
+//  Uma única query retorna TODOS os processos do tribunal
+//  que o DataJud atualizou desde `desde` (ISO string).
+//  Usa search_after para paginar sem limite.
+//  Retorna Map<numeroPuro, {dados, movimentacoes}>
+// ─────────────────────────────────────────────
+export async function consultarAtualizados(tribunal, desde) {
+  const indice = INDICE[tribunal];
+  if (!indice) throw new Error(`DataJud: tribunal ${tribunal} não mapeado`);
+
+  const resultado  = new Map();
+  let searchAfter  = null;
+  let pagina       = 0;
+
+  do {
+    const body = {
+      size: 1000,
+      query: { range: { dataHoraUltimaAtualizacao: { gte: desde } } },
+      sort: [{ '@timestamp': { order: 'asc' } }],
+      ...(searchAfter ? { search_after: searchAfter } : {}),
+    };
+
+    const resp = await http().post(`/${indice}/_search`, body);
+    const hits = resp.data?.hits?.hits || [];
+    pagina++;
+
+    for (const hit of hits) {
+      const src = hit._source;
+      if (src?.numeroProcesso) {
+        resultado.set(src.numeroProcesso, parsear(src));
+      }
+    }
+
+    console.log(`[DataJud] ${tribunal} atualizados pág.${pagina}: ${hits.length} processos`);
+    searchAfter = hits.length > 0 ? hits[hits.length - 1].sort : null;
+
+    if (hits.length < 1000) break;
+  } while (searchAfter);
+
+  return resultado; // Map<numeroPuro(20 dígitos), {dados, movimentacoes}>
+}
+
+// ─────────────────────────────────────────────
 //  PARSER — _source DataJud → {dados, movimentacoes}
 // ─────────────────────────────────────────────
 function parsear(src) {
