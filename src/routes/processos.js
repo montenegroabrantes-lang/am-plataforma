@@ -327,28 +327,9 @@ processosRouter.patch('/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /api/processos/importar-painel — importa todos os processos do painel PJe/eProc
-processosRouter.post('/importar-painel', apenasMaster, async (req, res) => {
-  const { importarDosPaineis } = await import('../services/tribunal/sync.js');
-  try {
-    const importados = await importarDosPaineis(req.user.id);
-
-    // Dispara sync imediato para buscar detalhes dos processos recém-importados
-    if (importados.length > 0) {
-      try {
-        const { syncQueue } = await import('../workers/index.js');
-        if (syncQueue) {
-          await syncQueue.add('sincronizar-todos', {}, { delay: 3_000, removeOnComplete: 5 });
-          console.log(`[Importar Painel] Sync imediato enfileirado para ${importados.length} processo(s) novos`);
-        }
-      } catch { /* Redis pode não estar disponível — sync automático assume */ }
-    }
-
-    res.json({ ok: true, importados: importados.length, processos: importados });
-  } catch (err) {
-    console.error('[Importar Painel]', err.message);
-    res.status(500).json({ ok: false, erro: err.message });
-  }
+// POST /api/processos/importar-painel — desativado (era via Puppeteer PJe, removido)
+processosRouter.post('/importar-painel', apenasMaster, async (_req, res) => {
+  res.json({ ok: false, mensagem: 'Importação via painel desativada. Cadastre os processos manualmente.' });
 });
 
 // POST /api/processos/sync-todos — dispara sync de todos os processos ativos imediatamente

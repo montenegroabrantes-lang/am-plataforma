@@ -1,85 +1,41 @@
-import { db }              from '../../db/index.js';
-import { redis }           from '../../cache/redis.js';
-import { lerCredencialGrau, descriptografarCredencial } from '../../routes/credenciais.js';
-import * as pje           from './pje.js';
-import * as eproc         from './eproc.js';
-import * as mni           from './mni.js';
-import * as datajud       from './datajud.js';
-
-const URL_TRIBUNAL = {
-  TJPB: {
-    '1': process.env.PJE_TJPB_1G_URL || 'https://pje.tjpb.jus.br/pje/login.seam',
-    '2': process.env.PJE_TJPB_2G_URL || 'https://pje.tjpb.jus.br/pje2g/login.seam',
-  },
-  TJRN: {
-    '1': process.env.PJE_TJRN_1G_URL || 'https://pje1g.tjrn.jus.br/pje/login.seam',
-    '2': process.env.PJE_TJRN_2G_URL || 'https://pje2g.tjrn.jus.br/pje/login.seam',
-  },
-  TJPE: {
-    '1': process.env.PJE_TJPE_1G_URL || 'https://pje.cloud.tjpe.jus.br/1g/login.seam',
-    '2': process.env.PJE_TJPE_2G_URL || 'https://pje.cloud.tjpe.jus.br/2g/login.seam',
-  },
-  TRF1: {
-    '1': process.env.PJE_TRF1_1G_URL || 'https://pje1g.trf1.jus.br/pje/login.seam',
-    '2': process.env.PJE_TRF1_2G_URL || 'https://pje2g.trf1.jus.br/pje/login.seam',
-  },
-  TRF5: {
-    '1': process.env.EPROC_TRF5_URL || 'https://eproc.trf5.jus.br/eproc/',
-    '2': process.env.EPROC_TRF5_URL || 'https://eproc.trf5.jus.br/eproc/',
-  },
-  TRF3: {
-    '1': process.env.EPROC_TRF3_URL || 'https://eproc.trf3.jus.br/eproc/',
-    '2': process.env.EPROC_TRF3_URL || 'https://eproc.trf3.jus.br/eproc/',
-  },
-  TRF4: {
-    '1': process.env.EPROC_TRF4_URL || 'https://eproc.trf4.jus.br/eproc/',
-    '2': process.env.EPROC_TRF4_URL || 'https://eproc.trf4.jus.br/eproc/',
-  },
-  TRF6: {
-    '1': process.env.EPROC_TRF6_URL || 'https://eproc.trf6.jus.br/eproc/',
-    '2': process.env.EPROC_TRF6_URL || 'https://eproc.trf6.jus.br/eproc/',
-  },
-};
+/**
+ * Sync — DataJud (CNJ) como única fonte de dados.
+ * Cobre movimentações, vara, classe e data de ajuizamento.
+ * Polos não disponíveis para TJPB via DataJud — cadastro manual no cliente.
+ */
+import { db }       from '../../db/index.js';
+import { redis }    from '../../cache/redis.js';
+import * as datajud from './datajud.js';
 
 // ─────────────────────────────────────────────
 //  PRIORIDADE DETERMINÍSTICA
-//  Regras objetivas sobrescrevem a sugestão da IA.
-//  Evita conflitos entre prioridade da UI e do diagnóstico.
 // ─────────────────────────────────────────────
 function calcularPrioridade(diag) {
-  const prazoFinal   = diag.pendencia?.prazoFinal;
-  const statusPrazo  = diag.pendencia?.statusPrazo;
-  const tipo         = diag.pendencia?.tipo;
+  const prazoFinal  = diag.pendencia?.prazoFinal;
+  const statusPrazo = diag.pendencia?.statusPrazo;
+  const tipo        = diag.pendencia?.tipo;
 
-  // Prazo já vencido → sempre CRITICO
   if (statusPrazo === 'VENCIDO') return 'CRITICO';
 
   if (prazoFinal) {
-    const agora   = Date.now();
-    const prazo   = new Date(prazoFinal).getTime();
-    const diffH   = (prazo - agora) / 3_600_000;
-    if (diffH < 0)   return 'CRITICO'; // passou
-    if (diffH <= 48) return 'CRITICO'; // menos de 48h
-    if (diffH <= 120) return 'ALTO';   // menos de 5 dias
+    const diffH = (new Date(prazoFinal).getTime() - Date.now()) / 3_600_000;
+    if (diffH < 0)    return 'CRITICO';
+    if (diffH <= 48)  return 'CRITICO';
+    if (diffH <= 120) return 'ALTO';
   }
 
-  // Expediente aberto ou determinação judicial = mínimo ALTO
-  const URGENTES = new Set(['PETICIONAR', 'CONFERIR_EXPEDIENTE', 'CUMPRIR_DETERMINACAO', 'PROVIDENCIAR_CITACAO']);
-  if (URGENTES.has(tipo)) {
-    return diag.prioridade === 'CRITICO' ? 'CRITICO' : 'ALTO';
-  }
+  const URGENTES = new Set(['PETICIONAR','CONFERIR_EXPEDIENTE','CUMPRIR_DETERMINACAO','PROVIDENCIAR_CITACAO']);
+  if (URGENTES.has(tipo)) return diag.prioridade === 'CRITICO' ? 'CRITICO' : 'ALTO';
 
-  // Fallback: usa o que a IA classificou (já validado no parser)
   return diag.prioridade || 'MEDIO';
 }
 
 // ─────────────────────────────────────────────
 //  SALVAR RESULTADO NO BANCO
-//  Reutilizado por sincronizarProcesso e sincronizarTodos
 // ─────────────────────────────────────────────
 async function salvarResultadoSync(processoId, processo, dados, movimentacoesBrutas) {
-  console.log(`[Sync] dados extraídos p/${processo.numero}:`, JSON.stringify({ vara: dados.vara, polo_ativo: dados.polo_ativo, polo_passivo: dados.polo_passivo, acao: dados.acao, movs: movimentacoesBrutas.length }));
-  // Marca sync bem-sucedido — reseta contador de falhas consecutivas
+  console.log(`[Sync] dados p/${processo.numero}: vara=${dados.vara} movs=${movimentacoesBrutas.length}`);
+
   await db.execute(
     `UPDATE processos SET sync_status = 'ok', sync_falhas = 0, atualizado_em = NOW() WHERE id = $1`,
     [processoId]
@@ -99,7 +55,8 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
            importado_pje     = true,
            atualizado_em     = NOW()
        WHERE id = $8`,
-      [dados.vara, dados.juiz, dados.polo_ativo, dados.polo_passivo, dados.acao, dados.habilitados, dataDistribuicao, processoId]
+      [dados.vara, dados.juiz, dados.polo_ativo, dados.polo_passivo,
+       dados.acao, dados.habilitados, dataDistribuicao, processoId]
     );
     await resolverSeparacaoSocios(processo, dados.habilitados || []);
   }
@@ -125,7 +82,6 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
     } catch { /* ignora duplicata */ }
   }
 
-  // Dispara diagnóstico IA para cada movimentação nova (sem bloquear o sync)
   if (idsNovas.length > 0) {
     const { ai } = await import('../ai/index.js');
     for (const movId of idsNovas) {
@@ -148,10 +104,8 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
           historico: historico.map(h => h.texto).join('\n---\n'),
         });
 
-        // Prioridade final: regra determinística prevalece sobre sugestão da IA
         const prioridadeFinal = calcularPrioridade(diag);
 
-        // Campos herdados (retrocompat) + campos estruturados novos
         await db.execute(
           `UPDATE movimentacoes SET
              diagnostico_significado   = $1,
@@ -179,7 +133,6 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
         );
         console.log(`[IA] ${mov.numero} — ${diag.pendencia?.tipo} — ${prioridadeFinal}`);
 
-        // WhatsApp imediato para movimentações CRÍTICAS
         if (prioridadeFinal === 'CRITICO') {
           try {
             const { enviarAlerta } = await import('../digisac/index.js');
@@ -190,12 +143,12 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
               const prazoTexto = diag.pendencia?.prazoFinal
                 ? `\nPrazo: ${new Date(diag.pendencia.prazoFinal).toLocaleDateString('pt-BR')} ${diag.pendencia.statusPrazo === 'VENCIDO' ? '— VENCIDO' : ''}`
                 : '';
-              const msg =
+              await enviarAlerta(master.whatsapp,
                 `⚠️ *CRÍTICO — ${mov.numero}*\n\n` +
                 `${diag.ultimaMovimentacao?.descricao || mov.texto.slice(0, 200)}` +
                 prazoTexto +
-                `\n\nPendente: ${diag.pendencia?.resumo || 'Verificar processo'}`;
-              await enviarAlerta(master.whatsapp, msg);
+                `\n\nPendente: ${diag.pendencia?.resumo || 'Verificar processo'}`
+              );
             }
           } catch (alertErr) {
             console.warn('[Alerta] Falha ao enviar WhatsApp CRÍTICO:', alertErr.message);
@@ -212,8 +165,7 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
 
 // ─────────────────────────────────────────────
 //  SINCRONIZAR PROCESSO INDIVIDUAL
-//  Usado pela UI (botão "Sincronizar" por processo)
-//  Abre e fecha o próprio browser — independente do sync em lote
+//  Usado pelo botão "Sincronizar" por processo na UI.
 // ─────────────────────────────────────────────
 export async function sincronizarProcesso(processoId) {
   const processo = await db.queryOne(
@@ -223,359 +175,107 @@ export async function sincronizarProcesso(processoId) {
      WHERE p.id = $1`,
     [processoId]
   );
-
   if (!processo) throw new Error(`Processo ${processoId} não encontrado.`);
 
-  const grau = processo.grau || '1';
-  const cred = await lerCredencialGrau(processo.master_responsavel_id, processo.tribunal, grau);
-  if (!cred) throw new Error(`Credencial não encontrada para ${processo.tribunal} grau ${grau}.`);
+  const r = await datajud.consultarProcesso(processo.tribunal, processo.numero);
+  if (!r) throw new Error(`Processo ${processo.numero} não encontrado no DataJud.`);
 
-  const url = URL_TRIBUNAL[processo.tribunal]?.[grau];
-  if (!url) throw new Error(`URL não configurada para ${processo.tribunal} grau ${grau}.`);
-
-  let dados = {};
-  let movimentacoesBrutas = [];
-
-  if (processo.sistema === 'pje') {
-    try {
-      const resultado = await mni.consultarProcesso(url, cred.cpf, cred.senha, processo.numero);
-      dados               = resultado.dados;
-      movimentacoesBrutas = resultado.movimentacoes;
-      console.log(`[Sync] MNI OK para ${processo.numero}: ${movimentacoesBrutas.length} movimentações`);
-    } catch (mniErr) {
-      console.warn(`[Sync] MNI falhou (${mniErr.message}) — usando Puppeteer para ${processo.numero}`);
-      const resultado = await pje.buscarProcessoCompleto(url, cred.cpf, cred.senha, cred.totp_secret, processo.numero);
-      dados               = resultado.dados;
-      movimentacoesBrutas = resultado.movimentacoes;
-    }
-  } else {
-    const resultado = await eproc.buscarProcessoCompleto(url, cred.cpf, cred.senha, cred.totp_secret, processo.numero, grau);
-    dados               = resultado.dados;
-    movimentacoesBrutas = resultado.movimentacoes;
-  }
-
-  const novasMovs = await salvarResultadoSync(processoId, processo, dados, movimentacoesBrutas);
-  console.log(`[Sync] Processo ${processo.numero}: ${novasMovs} novas movimentações.`);
+  const novasMovs = await salvarResultadoSync(processoId, processo, r.dados, r.movimentacoes);
+  await db.execute(`UPDATE processos SET sync_fonte = 'datajud' WHERE id = $1`, [processoId]).catch(() => {});
+  console.log(`[Sync] ${processo.numero}: ${novasMovs} novas movimentações.`);
   return { processoId, novasMovimentacoes: novasMovs };
 }
 
 // ─────────────────────────────────────────────
-//  SINCRONIZAR TODOS OS PROCESSOS ATIVOS
-//  Opção B: browser compartilhado por grupo (master + tribunal + grau)
-//  Uma sessão PJe por grupo → sem EAGAIN, sem 87 logins
+//  SINCRONIZAR TODOS — DataJud em lote
+//  Roda a cada hora via BullMQ.
 // ─────────────────────────────────────────────
 export async function sincronizarTodos() {
-  // Lock Redis: impede sobreposição se a execução anterior ainda está rodando.
-  // TTL de 6h — tempo máximo razoável para um sync completo de ~900 processos.
   const LOCK_KEY = 'sync:global:lock';
-  const acquired = await redis.set(LOCK_KEY, '1', 'NX', 'EX', 6 * 60 * 60);
+  const acquired = await redis.set(LOCK_KEY, '1', 'NX', 'EX', 3 * 60 * 60);
   if (!acquired) {
     console.log('[Sync] Ignorado: execução anterior ainda em andamento (lock ativo).');
     return { ignorado: true, motivo: 'lock ativo' };
   }
 
   const processos = await db.query(
-    `SELECT id, numero, tribunal, sistema, grau, master_responsavel_id
+    `SELECT id, numero, tribunal
      FROM processos
      WHERE status IN ('ativo', 'suspenso')
-     ORDER BY master_responsavel_id, tribunal, grau, atualizado_em ASC NULLS FIRST`
+     ORDER BY tribunal, atualizado_em ASC NULLS FIRST`
   );
 
-  console.log(`[Sync] Iniciando sync de ${processos.length} processos...`);
+  console.log(`[Sync] Iniciando sync DataJud de ${processos.length} processos...`);
 
-  // Registra início da execução
   const execucao = await db.queryOne(
     `INSERT INTO sync_execucoes (total) VALUES ($1) RETURNING id`,
     [processos.length]
   ).catch(() => null);
   const execucaoId = execucao?.id || null;
 
-  // Agrupa por master + tribunal + grau + sistema para compartilhar a sessão do browser
-  const grupos = new Map();
+  // Agrupa por tribunal para aproveitar o consultarLote
+  const porTribunal = new Map();
   for (const p of processos) {
-    const key = `${p.master_responsavel_id}|${p.tribunal}|${p.grau}|${p.sistema}`;
-    if (!grupos.has(key)) grupos.set(key, []);
-    grupos.get(key).push(p);
+    if (!porTribunal.has(p.tribunal)) porTribunal.set(p.tribunal, []);
+    porTribunal.get(p.tribunal).push(p);
   }
 
   const resultados = [];
 
   try {
-    for (const [, grupoProcessos] of grupos) {
-      const { tribunal, grau, sistema, master_responsavel_id } = grupoProcessos[0];
-
-      const url = URL_TRIBUNAL[tribunal]?.[grau];
-      if (!url) {
-        for (const { id, numero } of grupoProcessos) {
-          resultados.push({ processoId: id, numero, ok: false, erro: `URL não configurada para ${tribunal} grau ${grau}` });
-        }
-        continue;
-      }
-
-      let cred = null;
-      try {
-        cred = await lerCredencialGrau(master_responsavel_id, tribunal, grau);
-      } catch (err) {
-        console.warn(`[Sync] Erro ao buscar credencial ${tribunal} ${grau}G:`, err.message);
-      }
-      if (!cred) {
-        console.warn(`[Sync] Credencial não encontrada — ${tribunal} ${grau}G — pulando ${grupoProcessos.length} processo(s)`);
-        for (const { id, numero } of grupoProcessos) {
-          resultados.push({ processoId: id, numero, ok: false, erro: 'Credencial não encontrada' });
-        }
-        continue;
-      }
-
-      // eProc: sessão compartilhada — um login, todos os processos do grupo
-      if (sistema !== 'pje') {
-        let eprocBrowser = null;
-        console.log(`[Sync] Abrindo sessão eProc — ${tribunal} ${grau}G (${grupoProcessos.length} processo(s))`);
-        try {
-          ({ browser: eprocBrowser } = await eproc.abrirSessao(url, cred.cpf, cred.senha, cred.totp_secret));
-          for (const { id, numero } of grupoProcessos) {
-            try {
-              const resultado = await eproc.buscarProcessoCompletoComSessao(eprocBrowser, url, numero, grau);
-              const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
-              const novasMovs = await salvarResultadoSync(id, processo, resultado.dados, resultado.movimentacoes);
-              await db.execute(`UPDATE processos SET sync_fonte = 'eproc' WHERE id = $1`, [id]).catch(err => console.warn(`[Sync eProc] sync_fonte update falhou ${numero}:`, err.message));
-              resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs, fonte: 'eproc' });
-              console.log(`[Sync eProc] OK: ${numero} (${novasMovs} novas movimentações)`);
-            } catch (err) {
-              resultados.push({ processoId: id, numero, ok: false, erro: err.message });
-              console.error(`[Sync eProc] Falha ${numero}:`, err.message);
-              await registrarFalhaSyncProcesso(id);
-              if (err.message?.includes('Target closed') || err.message?.includes('Session closed')) {
-                console.warn(`[Sync eProc] Sessão encerrada — interrompendo grupo ${tribunal} ${grau}G`);
-                break;
-              }
-            }
-            await new Promise(r => setTimeout(r, 2_000));
-          }
-        } catch (err) {
-          console.error(`[Sync eProc] Falha ao abrir sessão ${tribunal} ${grau}G:`, err.message);
-          for (const { id, numero } of grupoProcessos) {
-            if (!resultados.find(r => r.processoId === id)) {
-              resultados.push({ processoId: id, numero, ok: false, erro: `Sessão eProc falhou: ${err.message}` });
-            }
-          }
-        } finally {
-          await eprocBrowser?.close().catch(() => {});
-        }
-        continue;
-      }
-
-      // DataJud — única fonte para PJe (MNI bloqueado no Railway, Puppeteer instável)
-      const numeros = grupoProcessos.map(p => p.numero);
-      console.log(`[Sync DataJud] Consultando ${numeros.length} processo(s) — ${tribunal} ${grau}G`);
+    for (const [tribunal, grupo] of porTribunal) {
+      const numeros = grupo.map(p => p.numero);
+      console.log(`[Sync DataJud] ${tribunal}: consultando ${numeros.length} processo(s)`);
 
       let datajudMap = new Map();
       try {
         datajudMap = await datajud.consultarLote(tribunal, numeros);
-        console.log(`[Sync DataJud] Encontrados: ${datajudMap.size}/${numeros.length}`);
-      } catch (djErr) {
-        console.warn(`[Sync DataJud] Falha — ${djErr.message}`);
+        console.log(`[Sync DataJud] ${tribunal}: ${datajudMap.size}/${numeros.length} encontrados`);
+      } catch (err) {
+        console.warn(`[Sync DataJud] ${tribunal}: falha —`, err.message);
       }
 
-      for (const proc of grupoProcessos) {
+      for (const proc of grupo) {
         if (datajudMap.has(proc.numero)) {
           try {
             const resultado = datajudMap.get(proc.numero);
             const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [proc.id]);
             const novasMovs = await salvarResultadoSync(proc.id, processo, resultado.dados, resultado.movimentacoes);
             await db.execute(`UPDATE processos SET sync_fonte = 'datajud' WHERE id = $1`, [proc.id]).catch(() => {});
-            resultados.push({ processoId: proc.id, numero: proc.numero, ok: true, novasMovimentacoes: novasMovs, fonte: 'datajud' });
-            console.log(`[Sync DataJud] OK: ${proc.numero} (${novasMovs} novas)`);
+            resultados.push({ processoId: proc.id, numero: proc.numero, ok: true, novasMovimentacoes: novasMovs });
+            if (novasMovs > 0) console.log(`[Sync DataJud] OK: ${proc.numero} (${novasMovs} novas)`);
           } catch (err) {
             console.warn(`[Sync DataJud] Salvar falhou ${proc.numero}:`, err.message);
             resultados.push({ processoId: proc.id, numero: proc.numero, ok: false, erro: err.message });
+            await registrarFalhaSyncProcesso(proc.id);
           }
         } else {
-          // Processo não indexado no DataJud — registra como não encontrado (sem retry via browser)
           resultados.push({ processoId: proc.id, numero: proc.numero, ok: false, erro: 'não encontrado no DataJud' });
-          console.log(`[Sync DataJud] Não encontrado: ${proc.numero}`);
         }
       }
     }
   } finally {
-    await redis.del(LOCK_KEY).catch(err => console.warn('[Sync] Falha ao liberar lock:', err.message));
+    await redis.del(LOCK_KEY).catch(() => {});
   }
 
   const ok   = resultados.filter(r => r.ok).length;
   const fail = resultados.filter(r => !r.ok).length;
-  console.log(`[Sync] Concluído: ${ok} OK, ${fail} falhas.`);
+  console.log(`[Sync] Concluído: ${ok} OK, ${fail} não encontrados/falhas de ${processos.length}.`);
 
-  // Registra conclusão na tabela de histórico
   if (execucaoId) {
     await db.execute(
-      `UPDATE sync_execucoes SET
-         concluido_em  = NOW(),
-         via_datajud   = $1,
-         via_mni       = $2,
-         via_puppeteer = $3,
-         via_eproc     = $4,
-         falhas        = $5
-       WHERE id = $6`,
-      [
-        resultados.filter(r => r.fonte === 'datajud').length,
-        resultados.filter(r => r.fonte === 'mni').length,
-        resultados.filter(r => r.fonte === 'puppeteer').length,
-        resultados.filter(r => r.fonte === 'eproc').length,
-        fail,
-        execucaoId,
-      ]
-    ).catch(err => console.warn('[Sync] sync_execucoes update falhou:', err.message));
+      `UPDATE sync_execucoes SET concluido_em = NOW(), via_datajud = $1, falhas = $2 WHERE id = $3`,
+      [ok, fail, execucaoId]
+    ).catch(() => {});
   }
 
   return resultados;
 }
 
 // ─────────────────────────────────────────────
-//  SINCRONIZAR URGENTES — redundância em tempo real
-//  Roda a cada hora (minuto :30), independente do sync lote.
-//  Para cada credencial ativa:
-//    1. Abre sessão PJe/eProc
-//    2. Coleta processos com expediente no painel (ação pendente)
-//    3. Mescla com processos CRÍTICO/ALTO do banco
-//    4. Sincroniza via Puppeteer (dados em tempo real)
-// ─────────────────────────────────────────────
-export async function sincronizarUrgentes() {
-  const LOCK_KEY = 'sync:urgentes:lock';
-  const acquired = await redis.set(LOCK_KEY, '1', 'NX', 'EX', 90 * 60);
-  if (!acquired) {
-    console.log('[SyncUrgentes] Ignorado: execução anterior ainda em andamento.');
-    return { ignorado: true };
-  }
-
-  try {
-    // Busca todas as credenciais ativas para iterar por grupo
-    const credenciais = await db.query(
-      `SELECT ct.usuario_id AS master_id, ct.tribunal, ct.grau, ct.sistema
-       FROM credenciais_tribunal ct
-       JOIN usuarios u ON u.id = ct.usuario_id
-       WHERE ct.ativo = true AND u.perfil = 'master'
-       ORDER BY ct.tribunal, ct.grau`
-    );
-
-    if (credenciais.length === 0) {
-      console.log('[SyncUrgentes] Nenhuma credencial ativa.');
-      return { total: 0, ok: 0, falhas: 0 };
-    }
-
-    // Processos CRÍTICO/ALTO por master (para mesclar com expedientes do painel)
-    const urgentesDb = await db.query(
-      `SELECT DISTINCT p.id, p.numero, p.tribunal, p.grau, p.sistema, p.master_responsavel_id
-       FROM processos p
-       JOIN movimentacoes m ON m.processo_id = p.id
-       WHERE p.status IN ('ativo','suspenso')
-         AND m.diagnostico_urgencia IN ('CRITICO','ALTO')
-         AND m.pendencia_status_prazo IS DISTINCT FROM 'RESOLVIDO'
-         AND m.data_movimentacao = (
-           SELECT MAX(m2.data_movimentacao) FROM movimentacoes m2 WHERE m2.processo_id = p.id
-         )`
-    );
-
-    // Indexa por numero para lookup rápido
-    const urgentesMap = new Map(urgentesDb.map(p => [p.numero, p]));
-
-    const resultados = [];
-
-    for (const credInfo of credenciais) {
-      const { master_id, tribunal, grau, sistema } = credInfo;
-      const url = URL_TRIBUNAL[tribunal]?.[grau];
-      if (!url) continue;
-
-      const cred = await lerCredencialGrau(master_id, tribunal, grau).catch(() => null);
-      if (!cred) {
-        console.warn(`[SyncUrgentes] Credencial não encontrada — ${tribunal} ${grau}G master ${master_id}`);
-        continue;
-      }
-
-      let browser = null;
-      try {
-        if (sistema !== 'pje') {
-          ({ browser } = await eproc.abrirSessao(url, cred.cpf, cred.senha, cred.totp_secret));
-        } else {
-          ({ browser } = await pje.abrirSessao(url, cred.cpf, cred.senha, cred.totp_secret));
-        }
-
-        const page = (await browser.pages()).pop();
-
-        // Coleta expedientes do painel PJe (processos com ação pendente — tempo real)
-        const numerosExpedientes = sistema === 'pje'
-          ? await pje.coletarExpedientesDoPainel(page, url)
-          : [];
-
-        // Busca IDs de processos do painel que ainda não estão na lista CRÍTICO/ALTO
-        const novosNums = numerosExpedientes.filter(n => !urgentesMap.has(n));
-        if (novosNums.length > 0) {
-          const novos = await db.query(
-            `SELECT id, numero, tribunal, grau, sistema, master_responsavel_id
-             FROM processos WHERE numero = ANY($1) AND status IN ('ativo','suspenso')`,
-            [novosNums]
-          );
-          for (const p of novos) urgentesMap.set(p.numero, p);
-        }
-
-        // Filtra apenas processos deste grupo (mesmo tribunal + grau + master)
-        const processosSyncList = [...urgentesMap.values()].filter(
-          p => p.tribunal === tribunal && p.grau === grau && p.master_responsavel_id === master_id
-        );
-
-        if (processosSyncList.length === 0) {
-          console.log(`[SyncUrgentes] ${tribunal} ${grau}G: nenhum processo urgente/painel.`);
-          continue;
-        }
-
-        console.log(`[SyncUrgentes] ${tribunal} ${grau}G: ${processosSyncList.length} processo(s) ` +
-          `(${urgentesDb.filter(p => p.tribunal === tribunal && p.grau === grau).length} CRIT/ALTO ` +
-          `+ ${numerosExpedientes.length} painel)`);
-
-        for (const { id, numero } of processosSyncList) {
-          try {
-            let resultado;
-            if (sistema !== 'pje') {
-              resultado = await eproc.buscarProcessoCompletoComSessao(browser, url, numero, grau);
-            } else {
-              resultado = await pje.buscarProcessoCompletoComSessao(browser, url, numero);
-            }
-            const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [id]);
-            const novasMovs = await salvarResultadoSync(id, processo, resultado.dados, resultado.movimentacoes);
-            await db.execute(`UPDATE processos SET sync_fonte = 'puppeteer_urgente' WHERE id = $1`, [id]).catch(() => {});
-            resultados.push({ processoId: id, numero, ok: true, novasMovimentacoes: novasMovs });
-            console.log(`[SyncUrgentes] OK: ${numero} (${novasMovs} novas)`);
-          } catch (err) {
-            resultados.push({ processoId: id, numero, ok: false, erro: err.message });
-            console.error(`[SyncUrgentes] Falha ${numero}:`, err.message);
-            await registrarFalhaSyncProcesso(id);
-            if (err.message?.includes('Target closed') || err.message?.includes('Session closed') || err.message?.includes('detached')) {
-              console.warn(`[SyncUrgentes] Sessão encerrada — interrompendo ${tribunal} ${grau}G`);
-              break;
-            }
-          }
-          await new Promise(r => setTimeout(r, 2_000));
-        }
-      } catch (err) {
-        console.error(`[SyncUrgentes] Falha ao abrir sessão ${tribunal} ${grau}G:`, err.message);
-      } finally {
-        await browser?.close().catch(() => {});
-      }
-    }
-
-    const ok   = resultados.filter(r => r.ok).length;
-    const fail = resultados.filter(r => !r.ok).length;
-    console.log(`[SyncUrgentes] Concluído: ${ok} OK, ${fail} falhas de ${resultados.length}.`);
-    return { total: resultados.length, ok, falhas: fail };
-
-  } finally {
-    await redis.del(LOCK_KEY).catch(err => console.warn('[SyncUrgentes] Falha ao liberar lock:', err.message));
-  }
-}
-
-// ─────────────────────────────────────────────
 //  PREENCHER POLOS VIA DATAJUD
-//  Sem browser, sem login — consulta a API pública do CNJ em lote.
-//  Rápido (~1 min para 800 processos). Cobertura ~80-90% dos processos TJPB.
-//  Deve ser rodado ANTES do completarPolosPublico para reduzir a carga do Puppeteer.
+//  Para tribunais que retornam partes (não TJPB).
+//  TJPB: polos cadastrados manualmente no cliente.
 // ─────────────────────────────────────────────
 export async function preencherPolosDataJud(onProgress) {
   const processos = await db.query(
@@ -589,7 +289,6 @@ export async function preencherPolosDataJud(onProgress) {
   console.log(`[PolosDataJud] ${processos.length} processo(s) sem polo`);
   if (processos.length === 0) return { total: 0, ok: 0, sem_dados: 0 };
 
-  // Agrupa por tribunal para aproveitar o consultarLote
   const porTribunal = new Map();
   for (const p of processos) {
     if (!porTribunal.has(p.tribunal)) porTribunal.set(p.tribunal, []);
@@ -600,13 +299,12 @@ export async function preencherPolosDataJud(onProgress) {
   onProgress?.({ total: processos.length, ok, sem_dados });
 
   for (const [tribunal, procs] of porTribunal) {
-    const numeros = procs.map(p => p.numero);
     let map = new Map();
     try {
-      map = await datajud.consultarLote(tribunal, numeros);
-      console.log(`[PolosDataJud] ${tribunal}: DataJud retornou ${map.size}/${procs.length}`);
+      map = await datajud.consultarLote(tribunal, procs.map(p => p.numero));
+      console.log(`[PolosDataJud] ${tribunal}: ${map.size}/${procs.length} encontrados`);
     } catch (err) {
-      console.warn(`[PolosDataJud] DataJud falhou para ${tribunal}:`, err.message);
+      console.warn(`[PolosDataJud] ${tribunal}: falha —`, err.message);
       sem_dados += procs.length;
       onProgress?.({ total: processos.length, ok, sem_dados });
       continue;
@@ -614,10 +312,12 @@ export async function preencherPolosDataJud(onProgress) {
 
     for (const proc of procs) {
       const r = map.get(proc.numero);
-      if (!r) { sem_dados++; onProgress?.({ total: processos.length, ok, sem_dados }); continue; }
+      if (!r || (!r.dados.polo_ativo && !r.dados.polo_passivo)) {
+        sem_dados++;
+        onProgress?.({ total: processos.length, ok, sem_dados });
+        continue;
+      }
       const { polo_ativo, polo_passivo, vara, acao, data_ajuizamento } = r.dados;
-      if (!polo_ativo && !polo_passivo) { sem_dados++; onProgress?.({ total: processos.length, ok, sem_dados }); continue; }
-
       const dataDistribuicao = data_ajuizamento ? new Date(data_ajuizamento + 'T12:00:00Z') : null;
       await db.execute(
         `UPDATE processos SET
@@ -630,7 +330,6 @@ export async function preencherPolosDataJud(onProgress) {
          WHERE id = $6`,
         [polo_ativo || null, polo_passivo || null, vara || null, acao || null, dataDistribuicao, proc.id]
       ).catch(err => console.warn(`[PolosDataJud] update falhou ${proc.numero}:`, err.message));
-
       console.log(`[PolosDataJud] OK: ${proc.numero} — ativo="${polo_ativo}" passivo="${polo_passivo}"`);
       ok++;
       onProgress?.({ total: processos.length, ok, sem_dados });
@@ -642,307 +341,38 @@ export async function preencherPolosDataJud(onProgress) {
 }
 
 // ─────────────────────────────────────────────
-//  COMPLETAR POLOS VIA CONSULTA PÚBLICA TJPB
-//  Usa www.tjpb.jus.br/consulta-processual (sem login)
-//  Muito mais rápido que o PJe interno (~5-10s por processo)
-// ─────────────────────────────────────────────
-export async function completarPolosPublico(onProgress) {
-  console.log('[PolosPub] Início — buscando processos sem polo no TJPB');
-
-  const processos = await db.query(
-    `SELECT id, numero, tribunal
-     FROM processos
-     WHERE tribunal = 'TJPB' AND status IN ('ativo','suspenso')
-       AND (polo_ativo IS NULL OR polo_ativo = '' OR polo_passivo IS NULL OR polo_passivo = '')
-     ORDER BY id`
-  );
-
-  console.log(`[PolosPub] Encontrados ${processos.length} processo(s) sem polo`);
-
-  if (processos.length === 0) return { total: 0, ok: 0, erros: 0 };
-  onProgress?.({ total: processos.length, ok: 0, erros: 0 });
-
-  const publica = await import('./consulta-publica.js');
-  console.log('[PolosPub] Abrindo browser Puppeteer...');
-  let browser;
-  try {
-    // Timeout duro de 60s no launch — se Chromium pendurar, falha rápido
-    browser = await Promise.race([
-      publica.abrirBrowser(),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('puppeteer.launch timeout 60s')), 60_000)),
-    ]);
-    console.log('[PolosPub] Browser pronto');
-
-    // Warm-up: primeira navegação para passar o Cloudflare e setar cookie de sessão.
-    // O primeiro acesso sempre recebe o challenge "Só um momento..." — processos
-    // subsequentes da mesma sessão passam direto. Aqui navegamos e aguardamos até
-    // o challenge se resolver (ou expirar), sem processar dados.
-    console.log('[PolosPub] Warm-up Cloudflare...');
-    const wPage = await browser.newPage();
-    await wPage.setUserAgent(
-      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-    );
-    await wPage.goto('https://www.tjpb.jus.br/consulta-processual', {
-      waitUntil: 'domcontentloaded', timeout: 45_000,
-    }).catch(() => {});
-    // Aguarda até a página real aparecer (não o challenge) ou timeout de 30s
-    await wPage.waitForFunction(
-      () => !/só um momento|just a moment/i.test(document.title),
-      { timeout: 30_000 }
-    ).catch(() => {});
-    // Dispensa banner de cookies no warm-up para que as páginas seguintes não o vejam
-    await wPage.evaluate(() => {
-      const btns = Array.from(document.querySelectorAll('button, a'));
-      const alvo = btns.find(b =>
-        /recusar tudo|rejeitar tudo|recusar|rejeitar|aceitar tudo|aceitar todos/i.test(b.textContent.trim())
-      );
-      if (alvo) alvo.click();
-    }).catch(() => {});
-    await new Promise(r => setTimeout(r, 800));
-    const wTitle = await wPage.title().catch(() => '');
-    console.log(`[PolosPub] Warm-up concluído — título: "${wTitle}"`);
-    await wPage.close().catch(() => {});
-  } catch (err) {
-    console.error('[PolosPub] Falha ao abrir browser:', err.message);
-    throw err;
-  }
-  let ok = 0, erros = 0;
-
-  try {
-    for (const proc of processos) {
-      try {
-        const dados = await publica.consultarComSessao(browser, proc.numero);
-
-        if (dados._diag?.snippet === 'sem_resultado_publico') {
-          console.log(`[PolosPub] ${proc.numero} — não indexado publicamente, pulando`);
-          erros++;
-        } else if (dados.polo_ativo || dados.polo_passivo) {
-          await db.execute(
-            `UPDATE processos SET
-               polo_ativo    = COALESCE($1, polo_ativo),
-               polo_passivo  = COALESCE($2, polo_passivo),
-               vara          = COALESCE($3, vara),
-               acao          = COALESCE($4, acao),
-               atualizado_em = NOW()
-             WHERE id = $5`,
-            [dados.polo_ativo || null, dados.polo_passivo || null,
-             dados.vara || null, dados.acao || null, proc.id]
-          ).catch(err => console.warn(`[PolosPub] update falhou ${proc.numero}:`, err.message));
-          console.log(`[PolosPub] OK: ${proc.numero} — ativo="${dados.polo_ativo}" passivo="${dados.polo_passivo}"`);
-          ok++;
-        } else {
-          console.warn(`[PolosPub] Sem polo em ${proc.numero}. textoLen=${dados._diag?.textoLen} tabelas=${dados._diag?.tabelas} xhr=${dados._diag?.xhrUrl || 'nenhuma'}`);
-          console.warn(`[PolosPub]   inputs:  ${dados._diag?.inputs?.slice(0, 300) || '(nenhum)'}`);
-          console.warn(`[PolosPub]   botoes:  ${dados._diag?.botoes?.slice(0, 200) || '(nenhum)'}`);
-          console.warn(`[PolosPub]   snippet: ${dados._diag?.snippet?.slice(0, 400)}`);
-          if (dados._diag?.tail) console.warn(`[PolosPub]   tail:    ${dados._diag.tail.slice(0, 300)}`);
-          erros++;
-        }
-      } catch (e) {
-        console.error(`[PolosPub] Erro em ${proc.numero}:`, e.message);
-        erros++;
-      }
-      onProgress?.({ total: processos.length, ok, erros });
-      await new Promise(r => setTimeout(r, 800));
-    }
-  } finally {
-    await browser.close().catch(() => {});
-  }
-
-  console.log(`[PolosPub] Concluído: ${ok} OK, ${erros} erros/sem dados de ${processos.length}.`);
-  return { total: processos.length, ok, erros };
-}
-
-// ─────────────────────────────────────────────
-//  COMPLETAR POLOS — preenche polo_ativo/passivo
-//  nos processos PJe que ainda estão sem essa info.
-//  Usa Puppeteer porque MNI dá 403 no TJPB para processos sem habilitação
-//  formal do advogado, e DataJud não expõe o campo `partes`.
-//  Mantido como fallback — use completarPolosPublico (mais rápido).
-// ─────────────────────────────────────────────
-export async function completarPolos(onProgress) {
-  const processos = await db.query(
-    `SELECT id, numero, tribunal, grau, sistema, master_responsavel_id
-     FROM processos
-     WHERE sistema = 'pje' AND status IN ('ativo','suspenso')
-       AND (polo_ativo IS NULL OR polo_ativo = '' OR polo_passivo IS NULL OR polo_passivo = '')
-     ORDER BY master_responsavel_id, tribunal, grau`
-  );
-
-  if (processos.length === 0) return { total: 0, ok: 0, erros: 0 };
-
-  onProgress?.({ total: processos.length, ok: 0, erros: 0 });
-
-  // Agrupa por master + tribunal + grau para reutilizar sessão PJe
-  const grupos = new Map();
-  for (const p of processos) {
-    const key = `${p.master_responsavel_id}|${p.tribunal}|${p.grau}`;
-    if (!grupos.has(key)) grupos.set(key, []);
-    grupos.get(key).push(p);
-  }
-
-  let ok = 0, erros = 0;
-
-  for (const [, grupo] of grupos) {
-    const { tribunal, grau, master_responsavel_id } = grupo[0];
-    const url = URL_TRIBUNAL[tribunal]?.[grau];
-    if (!url) {
-      erros += grupo.length;
-      onProgress?.({ total: processos.length, ok, erros });
-      continue;
-    }
-
-    const cred = await lerCredencialGrau(master_responsavel_id, tribunal, grau);
-    if (!cred) {
-      console.warn(`[Polos] Credencial não encontrada: ${tribunal} ${grau}G master ${master_responsavel_id}`);
-      erros += grupo.length;
-      onProgress?.({ total: processos.length, ok, erros });
-      continue;
-    }
-
-    let browser = null;
-    try {
-      ({ browser } = await pje.abrirSessao(url, cred.cpf, cred.senha, cred.totp_secret));
-      console.log(`[Polos] Sessão aberta: ${tribunal} ${grau}G — ${grupo.length} processo(s)`);
-
-      for (const proc of grupo) {
-        try {
-          const resultado = await pje.buscarProcessoCompletoComSessao(browser, url, proc.numero);
-          const { polo_ativo, polo_passivo } = resultado.dados;
-
-          if (polo_ativo || polo_passivo) {
-            await db.execute(
-              `UPDATE processos SET
-                 polo_ativo   = COALESCE($1, polo_ativo),
-                 polo_passivo = COALESCE($2, polo_passivo),
-                 atualizado_em = NOW()
-               WHERE id = $3`,
-              [polo_ativo || null, polo_passivo || null, proc.id]
-            );
-            console.log(`[Polos] OK: ${proc.numero} — ativo="${polo_ativo}" passivo="${polo_passivo}"`);
-          }
-          ok++;
-        } catch (e) {
-          console.error(`[Polos] Erro em ${proc.numero}:`, e.message);
-          erros++;
-          if (e.message?.includes('Target closed') || e.message?.includes('Session closed')) break;
-        }
-        onProgress?.({ total: processos.length, ok, erros });
-        await new Promise(r => setTimeout(r, 1_500));
-      }
-    } catch (e) {
-      console.error(`[Polos] Falha ao abrir sessão ${tribunal} ${grau}G:`, e.message);
-      erros += grupo.length;
-      onProgress?.({ total: processos.length, ok, erros });
-    } finally {
-      await browser?.close().catch(() => {});
-    }
-  }
-
-  console.log(`[Polos] Concluído: ${ok} OK, ${erros} erros de ${processos.length} processos.`);
-  return { total: processos.length, ok, erros };
-}
-
-// ─────────────────────────────────────────────
-//  INSPECIONAR PAINEL — importa processos novos
-// ─────────────────────────────────────────────
-export async function importarDosPaineis(masterUserId) {
-  const credenciais = await db.query(
-    `SELECT * FROM credenciais_tribunal WHERE usuario_id = $1 AND ativo = true`,
-    [masterUserId]
-  );
-
-  const importados = [];
-
-  for (const credRaw of credenciais) {
-    const cred = descriptografarCredencial(credRaw);
-    const grau = cred.grau || '1';
-    const url  = URL_TRIBUNAL[cred.tribunal]?.[grau];
-    if (!url) continue;
-
-    console.log(`[Painel] Acessando ${cred.tribunal} ${grau}G: ${url}`);
-
-    try {
-      let numeros = [];
-
-      if (cred.sistema === 'pje') {
-        numeros = await pje.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret, cred.oab);
-      } else {
-        numeros = await eproc.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret);
-      }
-
-      for (const numero of numeros) {
-        const existe = await db.queryOne(`SELECT id FROM processos WHERE numero = $1`, [numero]);
-        if (existe) continue;
-
-        await db.execute(
-          `INSERT INTO processos (numero, tribunal, sistema, grau, status, master_responsavel_id, importado_pje)
-           VALUES ($1, $2, $3, $4, 'ativo', $5, false)
-           ON CONFLICT (numero) DO NOTHING`,
-          [numero, cred.tribunal, cred.sistema, grau, masterUserId]
-        );
-        importados.push({ numero, tribunal: cred.tribunal, grau });
-      }
-
-      console.log(`[Painel] ${cred.tribunal} ${grau}G: ${numeros.length} processos encontrados`);
-    } catch (err) {
-      console.error(`[Painel] ${cred.tribunal} ${grau}G falhou:`, err.message);
-    }
-  }
-
-  console.log(`[Painel] ${importados.length} processos novos importados.`);
-  return importados;
-}
-
-// ─────────────────────────────────────────────
 //  SEPARAÇÃO DE SÓCIOS
 // ─────────────────────────────────────────────
 async function resolverSeparacaoSocios(processo, habilitados) {
   if (!habilitados.length) return;
-
   const masters = await db.query(
     `SELECT u.id FROM usuarios u
      JOIN credenciais_tribunal ct ON ct.usuario_id = u.id AND ct.tribunal = $1
      WHERE u.perfil = 'master' AND ct.cpf = ANY($2)`,
     [processo.tribunal, habilitados]
   );
-
   if (masters.length === 1) {
     await db.execute(
       `UPDATE processos SET master_responsavel_id = $1, compartilhado = false WHERE id = $2`,
       [masters[0].id, processo.id]
     );
   } else if (masters.length >= 2) {
-    await db.execute(
-      `UPDATE processos SET compartilhado = true WHERE id = $1`,
-      [processo.id]
-    );
+    await db.execute(`UPDATE processos SET compartilhado = true WHERE id = $1`, [processo.id]);
   }
 }
 
-// ─────────────────────────────────────────────
-//  REGISTRAR FALHA DE SYNC
-//  Após 3 falhas consecutivas, marca sync_status = 'erro_sync'
-//  para que a UI possa destacar o processo e o advogado possa investigar.
-// ─────────────────────────────────────────────
 async function registrarFalhaSyncProcesso(processoId) {
   try {
     await db.execute(
       `UPDATE processos
        SET sync_falhas = COALESCE(sync_falhas, 0) + 1,
-           sync_status = CASE
-             WHEN COALESCE(sync_falhas, 0) + 1 >= 3 THEN 'erro_sync'
-             ELSE sync_status
-           END
+           sync_status = CASE WHEN COALESCE(sync_falhas, 0) + 1 >= 3 THEN 'erro_sync' ELSE sync_status END
        WHERE id = $1`,
       [processoId]
     );
-  } catch { /* ignora — coluna pode não existir em dev */ }
+  } catch { /* ignora */ }
 }
 
-// ─────────────────────────────────────────────
-//  UTILITÁRIOS
-// ─────────────────────────────────────────────
 function parsearData(str) {
   if (!str) return null;
   const dmy = str.match(/(\d{2})\/(\d{2})\/(\d{4})/);
@@ -952,19 +382,13 @@ function parsearData(str) {
   return null;
 }
 
-// Parser para datas em português do PJe: "24 jan 2024", "5 fev 2023" etc.
 const MESES_PT = { jan:1,fev:2,mar:3,abr:4,mai:5,jun:6,jul:7,ago:8,set:9,out:10,nov:11,dez:12 };
 function parsearDataPtBR(str) {
   if (!str) return null;
-  // Tenta formato "24 jan 2024" ou "24 de jan de 2024"
   const m = str.toLowerCase().match(/(\d{1,2})\s+(?:de\s+)?([a-z]{3})\.?\s+(?:de\s+)?(\d{4})/);
   if (m) {
     const mes = MESES_PT[m[2]];
-    if (mes) {
-      const mm = String(mes).padStart(2, '0');
-      const dd = String(m[1]).padStart(2, '0');
-      return new Date(`${m[3]}-${mm}-${dd}T12:00:00Z`);
-    }
+    if (mes) return new Date(`${m[3]}-${String(mes).padStart(2,'0')}-${String(m[1]).padStart(2,'0')}T12:00:00Z`);
   }
-  return parsearData(str); // fallback para dd/mm/yyyy ou ISO
+  return parsearData(str);
 }
