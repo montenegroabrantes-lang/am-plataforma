@@ -30,6 +30,10 @@ import { auditar }    from './middleware/auditoria.js';
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
+// Railway (e qualquer reverse proxy) injeta X-Forwarded-For.
+// Sem trust proxy, o express-rate-limit rejeita todas as requisições com ValidationError.
+app.set('trust proxy', 1);
+
 const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:3000';
 if (!process.env.FRONTEND_URL) {
   console.warn('[WARN] FRONTEND_URL não definida — usando localhost. Defina em produção.');

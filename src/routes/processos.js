@@ -347,11 +347,11 @@ processosRouter.post('/sync-todos', apenasMaster, async (req, res) => {
   try {
     const { syncQueue } = await import('../workers/index.js');
     if (syncQueue) {
-      // Remove apenas o último job pendente desse tipo (não obliterate — preservaria o cron)
+      // Remove jobs manuais pendentes (nunca toca nos jobs do scheduler — têm ID com prefixo 'repeat:')
       const pendentes = await syncQueue.getJobs(['waiting', 'delayed']).catch(() => []);
       for (const j of pendentes) {
-        if (j.name === 'sincronizar-todos' && j.id !== 'sync-todos-recorrente') {
-          await j.remove().catch(err => console.warn('[Sync] Falha ao remover job pendente:', err.message));
+        if (j.name === 'sincronizar-todos' && !String(j.id).startsWith('repeat:')) {
+          await j.remove().catch(() => {});
         }
       }
       await syncQueue.add('sincronizar-todos', {}, { removeOnComplete: 5, removeOnFail: 5 });
