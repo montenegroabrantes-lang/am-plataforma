@@ -219,9 +219,15 @@ export async function sincronizarTodos() {
       `SELECT concluido_em FROM sync_execucoes WHERE concluido_em IS NOT NULL ORDER BY concluido_em DESC LIMIT 1`
     ).catch(() => null);
 
-    const desde = ultimaExecucao?.concluido_em
-      ? new Date(new Date(ultimaExecucao.concluido_em).getTime() - 2 * 60 * 60 * 1000).toISOString()
-      : new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString(); // primeira vez: últimas 48h
+    // Janela mínima de 7 dias — garante que não perde updates atrasados do DataJud.
+    // Alguns tribunais (ex: TJPB) atualizam o DataJud com dias de atraso.
+    // Math.min pega a data mais antiga entre: último sync - 2h e agora - 7 dias.
+    const sete_dias_atras = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const desde = new Date(
+      ultimaExecucao?.concluido_em
+        ? Math.min(new Date(ultimaExecucao.concluido_em).getTime() - 2 * 60 * 60 * 1000, sete_dias_atras)
+        : sete_dias_atras
+    ).toISOString();
 
     console.log(`[Sync] Iniciando sync DataJud — atualizações desde ${desde.slice(0, 16).replace('T', ' ')}`);
 
