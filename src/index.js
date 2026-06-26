@@ -24,6 +24,7 @@ import { dashboardRouter }     from './routes/dashboard.js';
 import { triagemRouter }       from './routes/triagem.js';
 import { monitoramentoRouter } from './routes/monitoramento.js';
 import { rankingsRouter }      from './routes/rankings.js';
+import { webhookRouter }       from './routes/webhook.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -86,6 +87,8 @@ app.use('/api/dashboard',    autenticar, dashboardRouter);
 app.use('/api/triagem',        autenticar, triagemRouter);
 app.use('/api/monitoramento', autenticar, monitoramentoRouter);
 app.use('/api/rankings',      autenticar, rankingsRouter);
+// Webhook público — CNJ faz POST sem sessão do usuário
+app.use('/api/webhook',       webhookRouter);
 
 // Sobe o servidor imediatamente para o healthcheck passar
 app.listen(PORT, () => {

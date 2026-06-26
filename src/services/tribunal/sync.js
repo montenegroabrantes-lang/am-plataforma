@@ -5,6 +5,7 @@
 import { db }       from '../../db/index.js';
 import { redis }    from '../../cache/redis.js';
 import * as datajud from './datajud.js';
+import * as mni     from './mni.js';
 import * as pje     from './pje.js';
 import * as eproc   from './eproc.js';
 import { lerCredencialGrau, descriptografarCredencial } from '../../routes/credenciais.js';
@@ -183,8 +184,77 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
 }
 
 // ─────────────────────────────────────────────
+//  FALLBACK EM CADEIA: DataJud → MNI → PJe/eProc
+//  Tenta cada fonte em ordem até obter resultado.
+// ─────────────────────────────────────────────
+async function consultarComFallback(processo) {
+  // 1. DataJud (fonte preferida — mais rápida, sem Puppeteer)
+  try {
+    const r = await datajud.consultarProcesso(processo.tribunal, processo.numero);
+    if (r) return { resultado: r, fonte: 'datajud' };
+  } catch (err) {
+    console.warn(`[Fallback] DataJud falhou ${processo.numero}: ${err.message}`);
+  }
+
+  console.log(`[Fallback] DataJud sem resultado para ${processo.numero} — tentando MNI/PJe...`);
+
+  // Busca credenciais do advogado responsável pelo processo
+  const credsRaw = await db.query(
+    `SELECT * FROM credenciais_tribunal
+     WHERE tribunal = $1 AND usuario_id = $2 AND ativo = true
+     LIMIT 1`,
+    [processo.tribunal, processo.master_responsavel_id]
+  ).catch(() => []);
+
+  if (!credsRaw.length) {
+    console.log(`[Fallback] Sem credenciais para ${processo.tribunal} — fallback indisponível`);
+    return null;
+  }
+
+  const cred = descriptografarCredencial(credsRaw[0]);
+  const grau = processo.grau || cred.grau || '1';
+  const url  = URL_TRIBUNAL[processo.tribunal]?.[grau];
+
+  if (!url) {
+    console.log(`[Fallback] URL não mapeada para ${processo.tribunal} grau ${grau}`);
+    return null;
+  }
+
+  // 2. MNI (SOAP — sem Puppeteer, mais leve que scraping)
+  if (cred.sistema === 'pje') {
+    try {
+      const r = await mni.consultarProcesso(url, cred.cpf, cred.senha, processo.numero);
+      if (r?.movimentacoes?.length) return { resultado: r, fonte: 'mni' };
+    } catch (err) {
+      console.warn(`[Fallback] MNI falhou ${processo.numero}: ${err.message}`);
+    }
+
+    // 3. PJe Puppeteer (mais pesado — último recurso)
+    try {
+      const r = await pje.buscarProcessoCompleto(url, cred.cpf, cred.senha, cred.totp_secret, processo.numero);
+      if (r) return { resultado: r, fonte: 'puppeteer' };
+    } catch (err) {
+      console.warn(`[Fallback] PJe Puppeteer falhou ${processo.numero}: ${err.message}`);
+    }
+  }
+
+  if (cred.sistema === 'eproc') {
+    try {
+      const r = await eproc.buscarProcessoCompleto(url, cred.cpf, cred.senha, cred.totp_secret, processo.numero, grau);
+      if (r) return { resultado: r, fonte: 'eproc' };
+    } catch (err) {
+      console.warn(`[Fallback] eProc falhou ${processo.numero}: ${err.message}`);
+    }
+  }
+
+  console.warn(`[Fallback] Todas as fontes falharam para ${processo.numero}`);
+  return null;
+}
+
+// ─────────────────────────────────────────────
 //  SINCRONIZAR PROCESSO INDIVIDUAL
 //  Usado pelo botão "Sincronizar" por processo na UI.
+//  Usa fallback em cadeia: DataJud → MNI → PJe/eProc.
 // ─────────────────────────────────────────────
 export async function sincronizarProcesso(processoId) {
   const processo = await db.queryOne(
@@ -196,13 +266,14 @@ export async function sincronizarProcesso(processoId) {
   );
   if (!processo) throw new Error(`Processo ${processoId} não encontrado.`);
 
-  const r = await datajud.consultarProcesso(processo.tribunal, processo.numero);
-  if (!r) throw new Error(`Processo ${processo.numero} não encontrado no DataJud.`);
+  const resultado = await consultarComFallback(processo);
+  if (!resultado) throw new Error(`Processo ${processo.numero} não encontrado em nenhuma fonte (DataJud, MNI, PJe).`);
 
+  const { resultado: r, fonte } = resultado;
   const novasMovs = await salvarResultadoSync(processoId, processo, r.dados, r.movimentacoes);
-  await db.execute(`UPDATE processos SET sync_fonte = 'datajud' WHERE id = $1`, [processoId]).catch(() => {});
-  console.log(`[Sync] ${processo.numero}: ${novasMovs} novas movimentações.`);
-  return { processoId, novasMovimentacoes: novasMovs };
+  await db.execute(`UPDATE processos SET sync_fonte = $1 WHERE id = $2`, [fonte, processoId]).catch(() => {});
+  console.log(`[Sync] ${processo.numero} via ${fonte}: ${novasMovs} novas movimentações.`);
+  return { processoId, novasMovimentacoes: novasMovs, fonte };
 }
 
 // ─────────────────────────────────────────────
