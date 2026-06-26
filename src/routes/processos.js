@@ -216,6 +216,27 @@ processosRouter.get('/sync-status', apenasMaster, async (req, res) => {
   }
 });
 
+// GET /api/processos/preview-datajud?numero=X&tribunal=Y
+// Consulta o DataJud sem salvar — usado pelo modal de cadastro para pré-preencher campos
+processosRouter.get('/preview-datajud', async (req, res) => {
+  const { numero, tribunal } = req.query;
+  if (!numero || !tribunal) {
+    return res.status(400).json({ ok: false, erro: 'numero e tribunal são obrigatórios.' });
+  }
+  if (!validarNumeroCNJ(numero)) {
+    return res.status(400).json({ ok: false, erro: 'Número fora do padrão CNJ.' });
+  }
+  try {
+    const { consultarProcesso } = await import('../services/tribunal/datajud.js');
+    const resultado = await consultarProcesso(tribunal, numero.trim());
+    if (!resultado) return res.json({ ok: true, encontrado: false });
+    res.json({ ok: true, encontrado: true, dados: resultado.dados });
+  } catch (err) {
+    console.warn('[Preview DataJud]', err.message);
+    res.status(502).json({ ok: false, erro: 'Falha ao consultar DataJud.' });
+  }
+});
+
 // GET /api/processos/:id
 processosRouter.get('/:id', async (req, res) => {
   const p = await db.queryOne(
@@ -247,8 +268,8 @@ processosRouter.post('/', async (req, res) => {
   const { numero, tribunal, sistema, grau = '1', cliente_id, produto_id, master_responsavel_id,
           vara, acao, polo_ativo, polo_passivo } = req.body;
 
-  if (!numero || !tribunal || !sistema) {
-    return res.status(400).json({ ok: false, erro: 'numero, tribunal e sistema são obrigatórios.' });
+  if (!numero || !tribunal) {
+    return res.status(400).json({ ok: false, erro: 'numero e tribunal são obrigatórios.' });
   }
   if (!validarNumeroCNJ(numero)) {
     return res.status(400).json({ ok: false, erro: 'Número fora do padrão CNJ (NNNNNNN-DD.AAAA.J.TR.OOOO).' });
@@ -256,7 +277,10 @@ processosRouter.post('/', async (req, res) => {
   if (!['1','2'].includes(grau)) {
     return res.status(400).json({ ok: false, erro: 'grau deve ser 1 ou 2.' });
   }
-  if (!['pje','eproc'].includes(sistema)) {
+  // Inferir sistema pelo tribunal se não enviado: TRF → eproc, TJ → pje
+  const TRF = new Set(['TRF1','TRF3','TRF4','TRF5','TRF6']);
+  const sistemaFinal = sistema || (TRF.has(tribunal) ? 'eproc' : 'pje');
+  if (!['pje','eproc'].includes(sistemaFinal)) {
     return res.status(400).json({ ok: false, erro: 'sistema deve ser pje ou eproc.' });
   }
 
@@ -271,7 +295,7 @@ processosRouter.post('/', async (req, res) => {
                               cliente_id, produto_id, master_responsavel_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        RETURNING id, numero, tribunal, sistema, grau`,
-      [numero.trim(), tribunal, sistema, grau, vara ?? null, acao ?? null,
+      [numero.trim(), tribunal, sistemaFinal, grau, vara ?? null, acao ?? null,
        polo_ativo ?? null, polo_passivo ?? null,
        cliente_id ?? null, produto_id ?? null, masterId]
     );
@@ -280,6 +304,12 @@ processosRouter.post('/', async (req, res) => {
       usuarioId: req.user.id, acao: 'criar', entidade: 'processo',
       entidadeId: novo.id, valorDepois: novo, ip: req._ip,
     });
+
+    // Enfileira sync individual imediato pelo DataJud (fila separada, não bloqueia o lote)
+    try {
+      const { enfileirarSincronizarProcesso } = await import('../workers/index.js');
+      await enfileirarSincronizarProcesso(novo.id);
+    } catch { /* Redis indisponível — sync acontece no próximo ciclo horário */ }
 
     res.status(201).json({ ok: true, processo: novo });
   } catch (e) {
