@@ -163,6 +163,12 @@ authRouter.post('/2fa/ativar', autenticar, async (req, res) => {
 });
 
 // POST /api/auth/logout
+authRouter.get('/me', autenticar, async (req, res) => {
+  const { rows } = await db.query('SELECT id, nome, email, cargo, role FROM usuarios WHERE id = $1', [req.user.id]);
+  if (!rows[0]) return res.status(401).json({ erro: 'Usuário não encontrado' });
+  res.json({ user: rows[0] });
+});
+
 authRouter.post('/logout', autenticar, async (req, res) => {
   clearTokenCookies(res);
   await registrarAuditoria({ usuarioId: req.user.id, acao: 'logout', entidade: 'usuario', entidadeId: req.user.id, ip: req._ip });
