@@ -1,14 +1,12 @@
 /**
- * Sync — DataJud (CNJ) como fonte de movimentações.
- * importarDosPaineis usa Puppeteer PJe/eProc para descobrir processos novos por OAB.
+ * Sync — DataJud (CNJ) como fonte principal de movimentações.
+ * Fallback: DataJud → MNI (SOAP). Puppeteer desativado (bloqueado por tribunais).
  */
 import { db }       from '../../db/index.js';
 import { redis }    from '../../cache/redis.js';
 import * as datajud from './datajud.js';
 import * as mni     from './mni.js';
-import * as pje     from './pje.js';
-import * as eproc   from './eproc.js';
-import { lerCredencialGrau, descriptografarCredencial } from '../../routes/credenciais.js';
+import { descriptografarCredencial } from '../../routes/credenciais.js';
 
 const URL_TRIBUNAL = {
   TJPB: { '1': process.env.PJE_TJPB_1G_URL || 'https://pje.tjpb.jus.br/pje/login.seam',   '2': process.env.PJE_TJPB_2G_URL || 'https://pje.tjpb.jus.br/pje2g/login.seam' },
@@ -196,7 +194,7 @@ async function consultarComFallback(processo) {
     console.warn(`[Fallback] DataJud falhou ${processo.numero}: ${err.message}`);
   }
 
-  console.log(`[Fallback] DataJud sem resultado para ${processo.numero} — tentando MNI/PJe...`);
+  console.log(`[Fallback] DataJud sem resultado para ${processo.numero} — tentando MNI...`);
 
   // Busca credenciais do advogado responsável pelo processo
   const credsRaw = await db.query(
@@ -220,7 +218,7 @@ async function consultarComFallback(processo) {
     return null;
   }
 
-  // 2. MNI (SOAP — sem Puppeteer, mais leve que scraping)
+  // 2. MNI (SOAP — sem browser, mais leve)
   if (cred.sistema === 'pje') {
     try {
       const r = await mni.consultarProcesso(url, cred.cpf, cred.senha, processo.numero);
@@ -228,26 +226,9 @@ async function consultarComFallback(processo) {
     } catch (err) {
       console.warn(`[Fallback] MNI falhou ${processo.numero}: ${err.message}`);
     }
-
-    // 3. PJe Puppeteer (mais pesado — último recurso)
-    try {
-      const r = await pje.buscarProcessoCompleto(url, cred.cpf, cred.senha, cred.totp_secret, processo.numero);
-      if (r) return { resultado: r, fonte: 'puppeteer' };
-    } catch (err) {
-      console.warn(`[Fallback] PJe Puppeteer falhou ${processo.numero}: ${err.message}`);
-    }
   }
 
-  if (cred.sistema === 'eproc') {
-    try {
-      const r = await eproc.buscarProcessoCompleto(url, cred.cpf, cred.senha, cred.totp_secret, processo.numero, grau);
-      if (r) return { resultado: r, fonte: 'eproc' };
-    } catch (err) {
-      console.warn(`[Fallback] eProc falhou ${processo.numero}: ${err.message}`);
-    }
-  }
-
-  console.warn(`[Fallback] Todas as fontes falharam para ${processo.numero}`);
+  console.warn(`[Fallback] DataJud e MNI falharam para ${processo.numero} — Puppeteer desativado`);
   return null;
 }
 
@@ -472,57 +453,6 @@ export async function preencherPolosDataJud(onProgress) {
 
   console.log(`[PolosDataJud] Concluído: ${ok} OK, ${sem_dados} sem dados de ${processos.length}`);
   return { total: processos.length, ok, sem_dados };
-}
-
-// ─────────────────────────────────────────────
-//  IMPORTAR PROCESSOS DO PAINEL PJe/eProc
-//  Faz login com a credencial do advogado e busca todos os
-//  CNJs associados ao número OAB — sem abrir cada processo.
-//  Roda manualmente quando precisar importar processos novos.
-// ─────────────────────────────────────────────
-export async function importarDosPaineis(masterUserId) {
-  const credenciais = await db.query(
-    `SELECT * FROM credenciais_tribunal WHERE usuario_id = $1 AND ativo = true`,
-    [masterUserId]
-  );
-
-  const importados = [];
-
-  for (const credRaw of credenciais) {
-    const cred = descriptografarCredencial(credRaw);
-    const grau = cred.grau || '1';
-    const url  = URL_TRIBUNAL[cred.tribunal]?.[grau];
-    if (!url) continue;
-
-    console.log(`[Painel] Acessando ${cred.tribunal} ${grau}G: ${url}`);
-
-    try {
-      let numeros = [];
-      if (cred.sistema === 'pje') {
-        numeros = await pje.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret, cred.oab);
-      } else {
-        numeros = await eproc.inspecionarPainel(url, cred.cpf, cred.senha, cred.totp_secret);
-      }
-
-      for (const numero of numeros) {
-        const existe = await db.queryOne(`SELECT id FROM processos WHERE numero = $1`, [numero]);
-        if (existe) continue;
-        await db.execute(
-          `INSERT INTO processos (numero, tribunal, sistema, grau, status, master_responsavel_id, importado_pje)
-           VALUES ($1, $2, $3, $4, 'ativo', $5, false)
-           ON CONFLICT (numero) DO NOTHING`,
-          [numero, cred.tribunal, cred.sistema, grau, masterUserId]
-        );
-        importados.push({ numero, tribunal: cred.tribunal, grau });
-      }
-      console.log(`[Painel] ${cred.tribunal} ${grau}G: ${numeros.length} processos encontrados, ${importados.length} novos`);
-    } catch (err) {
-      console.error(`[Painel] ${cred.tribunal} ${grau}G falhou:`, err.message);
-    }
-  }
-
-  console.log(`[Painel] ${importados.length} processos novos importados.`);
-  return importados;
 }
 
 // ─────────────────────────────────────────────

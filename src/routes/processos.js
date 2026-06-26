@@ -357,24 +357,9 @@ processosRouter.patch('/:id', async (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /api/processos/importar-painel — importa processos novos via login PJe/eProc por OAB
-processosRouter.post('/importar-painel', apenasMaster, async (req, res) => {
-  const { importarDosPaineis } = await import('../services/tribunal/sync.js');
-  try {
-    const importados = await importarDosPaineis(req.user.id);
-    if (importados.length > 0) {
-      try {
-        const { syncQueue } = await import('../workers/index.js');
-        if (syncQueue) {
-          await syncQueue.add('sincronizar-todos', {}, { delay: 3_000, removeOnComplete: 5 });
-        }
-      } catch { /* Redis indisponível */ }
-    }
-    res.json({ ok: true, importados: importados.length, processos: importados });
-  } catch (err) {
-    console.error('[Importar Painel]', err.message);
-    res.status(500).json({ ok: false, erro: err.message });
-  }
+// POST /api/processos/importar-painel — desativado (Puppeteer bloqueado pelos tribunais)
+processosRouter.post('/importar-painel', apenasMaster, (req, res) => {
+  res.status(410).json({ ok: false, erro: 'Importação via PJe desativada. Cadastre processos manualmente pelo número.' });
 });
 
 // POST /api/processos/sync-todos — dispara sync de todos os processos ativos imediatamente
