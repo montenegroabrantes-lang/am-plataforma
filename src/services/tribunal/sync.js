@@ -6,6 +6,29 @@ import { redis }    from '../../cache/redis.js';
 import * as datajud from './datajud.js';
 
 // ─────────────────────────────────────────────
+//  INFERÊNCIA DE SITUACAO_ATUAL PELO TIPO DE AÇÃO
+//  Só aplica se o processo ainda não foi classificado manualmente
+// ─────────────────────────────────────────────
+const ACAO_SITUACAO = [
+  { regex: /cumprimento.*fazenda|fazenda.*cumprimento/i,   situacao: 'cumprimento_sentenca' },
+  { regex: /cumprimento.*sentença|execução.*sentença/i,    situacao: 'cumprimento_sentenca' },
+  { regex: /precatório/i,                                  situacao: 'em_precatorio' },
+  { regex: /rpv|requisição.*pequeno/i,                     situacao: 'aguardando_rpv' },
+  { regex: /apelação|agravo.*instrumento|recurso/i,        situacao: 'em_recurso' },
+  { regex: /embargos.*execução/i,                          situacao: 'cumprimento_sentenca' },
+  { regex: /mandado.*segurança|ms\b/i,                     situacao: 'em_conhecimento' },
+  { regex: /ação.*ordinária|procedimento.*comum/i,         situacao: 'em_conhecimento' },
+];
+
+function inferirSituacaoDoTipoAcao(acao) {
+  if (!acao) return null;
+  for (const { regex, situacao } of ACAO_SITUACAO) {
+    if (regex.test(acao)) return situacao;
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────
 //  PRIORIDADE DETERMINÍSTICA
 // ─────────────────────────────────────────────
 function calcularPrioridade(diag) {
@@ -41,6 +64,7 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
 
   if (dados.vara || dados.polo_ativo || dados.polo_passivo || dados.habilitados?.length || dados.data_ajuizamento) {
     const dataDistribuicao = parsearDataPtBR(dados.data_ajuizamento);
+    const situacaoInferida = inferirSituacaoDoTipoAcao(dados.acao);
     await db.execute(
       `UPDATE processos
        SET vara               = COALESCE($1,  vara),
@@ -54,13 +78,14 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
            valor_causa        = COALESCE($9,  valor_causa),
            comarca            = COALESCE($10, comarca),
            assunto_principal  = COALESCE($11, assunto_principal),
-           importado_pje      = true,  /* campo legado — indica que processo tem dados do DataJud */
+           situacao_atual     = CASE WHEN situacao_atual IS NULL AND $13 IS NOT NULL THEN $13 ELSE situacao_atual END,
+           importado_pje      = true,
            atualizado_em      = NOW()
        WHERE id = $12`,
       [dados.vara, dados.juiz, dados.polo_ativo, dados.polo_passivo,
        dados.acao, dados.habilitados, dataDistribuicao,
        dados.classe_codigo, dados.valor_causa, dados.comarca_ibge ? String(dados.comarca_ibge) : null,
-       dados.assunto_principal, processoId]
+       dados.assunto_principal, processoId, situacaoInferida]
     );
     await resolverSeparacaoSocios(processo, dados.habilitados || []);
   }
