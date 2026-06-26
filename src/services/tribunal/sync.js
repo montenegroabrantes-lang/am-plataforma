@@ -1,23 +1,9 @@
 /**
- * Sync — DataJud (CNJ) como fonte principal de movimentações.
- * Fallback: DataJud → MNI (SOAP). Puppeteer desativado (bloqueado por tribunais).
+ * Sync — DataJud (CNJ) como única fonte de movimentações.
  */
 import { db }       from '../../db/index.js';
 import { redis }    from '../../cache/redis.js';
 import * as datajud from './datajud.js';
-import * as mni     from './mni.js';
-import { descriptografarCredencial } from '../../routes/credenciais.js';
-
-const URL_TRIBUNAL = {
-  TJPB: { '1': process.env.PJE_TJPB_1G_URL || 'https://pje.tjpb.jus.br/pje/login.seam',   '2': process.env.PJE_TJPB_2G_URL || 'https://pje.tjpb.jus.br/pje2g/login.seam' },
-  TJRN: { '1': process.env.PJE_TJRN_1G_URL || 'https://pje1g.tjrn.jus.br/pje/login.seam', '2': process.env.PJE_TJRN_2G_URL || 'https://pje2g.tjrn.jus.br/pje/login.seam' },
-  TJPE: { '1': process.env.PJE_TJPE_1G_URL || 'https://pje.cloud.tjpe.jus.br/1g/login.seam','2': process.env.PJE_TJPE_2G_URL || 'https://pje.cloud.tjpe.jus.br/2g/login.seam' },
-  TRF1: { '1': process.env.PJE_TRF1_1G_URL || 'https://pje1g.trf1.jus.br/pje/login.seam',  '2': process.env.PJE_TRF1_2G_URL || 'https://pje2g.trf1.jus.br/pje/login.seam' },
-  TRF5: { '1': process.env.EPROC_TRF5_URL  || 'https://eproc.trf5.jus.br/eproc/',          '2': process.env.EPROC_TRF5_URL  || 'https://eproc.trf5.jus.br/eproc/' },
-  TRF3: { '1': process.env.EPROC_TRF3_URL  || 'https://eproc.trf3.jus.br/eproc/',          '2': process.env.EPROC_TRF3_URL  || 'https://eproc.trf3.jus.br/eproc/' },
-  TRF4: { '1': process.env.EPROC_TRF4_URL  || 'https://eproc.trf4.jus.br/eproc/',          '2': process.env.EPROC_TRF4_URL  || 'https://eproc.trf4.jus.br/eproc/' },
-  TRF6: { '1': process.env.EPROC_TRF6_URL  || 'https://eproc.trf6.jus.br/eproc/',          '2': process.env.EPROC_TRF6_URL  || 'https://eproc.trf6.jus.br/eproc/' },
-};
 
 // ─────────────────────────────────────────────
 //  PRIORIDADE DETERMINÍSTICA
@@ -181,54 +167,14 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
   return novasMovs;
 }
 
-// ─────────────────────────────────────────────
-//  FALLBACK EM CADEIA: DataJud → MNI → PJe/eProc
-//  Tenta cada fonte em ordem até obter resultado.
-// ─────────────────────────────────────────────
 async function consultarComFallback(processo) {
-  // 1. DataJud (fonte preferida — mais rápida, sem Puppeteer)
   try {
     const r = await datajud.consultarProcesso(processo.tribunal, processo.numero);
     if (r) return { resultado: r, fonte: 'datajud' };
   } catch (err) {
-    console.warn(`[Fallback] DataJud falhou ${processo.numero}: ${err.message}`);
+    console.warn(`[Sync] DataJud falhou ${processo.numero}: ${err.message}`);
   }
-
-  console.log(`[Fallback] DataJud sem resultado para ${processo.numero} — tentando MNI...`);
-
-  // Busca credenciais do advogado responsável pelo processo
-  const credsRaw = await db.query(
-    `SELECT * FROM credenciais_tribunal
-     WHERE tribunal = $1 AND usuario_id = $2 AND ativo = true
-     LIMIT 1`,
-    [processo.tribunal, processo.master_responsavel_id]
-  ).catch(() => []);
-
-  if (!credsRaw.length) {
-    console.log(`[Fallback] Sem credenciais para ${processo.tribunal} — fallback indisponível`);
-    return null;
-  }
-
-  const cred = descriptografarCredencial(credsRaw[0]);
-  const grau = processo.grau || cred.grau || '1';
-  const url  = URL_TRIBUNAL[processo.tribunal]?.[grau];
-
-  if (!url) {
-    console.log(`[Fallback] URL não mapeada para ${processo.tribunal} grau ${grau}`);
-    return null;
-  }
-
-  // 2. MNI (SOAP — sem browser, mais leve)
-  if (cred.sistema === 'pje') {
-    try {
-      const r = await mni.consultarProcesso(url, cred.cpf, cred.senha, processo.numero);
-      if (r?.movimentacoes?.length) return { resultado: r, fonte: 'mni' };
-    } catch (err) {
-      console.warn(`[Fallback] MNI falhou ${processo.numero}: ${err.message}`);
-    }
-  }
-
-  console.warn(`[Fallback] DataJud e MNI falharam para ${processo.numero} — Puppeteer desativado`);
+  console.warn(`[Sync] DataJud sem resultado para ${processo.numero}`);
   return null;
 }
 
