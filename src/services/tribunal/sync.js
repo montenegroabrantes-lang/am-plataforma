@@ -54,7 +54,7 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
            valor_causa        = COALESCE($9,  valor_causa),
            comarca            = COALESCE($10, comarca),
            assunto_principal  = COALESCE($11, assunto_principal),
-           importado_pje      = true,
+           importado_pje      = true,  /* campo legado — indica que processo tem dados do DataJud */
            atualizado_em      = NOW()
        WHERE id = $12`,
       [dados.vara, dados.juiz, dados.polo_ativo, dados.polo_passivo,
@@ -181,7 +181,6 @@ async function consultarComFallback(processo) {
 // ─────────────────────────────────────────────
 //  SINCRONIZAR PROCESSO INDIVIDUAL
 //  Usado pelo botão "Sincronizar" por processo na UI.
-//  Usa fallback em cadeia: DataJud → MNI → PJe/eProc.
 // ─────────────────────────────────────────────
 export async function sincronizarProcesso(processoId) {
   const processo = await db.queryOne(
@@ -194,7 +193,7 @@ export async function sincronizarProcesso(processoId) {
   if (!processo) throw new Error(`Processo ${processoId} não encontrado.`);
 
   const resultado = await consultarComFallback(processo);
-  if (!resultado) throw new Error(`Processo ${processo.numero} não encontrado em nenhuma fonte (DataJud, MNI, PJe).`);
+  if (!resultado) throw new Error(`Processo ${processo.numero} não encontrado no DataJud.`);
 
   const { resultado: r, fonte } = resultado;
   const novasMovs = await salvarResultadoSync(processoId, processo, r.dados, r.movimentacoes);

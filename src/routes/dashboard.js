@@ -75,9 +75,6 @@ dashboardRouter.get('/', async (req, res) => {
       SELECT
         MAX(atualizado_em)                                              AS ultima_atualizacao,
         COUNT(*) FILTER (WHERE sync_fonte = 'datajud')                 AS via_datajud,
-        COUNT(*) FILTER (WHERE sync_fonte = 'mni')                     AS via_mni,
-        COUNT(*) FILTER (WHERE sync_fonte = 'puppeteer')               AS via_puppeteer,
-        COUNT(*) FILTER (WHERE sync_fonte = 'eproc')                   AS via_eproc,
         COUNT(*) FILTER (WHERE sync_fonte IS NULL)                     AS sem_fonte,
         COUNT(*) FILTER (WHERE sync_falhas > 0)                        AS com_falhas,
         COUNT(*) FILTER (WHERE sync_status = 'erro_sync')              AS com_erro,
