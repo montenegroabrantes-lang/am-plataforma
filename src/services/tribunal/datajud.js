@@ -41,7 +41,7 @@ function http() {
       Authorization: `APIKey ${API_KEY}`,
       'Content-Type': 'application/json',
     },
-    timeout: 15_000,
+    timeout: 35_000,
   });
 }
 
@@ -52,18 +52,28 @@ export async function consultarProcesso(tribunal, numero) {
   const indice = INDICE[tribunal];
   if (!indice) throw new Error(`DataJud: tribunal ${tribunal} não mapeado`);
 
-  // DataJud armazena o número sem formatação (só dígitos): "08017009820258151071"
   const numeroPuro = numero.replace(/\D/g, '');
 
-  const resp = await http().post(`/${indice}/_search`, {
-    query: { match: { numeroProcesso: numeroPuro } },
-    size: 1,
-  });
+  // Retry com backoff: DataJud pode retornar 429 (servidor sobrecarregado)
+  for (let tentativa = 1; tentativa <= 3; tentativa++) {
+    const resp = await http().post(`/${indice}/_search`, {
+      query: { match: { numeroProcesso: numeroPuro } },
+      size: 1,
+    });
 
-  const hit = resp.data?.hits?.hits?.[0]?._source;
-  if (!hit) return null;
+    if (resp.status === 429) {
+      if (tentativa < 3) {
+        console.warn(`[DataJud] 429 para ${numero} — aguardando ${tentativa * 5}s antes de tentar novamente (${tentativa}/3)`);
+        await new Promise(r => setTimeout(r, tentativa * 5_000));
+        continue;
+      }
+      throw new Error(`DataJud sobrecarregado (429) após 3 tentativas — tente novamente em alguns minutos.`);
+    }
 
-  return parsear(hit);
+    const hit = resp.data?.hits?.hits?.[0]?._source;
+    if (!hit) return null;
+    return parsear(hit);
+  }
 }
 
 // ─────────────────────────────────────────────

@@ -233,7 +233,11 @@ processosRouter.get('/preview-datajud', async (req, res) => {
     res.json({ ok: true, encontrado: true, dados: resultado.dados });
   } catch (err) {
     console.warn('[Preview DataJud]', err.message);
-    res.status(502).json({ ok: false, erro: 'Falha ao consultar DataJud.' });
+    const sobrecarregado = err.message?.includes('429') || err.message?.includes('sobrecarregado');
+    const mensagem = sobrecarregado
+      ? 'DataJud sobrecarregado — aguarde alguns minutos e tente novamente.'
+      : 'Falha ao consultar DataJud.';
+    res.status(502).json({ ok: false, erro: mensagem });
   }
 });
 
