@@ -142,6 +142,17 @@ dashboardRouter.get('/', async (req, res) => {
       FROM processos p WHERE status = 'ativo' ${filtroP}`, params),
   ]);
 
+  // Carteira financeira total
+  const carteira = await db.queryOne(`
+    SELECT
+      COALESCE(SUM(valor_homologado), 0)                                                   AS total_homologado,
+      COALESCE(SUM(valor_homologado) FILTER (WHERE tipo_requisicao = 'rpv'), 0)            AS rpv_homologado,
+      COALESCE(SUM(valor_homologado) FILTER (WHERE tipo_requisicao = 'precatorio'), 0)     AS prec_homologado,
+      COALESCE(SUM(valor_homologado) FILTER (WHERE tipo_requisicao = 'alvara'), 0)         AS alv_homologado,
+      COALESCE(SUM(valor_causa), 0)                                                        AS total_causa,
+      COUNT(*) FILTER (WHERE valor_homologado > 0)                                         AS processos_com_valor
+    FROM processos p WHERE status = 'ativo' ${filtroP}`, params);
+
   // Movimentações críticas recentes (últimas 48h, urgência CRITICO ou ALTO)
   const movsAlerta = await db.query(`
     SELECT m.texto, m.diagnostico_urgencia, m.diagnostico_proxima_acao,
@@ -187,5 +198,6 @@ dashboardRouter.get('/', async (req, res) => {
     localizacoes: localizacaoCounts,
     urgentes:    urgentesLista,
     requisicoes: requisicaoCounts || {},
+    carteira:    carteira || {},
   });
 });

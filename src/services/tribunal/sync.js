@@ -58,18 +58,24 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
     const dataDistribuicao = parsearDataPtBR(dados.data_ajuizamento);
     await db.execute(
       `UPDATE processos
-       SET vara              = COALESCE($1, vara),
-           juiz              = COALESCE($2, juiz),
-           polo_ativo        = COALESCE($3, polo_ativo),
-           polo_passivo      = COALESCE($4, polo_passivo),
-           acao              = COALESCE($5, acao),
-           habilitados_pje   = COALESCE($6, habilitados_pje),
-           data_distribuicao = COALESCE($7, data_distribuicao),
-           importado_pje     = true,
-           atualizado_em     = NOW()
-       WHERE id = $8`,
+       SET vara               = COALESCE($1,  vara),
+           juiz               = COALESCE($2,  juiz),
+           polo_ativo         = COALESCE($3,  polo_ativo),
+           polo_passivo       = COALESCE($4,  polo_passivo),
+           acao               = COALESCE($5,  acao),
+           habilitados_pje    = COALESCE($6,  habilitados_pje),
+           data_distribuicao  = COALESCE($7,  data_distribuicao),
+           classe_processual  = COALESCE($8,  classe_processual),
+           valor_causa        = COALESCE($9,  valor_causa),
+           comarca            = COALESCE($10, comarca),
+           assunto_principal  = COALESCE($11, assunto_principal),
+           importado_pje      = true,
+           atualizado_em      = NOW()
+       WHERE id = $12`,
       [dados.vara, dados.juiz, dados.polo_ativo, dados.polo_passivo,
-       dados.acao, dados.habilitados, dataDistribuicao, processoId]
+       dados.acao, dados.habilitados, dataDistribuicao,
+       dados.classe_codigo, dados.valor_causa, dados.comarca_ibge ? String(dados.comarca_ibge) : null,
+       dados.assunto_principal, processoId]
     );
     await resolverSeparacaoSocios(processo, dados.habilitados || []);
   }
@@ -219,14 +225,19 @@ export async function sincronizarTodos() {
       `SELECT concluido_em FROM sync_execucoes WHERE concluido_em IS NOT NULL ORDER BY concluido_em DESC LIMIT 1`
     ).catch(() => null);
 
-    // Janela mínima de 7 dias — garante que não perde updates atrasados do DataJud.
-    // Alguns tribunais (ex: TJPB) atualizam o DataJud com dias de atraso.
-    // Math.min pega a data mais antiga entre: último sync - 2h e agora - 7 dias.
-    const sete_dias_atras = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    // Janela de busca:
+    // - Se nunca sincronizou: 48h atrás (não 7 dias — evita timeout em tribunais grandes)
+    // - Se já sincronizou: último sync - 4h de buffer (cobre delay do DataJud)
+    // - Máximo retroativo: 7 dias (para cobrir atrasos do DataJud em re-sync manual)
+    const sete_dias_atras  = Date.now() - 7  * 24 * 60 * 60 * 1000;
+    const quarenta_oito_h  = Date.now() - 48 *      60 * 60 * 1000;
     const desde = new Date(
       ultimaExecucao?.concluido_em
-        ? Math.min(new Date(ultimaExecucao.concluido_em).getTime() - 2 * 60 * 60 * 1000, sete_dias_atras)
-        : sete_dias_atras
+        ? Math.max(
+            new Date(ultimaExecucao.concluido_em).getTime() - 4 * 60 * 60 * 1000,
+            sete_dias_atras
+          )
+        : quarenta_oito_h
     ).toISOString();
 
     console.log(`[Sync] Iniciando sync DataJud — atualizações desde ${desde.slice(0, 16).replace('T', ' ')}`);
@@ -255,9 +266,14 @@ export async function sincronizarTodos() {
     for (const tribunal of tribunais) {
       console.log(`[Sync DataJud] ${tribunal}: buscando atualizados desde ${desde.slice(0, 10)}...`);
 
+      // Filtra só os nossos processos deste tribunal para passar ao DataJud
+      const nossosDesteTribunal = new Map(
+        [...nossosPorPuro].filter(([, p]) => p.tribunal === tribunal)
+      );
+
       let atualizadosMap = new Map();
       try {
-        atualizadosMap = await datajud.consultarAtualizados(tribunal, desde);
+        atualizadosMap = await datajud.consultarAtualizados(tribunal, desde, nossosDesteTribunal);
         console.log(`[Sync DataJud] ${tribunal}: ${atualizadosMap.size} processos com novidades no DataJud`);
       } catch (err) {
         console.warn(`[Sync DataJud] ${tribunal}: falha —`, err.message);
@@ -305,6 +321,15 @@ export async function sincronizarTodos() {
 
     return resultados;
 
+  } catch (err) {
+    // Garante que sync_execucoes sempre recebe concluido_em mesmo em erro fatal
+    if (execucaoId) {
+      await db.execute(
+        `UPDATE sync_execucoes SET concluido_em = NOW(), falhas = -1 WHERE id = $1`,
+        [execucaoId]
+      ).catch(() => {});
+    }
+    throw err;
   } finally {
     await redis.del(LOCK_KEY).catch(() => {});
   }

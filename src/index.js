@@ -22,6 +22,8 @@ import { relatorioRouter }     from './routes/relatorio.js';
 import { produtosRouter }      from './routes/produtos.js';
 import { dashboardRouter }     from './routes/dashboard.js';
 import { triagemRouter }       from './routes/triagem.js';
+import { monitoramentoRouter } from './routes/monitoramento.js';
+import { rankingsRouter }      from './routes/rankings.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -81,7 +83,9 @@ app.use('/api/pipeline',      autenticar, pipelineRouter);
 app.use('/api/relatorio',     autenticar, relatorioRouter);
 app.use('/api/produtos',      autenticar, produtosRouter);
 app.use('/api/dashboard',    autenticar, dashboardRouter);
-app.use('/api/triagem',      autenticar, triagemRouter);
+app.use('/api/triagem',        autenticar, triagemRouter);
+app.use('/api/monitoramento', autenticar, monitoramentoRouter);
+app.use('/api/rankings',      autenticar, rankingsRouter);
 
 // Sobe o servidor imediatamente para o healthcheck passar
 app.listen(PORT, () => {

@@ -92,24 +92,25 @@ export async function consultarLote(tribunal, numeros) {
 
 // ─────────────────────────────────────────────
 //  CONSULTAR PROCESSOS ATUALIZADOS DESDE UMA DATA
-//  Uma única query retorna TODOS os processos do tribunal
-//  que o DataJud atualizou desde `desde` (ISO string).
-//  Usa search_after para paginar sem limite.
 //  Retorna Map<numeroPuro, {dados, movimentacoes}>
+//  Limita a MAX_PAGINAS para evitar timeout em tribunais grandes (ex: TJPB 302Mi processos).
+//  Ordena por dataHoraUltimaAtualizacao para que search_after seja consistente com o filtro.
 // ─────────────────────────────────────────────
-export async function consultarAtualizados(tribunal, desde) {
+export async function consultarAtualizados(tribunal, desde, nossosPuro = null) {
   const indice = INDICE[tribunal];
   if (!indice) throw new Error(`DataJud: tribunal ${tribunal} não mapeado`);
 
   const resultado  = new Map();
   let searchAfter  = null;
   let pagina       = 0;
+  const MAX_PAGINAS = 50; // 50 × 1000 = 50.000 processos máx por tribunal por execução
 
   do {
     const body = {
       size: 1000,
       query: { range: { dataHoraUltimaAtualizacao: { gte: desde } } },
-      sort: [{ '@timestamp': { order: 'asc' } }],
+      // Ordenar pelo mesmo campo do filtro — search_after precisa ser consistente
+      sort: [{ dataHoraUltimaAtualizacao: { order: 'asc' } }, { numeroProcesso: { order: 'asc' } }],
       ...(searchAfter ? { search_after: searchAfter } : {}),
     };
 
@@ -119,33 +120,46 @@ export async function consultarAtualizados(tribunal, desde) {
 
     for (const hit of hits) {
       const src = hit._source;
-      if (src?.numeroProcesso) {
-        resultado.set(src.numeroProcesso, parsear(src));
-      }
+      if (!src?.numeroProcesso) continue;
+      // Se temos o mapa dos nossos processos, filtra imediatamente para economizar memória
+      if (nossosPuro && !nossosPuro.has(src.numeroProcesso)) continue;
+      resultado.set(src.numeroProcesso, parsear(src));
     }
 
-    console.log(`[DataJud] ${tribunal} atualizados pág.${pagina}: ${hits.length} processos`);
+    console.log(`[DataJud] ${tribunal} pág.${pagina}: ${hits.length} registros (${resultado.size} nossos)`);
     searchAfter = hits.length > 0 ? hits[hits.length - 1].sort : null;
 
     if (hits.length < 1000) break;
+    if (pagina >= MAX_PAGINAS) {
+      console.warn(`[DataJud] ${tribunal}: limite de ${MAX_PAGINAS} páginas atingido — próximo sync continua.`);
+      break;
+    }
   } while (searchAfter);
 
-  return resultado; // Map<numeroPuro(20 dígitos), {dados, movimentacoes}>
+  return resultado;
 }
 
 // ─────────────────────────────────────────────
 //  PARSER — _source DataJud → {dados, movimentacoes}
 // ─────────────────────────────────────────────
 function parsear(src) {
-  const vara             = src.orgaoJulgador?.nome || null;
-  const acao             = src.classe?.nome        || null;
-  const data_ajuizamento = src.dataAjuizamento     ? src.dataAjuizamento.substring(0, 10) : null;
+  const vara              = src.orgaoJulgador?.nome   || null;
+  const acao              = src.classe?.nome           || null;
+  const classe_codigo     = src.classe?.codigo         ? String(src.classe.codigo) : null;
+  const grau              = src.grau                   || null;
+  const valor_causa       = src.valorCausa             ? Number(src.valorCausa) : null;
+  const comarca_ibge      = src.orgaoJulgador?.codigoMunicipioIBGE || null;
+  const data_ajuizamento  = src.dataAjuizamento        ? src.dataAjuizamento.substring(0, 10) : null;
+
+  // Assuntos processuais (Resolução 46 CNJ) — usado para ranking de matérias
+  const assuntos = (src.assuntos || [])
+    .map(a => a.nome).filter(Boolean).join('; ') || null;
+  const assunto_principal = (src.assuntos || []).find(a => a.principal)?.nome
+    || (src.assuntos || [])[0]?.nome
+    || null;
 
   const partes = src.partes || [];
 
-  // A API DataJud retorna p.polo = 'ATIVO'/'PASSIVO' (campo principal)
-  // e p.tipoParte.nome com o papel específico (Autor, Réu, etc.)
-  // O campo p.tipo não existe na resposta padrão — verificamos todos os formatos.
   const TIPOS_ATIVO   = ['Autor', 'Requerente', 'Reclamante', 'Impetrante', 'Embargante', 'Exequente', 'Apelante'];
   const TIPOS_PASSIVO = ['Réu', 'Requerido', 'Reclamado', 'Impetrado', 'Embargado', 'Executado', 'Apelado'];
 
@@ -174,23 +188,31 @@ function parsear(src) {
   }
 
   // Movimentações
+  // CORREÇÃO: complementosTabelados tem 4 campos:
+  //   nome     = texto legível ("Petição Inicial") ← usar este
+  //   descricao = rótulo técnico ("tipo_de_peticao") ← NÃO usar como texto
+  //   valor    = código numérico (57)
+  //   codigo   = código da variável
   const movimentacoes = (src.movimentos || []).map(m => {
     const data = m.dataHora ? m.dataHora.substring(0, 10) : null;
 
     let texto = m.nome || '';
-    // complementosTabelados.nome = texto legível (ex: "competência exclusiva")
-    // complementosTabelados.descricao = tipo do campo (ex: "tipo_de_distribuicao_redistribuicao")
     const comps = [
-      ...(m.complementosTabelados      || []),
-      ...(m.complementosExtrasTabelados || []),
-    ].map(c => c.nome || c.descricao || '').filter(Boolean);
+      ...(m.complementosTabelados       || []),
+      ...(m.complementosExtrasTabelados  || []),
+    ].map(c => c.nome).filter(Boolean); // Usa APENAS c.nome — nunca c.descricao
     if (comps.length) texto += ' — ' + comps.join(', ');
 
     return { data, tipo: m.codigo ? String(m.codigo) : null, texto: texto.trim() };
   }).filter(m => m.texto && m.texto.length >= 5);
 
   return {
-    dados: { vara, acao, polo_ativo, polo_passivo, habilitados, data_ajuizamento },
+    dados: {
+      vara, acao, classe_codigo, grau,
+      polo_ativo, polo_passivo, habilitados,
+      data_ajuizamento, valor_causa, comarca_ibge,
+      assuntos, assunto_principal,
+    },
     movimentacoes,
   };
 }

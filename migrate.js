@@ -165,6 +165,8 @@ try {
   await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS valor_homologado NUMERIC(14,2)`).catch(() => {});
   await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS comarca TEXT`).catch(() => {});
   await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS classe_processual TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS assunto_principal TEXT`).catch(() => {});
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS valor_causa NUMERIC(14,2)`).catch(() => {});
   await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS requer_revisao BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
   await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS classificado_por TEXT`).catch(() => {});
   await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS classificado_em TIMESTAMPTZ`).catch(() => {});
