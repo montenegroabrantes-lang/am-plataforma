@@ -77,7 +77,7 @@ processosRouter.get('/', async (req, res) => {
   const {
     status, tribunal, vara, polo_passivo, ano, busca, situacao_atual, urgente,
     localizacao_processual, tipo_requisicao, periodo,
-    produto_id, etapa, tempo_parado_min,
+    produto_id, etapa, tempo_parado_min, funcao_cliente,
     limite = 30,
   } = req.query;
   const page   = Number(req.query.page || req.query.pagina || 1);
@@ -107,6 +107,7 @@ processosRouter.get('/', async (req, res) => {
     params.push(tempoNum);
     condicoes.push(`AND EXTRACT(DAY FROM NOW() - (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id)) >= $${params.length}`);
   }
+  if (funcao_cliente)         { params.push(`%${funcao_cliente}%`);  condicoes.push(`AND c.cargo ILIKE $${params.length}`); }
   if (busca) {
     params.push(`%${busca}%`, `%${busca}%`, `%${busca}%`, `%${busca}%`);
     condicoes.push(`AND (p.numero ILIKE $${params.length - 3} OR c.nome ILIKE $${params.length - 2} OR p.polo_ativo ILIKE $${params.length - 1} OR p.polo_passivo ILIKE $${params.length})`);
@@ -134,7 +135,7 @@ processosRouter.get('/', async (req, res) => {
             p.requer_revisao, p.classificado_por, p.classificado_em, p.criado_em,
             p.data_distribuicao,
             EXTRACT(YEAR FROM p.data_distribuicao)::int AS ano,
-            c.nome AS cliente_nome,
+            c.nome AS cliente_nome, c.cargo AS cliente_cargo,
             pr.nome AS produto_nome,
             ult.data_movimentacao AS ultima_movimentacao,
             ult.texto             AS ultima_mov_texto,
