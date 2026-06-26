@@ -42,6 +42,7 @@ function http() {
       'Content-Type': 'application/json',
     },
     timeout: 35_000,
+    validateStatus: () => true, // nunca lança exceção por status — tratamos manualmente
   });
 }
 
@@ -63,12 +64,15 @@ export async function consultarProcesso(tribunal, numero) {
 
     if (resp.status === 429) {
       if (tentativa < 3) {
-        console.warn(`[DataJud] 429 para ${numero} — aguardando ${tentativa * 5}s antes de tentar novamente (${tentativa}/3)`);
-        await new Promise(r => setTimeout(r, tentativa * 5_000));
+        const espera = tentativa * 5_000;
+        console.warn(`[DataJud] 429 para ${numero} — aguardando ${espera / 1000}s (tentativa ${tentativa}/3)`);
+        await new Promise(r => setTimeout(r, espera));
         continue;
       }
       throw new Error(`DataJud sobrecarregado (429) após 3 tentativas — tente novamente em alguns minutos.`);
     }
+
+    if (resp.status >= 400) throw new Error(`DataJud HTTP ${resp.status} para ${numero}`);
 
     const hit = resp.data?.hits?.hits?.[0]?._source;
     if (!hit) return null;
@@ -125,6 +129,12 @@ export async function consultarAtualizados(tribunal, desde, nossosPuro = null) {
     };
 
     const resp = await http().post(`/${indice}/_search`, body);
+    if (resp.status === 429) {
+      console.warn(`[DataJud] ${tribunal} pág.${pagina + 1}: 429 sobrecarregado — aguardando 10s`);
+      await new Promise(r => setTimeout(r, 10_000));
+      continue;
+    }
+    if (resp.status >= 400) throw new Error(`DataJud HTTP ${resp.status} — ${tribunal}`);
     const hits = resp.data?.hits?.hits || [];
     pagina++;
 
