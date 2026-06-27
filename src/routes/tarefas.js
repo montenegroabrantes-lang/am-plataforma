@@ -163,8 +163,8 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
 
 // PATCH /api/tarefas/:id/status — atualiza status da tarefa
 tarefasRouter.patch('/:id/status', async (req, res) => {
-  const { status, observacao_devolucao } = req.body;
-  const validos = ['pendente','em_execucao','aguardando_validacao','concluida','devolvida'];
+  const { status, observacao_devolucao, justificativa_cancelamento } = req.body;
+  const validos = ['pendente','em_execucao','aguardando_validacao','concluida','devolvida','cancelada'];
 
   if (!validos.includes(status)) {
     return res.status(400).json({ ok: false, erro: `Status inválido. Válidos: ${validos.join(', ')}` });
@@ -173,16 +173,20 @@ tarefasRouter.patch('/:id/status', async (req, res) => {
   const tarefa = await db.queryOne('SELECT * FROM tarefas WHERE id = $1', [req.params.id]);
   if (!tarefa) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
 
-  // Junior só pode mover para em_execucao ou aguardando_validacao
-  if (req.user.perfil === 'junior' && ['concluida','devolvida'].includes(status)) {
-    return res.status(403).json({ ok: false, erro: 'Apenas o Master pode concluir ou devolver tarefas.' });
+  if (req.user.perfil === 'junior' && ['concluida','devolvida','cancelada'].includes(status)) {
+    return res.status(403).json({ ok: false, erro: 'Apenas o Master pode concluir, devolver ou cancelar tarefas.' });
+  }
+
+  if (status === 'cancelada' && !justificativa_cancelamento?.trim()) {
+    return res.status(400).json({ ok: false, erro: 'Justificativa é obrigatória para cancelar a tarefa.' });
   }
 
   const concluida_em = status === 'concluida' ? new Date() : null;
 
   await db.execute(
-    `UPDATE tarefas SET status = $1, observacao_devolucao = $2, concluida_em = $3 WHERE id = $4`,
-    [status, observacao_devolucao || null, concluida_em, req.params.id]
+    `UPDATE tarefas SET status = $1, observacao_devolucao = $2, concluida_em = $3,
+     justificativa_cancelamento = $4 WHERE id = $5`,
+    [status, observacao_devolucao || null, concluida_em, justificativa_cancelamento || null, req.params.id]
   );
 
   res.json({ ok: true });
