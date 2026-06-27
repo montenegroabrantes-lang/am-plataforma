@@ -199,13 +199,15 @@ clientesRouter.post('/', async (req, res) => {
 
 // PATCH /api/clientes/:id
 clientesRouter.patch('/:id', async (req, res) => {
-  const campos = ['nome','whatsapp','email','cargo','orgao','periodo_vinculo','vinculo_inicio','vinculo_fim','polo_passivo','ativo','vinculo_ativo'];
+  const campos      = ['nome','whatsapp','email','cargo','orgao','periodo_vinculo','vinculo_inicio','vinculo_fim','polo_passivo','ativo','vinculo_ativo'];
+  const camposData  = new Set(['vinculo_inicio','vinculo_fim']);
   const updates = [];
   const params  = [];
 
   for (const campo of campos) {
     if (req.body[campo] !== undefined) {
-      params.push(req.body[campo]);
+      const valor = camposData.has(campo) ? (req.body[campo] || null) : req.body[campo];
+      params.push(valor);
       updates.push(`${campo} = $${params.length}`);
     }
   }
