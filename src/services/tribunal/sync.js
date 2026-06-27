@@ -78,7 +78,7 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
            valor_causa        = COALESCE($9,  valor_causa),
            comarca            = COALESCE($10, comarca),
            assunto_principal  = COALESCE($11, assunto_principal),
-           situacao_atual     = CASE WHEN situacao_atual IS NULL AND $13 IS NOT NULL THEN $13 ELSE situacao_atual END,
+           situacao_atual     = CASE WHEN situacao_atual IS NULL AND $13::text IS NOT NULL THEN $13::text ELSE situacao_atual END,
            importado_pje      = true,
            atualizado_em      = NOW()
        WHERE id = $12`,
