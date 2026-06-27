@@ -136,7 +136,7 @@ clientesRouter.post('/:id/criar-tarefas-protocolo', apenasMaster, async (req, re
 
 // POST /api/clientes
 clientesRouter.post('/', async (req, res) => {
-  const { nome, cpf, whatsapp, email, cargo, orgao, periodo_vinculo, polo_passivo, lgpd_consentimento, vinculo_ativo } = req.body;
+  const { nome, cpf, whatsapp, email, cargo, orgao, periodo_vinculo, vinculo_inicio, vinculo_fim, polo_passivo, lgpd_consentimento, vinculo_ativo } = req.body;
 
   if (!nome || !cpf) return res.status(400).json({ ok: false, erro: 'nome e cpf são obrigatórios.' });
 
@@ -145,13 +145,15 @@ clientesRouter.post('/', async (req, res) => {
   try {
     const [novo] = await db.query(
       `INSERT INTO clientes (nome, cpf, whatsapp, email, cargo, orgao, periodo_vinculo,
-              polo_passivo, lgpd_consentimento, lgpd_data, vinculo_ativo,
+              vinculo_inicio, vinculo_fim, polo_passivo, lgpd_consentimento, lgpd_data, vinculo_ativo,
               master_responsavel_id, cadastrado_por)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        RETURNING id, nome, cpf`,
       [
         nome.trim(), cpf.replace(/\D/g, ''), whatsapp || null, email || null,
-        cargo || null, orgao || null, periodo_vinculo || null, polo_passivo || null,
+        cargo || null, orgao || null, periodo_vinculo || null,
+        vinculo_inicio || null, vinculo_fim || null,
+        polo_passivo || null,
         lgpd_consentimento ?? false,
         lgpd_consentimento ? new Date() : null,
         vinculo_ativo !== false,
@@ -197,7 +199,7 @@ clientesRouter.post('/', async (req, res) => {
 
 // PATCH /api/clientes/:id
 clientesRouter.patch('/:id', async (req, res) => {
-  const campos = ['nome','whatsapp','email','cargo','orgao','periodo_vinculo','polo_passivo','ativo','vinculo_ativo'];
+  const campos = ['nome','whatsapp','email','cargo','orgao','periodo_vinculo','vinculo_inicio','vinculo_fim','polo_passivo','ativo','vinculo_ativo'];
   const updates = [];
   const params  = [];
 

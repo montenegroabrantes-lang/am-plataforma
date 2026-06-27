@@ -277,7 +277,7 @@ processosRouter.get('/:id', async (req, res) => {
 // POST /api/processos — cadastro manual por número
 processosRouter.post('/', async (req, res) => {
   const { numero, tribunal, sistema, grau = '1', cliente_id, produto_id, master_responsavel_id,
-          vara, acao, polo_ativo, polo_passivo } = req.body;
+          vara, acao, polo_ativo, polo_passivo, periodo_inicio, periodo_fim } = req.body;
 
   if (!numero || !tribunal) {
     return res.status(400).json({ ok: false, erro: 'numero e tribunal são obrigatórios.' });
@@ -303,12 +303,13 @@ processosRouter.post('/', async (req, res) => {
   try {
     const [novo] = await db.query(
       `INSERT INTO processos (numero, tribunal, sistema, grau, vara, acao, polo_ativo, polo_passivo,
-                              cliente_id, produto_id, master_responsavel_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                              cliente_id, produto_id, master_responsavel_id, periodo_inicio, periodo_fim)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        RETURNING id, numero, tribunal, sistema, grau`,
       [numero.trim(), tribunal, sistemaFinal, grau, vara ?? null, acao ?? null,
        polo_ativo ?? null, polo_passivo ?? null,
-       cliente_id ?? null, produto_id ?? null, masterId]
+       cliente_id ?? null, produto_id ?? null, masterId,
+       periodo_inicio ?? null, periodo_fim ?? null]
     );
 
     await registrarAuditoria({
@@ -335,7 +336,7 @@ processosRouter.patch('/:id', async (req, res) => {
   if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
   if (!podeAcessarProcesso(req.user, dono)) return res.status(403).json({ ok: false, erro: 'Acesso negado a este processo.' });
 
-  const campos  = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas'];
+  const campos  = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas', 'periodo_inicio', 'periodo_fim'];
   const updates = [];
   const params  = [];
 

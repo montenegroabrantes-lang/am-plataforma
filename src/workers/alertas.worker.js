@@ -2,11 +2,16 @@ import { Worker } from 'bullmq';
 import { redis }  from '../cache/redis.js';
 import { db }     from '../db/index.js';
 import { enviarAlerta } from '../services/digisac/index.js';
+import { verificarCiclosRecorrentes } from '../services/ciclosRecorrentes.js';
 
 export function criarAlertasWorker() {
   return new Worker('alertas', async job => {
     if (job.name === 'lembretes-diarios') {
       await enviarLembretesDiarios();
+    }
+    if (job.name === 'ciclos-recorrentes') {
+      const { tarefas } = await verificarCiclosRecorrentes();
+      console.log(`[Ciclos] Verificação diária concluída — ${tarefas} tarefas criadas.`);
     }
   }, { connection: redis, concurrency: 1 });
 }

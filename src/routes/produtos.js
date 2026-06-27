@@ -18,14 +18,14 @@ produtosRouter.get('/', async (req, res) => {
 // POST /api/produtos — criar produto
 produtosRouter.post('/', apenasMaster, async (req, res) => {
   const { nome, polo_passivo_padrao, codigo_assunto_pje,
-          tribunais_padrao, cargos_elegiveis, orgaos_elegiveis } = req.body;
+          tribunais_padrao, cargos_elegiveis, orgaos_elegiveis, intervalo_meses } = req.body;
 
   if (!nome) return res.status(400).json({ ok: false, erro: 'nome é obrigatório.' });
 
   const [novo] = await db.query(
     `INSERT INTO produtos (nome, polo_passivo_padrao, codigo_assunto_pje,
-                           tribunais_padrao, cargos_elegiveis, orgaos_elegiveis)
-     VALUES ($1,$2,$3,$4,$5,$6)
+                           tribunais_padrao, cargos_elegiveis, orgaos_elegiveis, intervalo_meses)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
      RETURNING *`,
     [
       nome.trim(),
@@ -34,6 +34,7 @@ produtosRouter.post('/', apenasMaster, async (req, res) => {
       tribunais_padrao    || null,
       cargos_elegiveis    || null,
       orgaos_elegiveis    || null,
+      intervalo_meses     || null,
     ]
   );
   // Varrer clientes elegíveis em background
@@ -49,7 +50,7 @@ produtosRouter.post('/', apenasMaster, async (req, res) => {
 // PATCH /api/produtos/:id — atualizar produto
 produtosRouter.patch('/:id', apenasMaster, async (req, res) => {
   const campos = ['nome', 'polo_passivo_padrao', 'codigo_assunto_pje',
-                  'tribunais_padrao', 'cargos_elegiveis', 'orgaos_elegiveis', 'ativo'];
+                  'tribunais_padrao', 'cargos_elegiveis', 'orgaos_elegiveis', 'ativo', 'intervalo_meses'];
   const updates = [];
   const params  = [];
 

@@ -79,7 +79,19 @@ export async function iniciarWorkers() {
     }
   );
 
-  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h) e Alertas WhatsApp (08h) iniciados.');
+  // Verificação diária de ciclos recorrentes (FGTS Remanescente, etc.) às 7h
+  await alertasQueue.add(
+    'ciclos-recorrentes',
+    {},
+    {
+      repeat:           { pattern: '0 7 * * *' },
+      jobId:            'ciclos-recorrentes-diario',
+      removeOnComplete: 3,
+      removeOnFail:     3,
+    }
+  );
+
+  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h), Alertas WhatsApp (08h) e Ciclos Recorrentes (07h) iniciados.');
 }
 
 // Dispara sync imediato de um processo — fila separada, não bloqueia pelo lote
