@@ -137,6 +137,10 @@ processosRouter.get('/', async (req, res) => {
             p.requer_revisao, p.classificado_por, p.classificado_em, p.criado_em,
             p.data_distribuicao,
             EXTRACT(YEAR FROM p.data_distribuicao)::int AS ano,
+            p.data_conclusao_bloqueio,
+            CASE WHEN p.situacao_atual = 'concluso_para_bloqueio' AND p.data_conclusao_bloqueio IS NOT NULL
+                 THEN EXTRACT(DAY FROM NOW() - p.data_conclusao_bloqueio)::int
+                 ELSE NULL END AS dias_concluso,
             c.nome AS cliente_nome, c.cargo AS cliente_cargo,
             pr.nome AS produto_nome,
             ult.data_movimentacao AS ultima_movimentacao,
@@ -455,7 +459,8 @@ processosRouter.patch('/:id/situacao', async (req, res) => {
   if (!podeAcessarProcesso(req.user, dono)) return res.status(403).json({ ok: false, erro: 'Acesso negado.' });
 
   const campos  = ['situacao_atual','etapa_atual','localizacao_processual','tipo_requisicao',
-                   'status_rpv','status_precatorio','status_alvara','valor_homologado','urgente'];
+                   'status_rpv','status_precatorio','status_alvara','valor_homologado','urgente',
+                   'data_conclusao_bloqueio'];
   const updates = [];
   const params  = [];
 

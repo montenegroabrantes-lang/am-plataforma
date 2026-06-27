@@ -106,6 +106,7 @@ async function iniciar() {
     await db.query('SELECT 1');
     dbOk = true;
     console.log('[DB] PostgreSQL conectado.');
+    await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS data_conclusao_bloqueio DATE`).catch(() => {});
     const { recarregarAiConfig } = await import('./config/ai.js');
     await recarregarAiConfig(db);
   } catch (err) {
