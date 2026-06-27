@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
+import { verificarElegibilidadeProduto } from '../services/elegibilidade.js';
 
 export const produtosRouter = Router();
 
@@ -35,6 +36,13 @@ produtosRouter.post('/', apenasMaster, async (req, res) => {
       orgaos_elegiveis    || null,
     ]
   );
+  // Varrer clientes elegíveis em background
+  verificarElegibilidadeProduto(novo.id, req.user.id)
+    .then(({ vinculados, tarefas }) => {
+      if (tarefas > 0) console.log(`[Elegibilidade] Produto "${novo.nome}": ${vinculados} clientes vinculados, ${tarefas} tarefas criadas.`);
+    })
+    .catch(err => console.warn('[Elegibilidade] Erro no produto:', err.message));
+
   res.status(201).json({ ok: true, produto: novo });
 });
 
@@ -59,6 +67,16 @@ produtosRouter.patch('/:id', apenasMaster, async (req, res) => {
     `UPDATE produtos SET ${updates.join(', ')} WHERE id = $${params.length}`,
     params
   );
+
+  // Se atualizou critérios de elegibilidade, re-varrer clientes
+  if (req.body.cargos_elegiveis !== undefined || req.body.orgaos_elegiveis !== undefined) {
+    verificarElegibilidadeProduto(req.params.id, req.user.id)
+      .then(({ vinculados, tarefas }) => {
+        if (tarefas > 0) console.log(`[Elegibilidade] Produto ${req.params.id} atualizado: ${vinculados} novos vínculos, ${tarefas} tarefas criadas.`);
+      })
+      .catch(err => console.warn('[Elegibilidade] Erro no PATCH produto:', err.message));
+  }
+
   res.json({ ok: true });
 });
 

@@ -5,6 +5,7 @@ import { db }        from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { criarPastaCliente, criarSubpasta, uploadPdf } from '../services/drive/index.js';
+import { verificarElegibilidadeCliente } from '../services/elegibilidade.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
@@ -180,21 +181,14 @@ clientesRouter.post('/', async (req, res) => {
       entidadeId: novo.id, valorDepois: novo, ip: req._ip,
     });
 
-    // Sugestões automáticas de produtos compatíveis com cargo + orgão
-    let sugestoes = [];
-    if (cargo || orgao) {
-      sugestoes = await db.query(
-        `SELECT id, nome, polo_passivo_padrao
-         FROM produtos
-         WHERE ativo = true
-           AND (cargos_elegiveis IS NULL OR cardinality(cargos_elegiveis) = 0 OR $1 = ANY(cargos_elegiveis))
-           AND (orgaos_elegiveis IS NULL OR cardinality(orgaos_elegiveis) = 0 OR $2 = ANY(orgaos_elegiveis))
-         ORDER BY nome`,
-        [cargo || null, orgao || null]
-      );
-    }
+    // Verificar elegibilidade e criar tarefas automaticamente em background
+    verificarElegibilidadeCliente(novo.id, req.user.id)
+      .then(({ vinculados, tarefas }) => {
+        if (tarefas > 0) console.log(`[Elegibilidade] ${novo.nome}: ${vinculados} teses vinculadas, ${tarefas} tarefas criadas.`);
+      })
+      .catch(err => console.warn('[Elegibilidade] Erro:', err.message));
 
-    res.status(201).json({ ok: true, cliente: novo, sugestoes });
+    res.status(201).json({ ok: true, cliente: novo });
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ ok: false, erro: 'CPF já cadastrado.' });
     throw e;
@@ -220,6 +214,13 @@ clientesRouter.patch('/:id', async (req, res) => {
   updates.push('atualizado_em = NOW()');
 
   await db.execute(`UPDATE clientes SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
+
+  // Se atualizou cargo ou órgão, re-verificar elegibilidade
+  if (req.body.cargo !== undefined || req.body.orgao !== undefined) {
+    verificarElegibilidadeCliente(req.params.id, req.user.id)
+      .catch(err => console.warn('[Elegibilidade] Erro no PATCH:', err.message));
+  }
+
   res.json({ ok: true });
 });
 
