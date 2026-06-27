@@ -53,6 +53,7 @@ const ETAPA_WHERE = {
   'Sentença':                `p.situacao_atual IN ('concluso_sentenca','sentenca_proferida','sentenca_publicada')`,
   'Contestação':             `p.situacao_atual IN ('contestacao_apresentada','impugnacao_contestacao','manifestacao_provas')`,
   'Inicial':                 `p.situacao_atual IN ('em_conhecimento','aguardando_contestacao')`,
+  'Concluso para Bloqueio':  `p.situacao_atual = 'concluso_para_bloqueio'`,
   'Sem classificação':       `p.situacao_atual IS NULL`,
 };
 
@@ -68,6 +69,7 @@ const ETAPA_CASE = `
     WHEN p.situacao_atual IN ('concluso_sentenca','sentenca_proferida','sentenca_publicada') THEN 'Sentença'
     WHEN p.situacao_atual IN ('contestacao_apresentada','impugnacao_contestacao','manifestacao_provas') THEN 'Contestação'
     WHEN p.situacao_atual IN ('em_conhecimento','aguardando_contestacao') THEN 'Inicial'
+    WHEN p.situacao_atual = 'concluso_para_bloqueio' THEN 'Concluso para Bloqueio'
     ELSE 'Sem classificação'
   END
 `;
