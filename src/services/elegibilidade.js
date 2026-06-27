@@ -15,7 +15,7 @@ function normalizar(str) {
 function corresponde(valor, lista) {
   if (!lista || lista.length === 0) return true; // sem restrição = aceita todos
   const v = normalizar(valor);
-  return lista.some(item => v.includes(normalizar(item)) || normalizar(item).includes(v));
+  return lista.some(item => normalizar(item) === v);
 }
 
 /**
