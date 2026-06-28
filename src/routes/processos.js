@@ -163,7 +163,23 @@ processosRouter.get('/', async (req, res) => {
     params
   );
 
-  res.json({ ok: true, processos: rows, total: Number(total), page, limite: Number(limite) });
+  // Buscar valores de classificação para os processos retornados
+  const ids = rows.map(r => r.id);
+  let classificacoes = [];
+  if (ids.length > 0) {
+    classificacoes = await db.query(
+      `SELECT processo_id, campo_id, valor FROM processo_classif WHERE processo_id = ANY($1)`,
+      [ids]
+    );
+  }
+  const classifMap = {};
+  for (const c of classificacoes) {
+    if (!classifMap[c.processo_id]) classifMap[c.processo_id] = {};
+    classifMap[c.processo_id][c.campo_id] = c.valor;
+  }
+  const processosComClassif = rows.map(r => ({ ...r, classif_valores: classifMap[r.id] || {} }));
+
+  res.json({ ok: true, processos: processosComClassif, total: Number(total), page, limite: Number(limite) });
 });
 
 // GET /api/processos/exportar — lista filtrada em texto para WhatsApp

@@ -90,7 +90,7 @@ app.use('/api/triagem',        autenticar, triagemRouter);
 app.use('/api/monitoramento', autenticar, monitoramentoRouter);
 app.use('/api/rankings',      autenticar, rankingsRouter);
 app.use('/api/polos-passivos',    autenticar, polosPassivosRouter);
-app.use('/api/classificacoes',    autenticar, classificacoesRouter);
+app.use('/api/classif',           autenticar, classificacoesRouter);
 // Webhook público — CNJ faz POST sem sessão do usuário
 app.use('/api/webhook',       webhookRouter);
 
@@ -119,6 +119,29 @@ async function iniciar() {
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS intervalo_meses INTEGER`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS observacao TEXT`).catch(() => {});
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS classificacao TEXT`).catch(() => {});
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS classif_campos (
+        id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        nome      TEXT NOT NULL UNIQUE,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS classif_opcoes (
+        id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        campo_id  UUID NOT NULL REFERENCES classif_campos(id) ON DELETE CASCADE,
+        nome      TEXT NOT NULL,
+        UNIQUE(campo_id, nome)
+      )
+    `).catch(() => {});
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS processo_classif (
+        processo_id UUID NOT NULL REFERENCES processos(id) ON DELETE CASCADE,
+        campo_id    UUID NOT NULL REFERENCES classif_campos(id) ON DELETE CASCADE,
+        valor       TEXT,
+        PRIMARY KEY (processo_id, campo_id)
+      )
+    `).catch(() => {});
     await db.query(`
       CREATE TABLE IF NOT EXISTS classificacoes_processuais (
         id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
