@@ -118,19 +118,7 @@ async function iniciar() {
     await db.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS vinculo_fim DATE`).catch(() => {});
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS intervalo_meses INTEGER`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS observacao TEXT`).catch(() => {});
-    await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS area_direito TEXT`).catch(() => {});
-    await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS fase_processual TEXT`).catch(() => {});
-    await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS instancia TEXT`).catch(() => {});
-    await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS rito TEXT`).catch(() => {});
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS classificacoes_processuais (
-        id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        categoria TEXT NOT NULL,
-        nome      TEXT NOT NULL,
-        criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        UNIQUE(categoria, nome)
-      )
-    `).catch(() => {});
+    await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS classificacao TEXT`).catch(() => {});
     await db.query(`
       CREATE TABLE IF NOT EXISTS polos_passivos (
         id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
