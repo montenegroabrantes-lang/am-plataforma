@@ -309,7 +309,7 @@ processosRouter.post('/', async (req, res) => {
       [numero.trim(), tribunal, sistemaFinal, grau, vara ?? null, acao ?? null,
        polo_ativo ?? null, polo_passivo ?? null,
        cliente_id ?? null, produto_id ?? null, masterId,
-       periodo_inicio ?? null, periodo_fim ?? null]
+       periodo_inicio || null, periodo_fim || null]
     );
 
     await registrarAuditoria({
@@ -336,13 +336,15 @@ processosRouter.patch('/:id', async (req, res) => {
   if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
   if (!podeAcessarProcesso(req.user, dono)) return res.status(403).json({ ok: false, erro: 'Acesso negado a este processo.' });
 
-  const campos  = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas', 'periodo_inicio', 'periodo_fim'];
+  const campos      = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas', 'periodo_inicio', 'periodo_fim'];
+  const camposData  = new Set(['periodo_inicio', 'periodo_fim']);
   const updates = [];
   const params  = [];
 
   for (const campo of campos) {
     if (req.body[campo] !== undefined) {
-      params.push(req.body[campo]);
+      const valor = camposData.has(campo) ? (req.body[campo] || null) : req.body[campo];
+      params.push(valor);
       updates.push(`${campo} = $${params.length}`);
     }
   }
