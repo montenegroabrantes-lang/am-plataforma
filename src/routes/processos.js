@@ -779,7 +779,12 @@ processosRouter.delete('/:id', apenasMaster, async (req, res) => {
   if (!antes) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
   if (!podeAcessarProcesso(req.user, antes)) return res.status(403).json({ ok: false, erro: 'Acesso negado a este processo.' });
 
-  await db.execute('DELETE FROM processos WHERE id = $1', [req.params.id]);
+  const pid = req.params.id;
+  await db.execute('DELETE FROM movimentacoes WHERE processo_id = $1', [pid]);
+  await db.execute('DELETE FROM agenda WHERE processo_id = $1', [pid]);
+  await db.execute('DELETE FROM documentos WHERE processo_id = $1', [pid]).catch(() => {});
+  await db.execute('UPDATE tarefas SET processo_id = NULL WHERE processo_id = $1', [pid]);
+  await db.execute('DELETE FROM processos WHERE id = $1', [pid]);
 
   await registrarAuditoria({
     usuarioId: req.user.id, acao: 'excluir', entidade: 'processo',
