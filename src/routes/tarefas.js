@@ -76,7 +76,7 @@ tarefasRouter.post('/', apenasMaster, async (req, res) => {
 
 // PATCH /api/tarefas/:id/concluir-com-numero — conclui tarefa de protocolo inserindo número CNJ
 tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
-  const { numero_processo } = req.body;
+  const { numero_processo, periodo_fim } = req.body;
 
   const CNJ_RE = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
   if (!numero_processo || !CNJ_RE.test(numero_processo.trim())) {
@@ -122,11 +122,11 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
     } else {
       const r = await pgClient.query(
         `INSERT INTO processos (numero, tribunal, sistema, grau, cliente_id, produto_id,
-                                master_responsavel_id, polo_passivo, sync_status)
-         VALUES ($1,$2,$3,'1',$4,$5,$6,$7,'aguardando_primeira_captura')
+                                master_responsavel_id, polo_passivo, periodo_fim, sync_status)
+         VALUES ($1,$2,$3,'1',$4,$5,$6,$7,$8,'aguardando_primeira_captura')
          RETURNING id`,
         [numeroLimpo, tribunal, sistema, tarefa.cliente_id, tarefa.produto_id,
-         masterId, tarefa.cliente_polo_passivo || null]
+         masterId, tarefa.cliente_polo_passivo || null, periodo_fim || null]
       );
       processoId = r.rows[0].id;
     }
