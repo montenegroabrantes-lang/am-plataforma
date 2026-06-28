@@ -130,6 +130,32 @@ async function iniciar() {
         ('União Federal'),('INSS'),('Município — Outro')
       ON CONFLICT (nome) DO NOTHING
     `).catch(() => {});
+    // Atualizar descrição de tarefas de ciclo recorrente existentes para incluir período
+    await db.query(`
+      UPDATE tarefas t
+      SET descricao = CONCAT(
+        'Protocolar processo — ', pr.nome, ' — ', c.nome,
+        ' | Período a solicitar: ',
+        TO_CHAR(DATE_TRUNC('month', p.periodo_fim + INTERVAL '1 month'), 'MM/YYYY'),
+        ' a ',
+        TO_CHAR(DATE_TRUNC('month', p.periodo_fim + (pr.intervalo_meses || ' months')::INTERVAL), 'MM/YYYY')
+      )
+      FROM cliente_produtos cp
+      JOIN clientes c ON c.id = cp.cliente_id
+      JOIN produtos pr ON pr.id = cp.produto_id
+      JOIN (
+        SELECT DISTINCT ON (cliente_id, produto_id) cliente_id, produto_id, periodo_fim
+        FROM processos
+        WHERE periodo_fim IS NOT NULL
+        ORDER BY cliente_id, produto_id, periodo_fim DESC
+      ) p ON p.cliente_id = cp.cliente_id AND p.produto_id = cp.produto_id
+      WHERE t.cliente_produto_id = cp.id
+        AND t.tipo = 'protocolar'
+        AND t.status NOT IN ('concluida', 'cancelada')
+        AND pr.intervalo_meses IS NOT NULL
+        AND t.descricao NOT LIKE '%Período a solicitar%'
+    `).catch(e => console.warn('[Migration] Atualização descrição tarefas ciclo:', e.message));
+
     const { recarregarAiConfig } = await import('./config/ai.js');
     await recarregarAiConfig(db);
   } catch (err) {
