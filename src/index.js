@@ -25,6 +25,7 @@ import { triagemRouter }       from './routes/triagem.js';
 import { monitoramentoRouter } from './routes/monitoramento.js';
 import { rankingsRouter }      from './routes/rankings.js';
 import { polosPassivosRouter } from './routes/polosPassivos.js';
+import { classificacoesRouter } from './routes/classificacoes.js';
 import { webhookRouter }       from './routes/webhook.js';
 
 // Middleware
@@ -88,7 +89,8 @@ app.use('/api/dashboard',    autenticar, dashboardRouter);
 app.use('/api/triagem',        autenticar, triagemRouter);
 app.use('/api/monitoramento', autenticar, monitoramentoRouter);
 app.use('/api/rankings',      autenticar, rankingsRouter);
-app.use('/api/polos-passivos', autenticar, polosPassivosRouter);
+app.use('/api/polos-passivos',    autenticar, polosPassivosRouter);
+app.use('/api/classificacoes',    autenticar, classificacoesRouter);
 // Webhook público — CNJ faz POST sem sessão do usuário
 app.use('/api/webhook',       webhookRouter);
 
@@ -116,6 +118,19 @@ async function iniciar() {
     await db.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS vinculo_fim DATE`).catch(() => {});
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS intervalo_meses INTEGER`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS observacao TEXT`).catch(() => {});
+    await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS area_direito TEXT`).catch(() => {});
+    await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS fase_processual TEXT`).catch(() => {});
+    await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS instancia TEXT`).catch(() => {});
+    await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS rito TEXT`).catch(() => {});
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS classificacoes_processuais (
+        id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        categoria TEXT NOT NULL,
+        nome      TEXT NOT NULL,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE(categoria, nome)
+      )
+    `).catch(() => {});
     await db.query(`
       CREATE TABLE IF NOT EXISTS polos_passivos (
         id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),

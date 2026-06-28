@@ -336,7 +336,7 @@ processosRouter.patch('/:id', async (req, res) => {
   if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
   if (!podeAcessarProcesso(req.user, dono)) return res.status(403).json({ ok: false, erro: 'Acesso negado a este processo.' });
 
-  const campos      = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas', 'periodo_inicio', 'periodo_fim'];
+  const campos      = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas', 'periodo_inicio', 'periodo_fim', 'area_direito', 'fase_processual', 'instancia', 'rito'];
   const camposData  = new Set(['periodo_inicio', 'periodo_fim']);
   const updates = [];
   const params  = [];
