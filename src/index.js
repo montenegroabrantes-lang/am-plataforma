@@ -120,6 +120,13 @@ async function iniciar() {
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS observacao TEXT`).catch(() => {});
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS classificacao TEXT`).catch(() => {});
     await db.query(`
+      CREATE TABLE IF NOT EXISTS classificacoes_processuais (
+        id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        nome      TEXT NOT NULL UNIQUE,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.query(`
       CREATE TABLE IF NOT EXISTS polos_passivos (
         id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         nome      TEXT NOT NULL UNIQUE,
