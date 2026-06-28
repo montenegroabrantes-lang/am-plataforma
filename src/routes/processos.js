@@ -134,7 +134,7 @@ processosRouter.get('/', async (req, res) => {
             p.visibilidade, p.compartilhado, p.master_responsavel_id,
             p.situacao_atual, p.urgente, p.etapa_atual, p.localizacao_processual,
             p.status_rpv, p.status_precatorio, p.status_alvara, p.tipo_requisicao,
-            p.requer_revisao, p.classificado_por, p.classificado_em, p.criado_em,
+            p.requer_revisao, p.classificado_por, p.classificado_em, p.criado_em, p.classificacao,
             p.data_distribuicao,
             EXTRACT(YEAR FROM p.data_distribuicao)::int AS ano,
             p.data_conclusao_bloqueio,
