@@ -54,6 +54,9 @@ const ETAPA_WHERE = {
   'Contestação':             `p.situacao_atual IN ('contestacao_apresentada','impugnacao_contestacao','manifestacao_provas')`,
   'Inicial':                 `p.situacao_atual IN ('em_conhecimento','aguardando_contestacao')`,
   'Concluso para Bloqueio':  `p.situacao_atual = 'concluso_para_bloqueio'`,
+  'Concluso para Sentença':  `p.situacao_atual = 'concluso_para_sentenca'`,
+  'Concluso':                `p.situacao_atual = 'concluso'`,
+  'Certidão NUMOPED':        `p.situacao_atual = 'certidao_numoped'`,
   'Sem classificação':       `p.situacao_atual IS NULL`,
 };
 
@@ -70,6 +73,9 @@ const ETAPA_CASE = `
     WHEN p.situacao_atual IN ('contestacao_apresentada','impugnacao_contestacao','manifestacao_provas') THEN 'Contestação'
     WHEN p.situacao_atual IN ('em_conhecimento','aguardando_contestacao') THEN 'Inicial'
     WHEN p.situacao_atual = 'concluso_para_bloqueio' THEN 'Concluso para Bloqueio'
+    WHEN p.situacao_atual = 'concluso_para_sentenca' THEN 'Concluso para Sentença'
+    WHEN p.situacao_atual = 'concluso' THEN 'Concluso'
+    WHEN p.situacao_atual = 'certidao_numoped' THEN 'Certidão NUMOPED'
     ELSE 'Sem classificação'
   END
 `;
