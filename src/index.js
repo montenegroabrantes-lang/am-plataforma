@@ -24,6 +24,7 @@ import { dashboardRouter }     from './routes/dashboard.js';
 import { triagemRouter }       from './routes/triagem.js';
 import { monitoramentoRouter } from './routes/monitoramento.js';
 import { rankingsRouter }      from './routes/rankings.js';
+import { polosPassivosRouter } from './routes/polosPassivos.js';
 import { webhookRouter }       from './routes/webhook.js';
 
 // Middleware
@@ -87,6 +88,7 @@ app.use('/api/dashboard',    autenticar, dashboardRouter);
 app.use('/api/triagem',        autenticar, triagemRouter);
 app.use('/api/monitoramento', autenticar, monitoramentoRouter);
 app.use('/api/rankings',      autenticar, rankingsRouter);
+app.use('/api/polos-passivos', autenticar, polosPassivosRouter);
 // Webhook público — CNJ faz POST sem sessão do usuário
 app.use('/api/webhook',       webhookRouter);
 
@@ -113,6 +115,21 @@ async function iniciar() {
     await db.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS vinculo_inicio DATE`).catch(() => {});
     await db.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS vinculo_fim DATE`).catch(() => {});
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS intervalo_meses INTEGER`).catch(() => {});
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS polos_passivos (
+        id        UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        nome      TEXT NOT NULL UNIQUE,
+        criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.query(`
+      INSERT INTO polos_passivos (nome) VALUES
+        ('Estado da Paraíba'),('Estado do Ceará'),('Estado do Rio Grande do Norte'),
+        ('Estado de Pernambuco'),('Município de João Pessoa'),('Município de Campina Grande'),
+        ('Município de Natal'),('Município de Fortaleza'),('Município de Recife'),
+        ('União Federal'),('INSS'),('Município — Outro')
+      ON CONFLICT (nome) DO NOTHING
+    `).catch(() => {});
     const { recarregarAiConfig } = await import('./config/ai.js');
     await recarregarAiConfig(db);
   } catch (err) {
