@@ -161,6 +161,16 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
   res.json({ ok: true, processo_id: processoId, numero: numeroLimpo });
 });
 
+// PATCH /api/tarefas/:id/observacao — salva observação livre
+tarefasRouter.patch('/:id/observacao', async (req, res) => {
+  const { observacao } = req.body;
+  await db.execute(
+    `UPDATE tarefas SET observacao = $1 WHERE id = $2`,
+    [observacao || null, req.params.id]
+  );
+  res.json({ ok: true });
+});
+
 // PATCH /api/tarefas/:id/status — atualiza status da tarefa
 tarefasRouter.patch('/:id/status', async (req, res) => {
   const { status, observacao_devolucao, justificativa_cancelamento } = req.body;

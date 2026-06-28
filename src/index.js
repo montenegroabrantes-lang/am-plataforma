@@ -115,6 +115,7 @@ async function iniciar() {
     await db.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS vinculo_inicio DATE`).catch(() => {});
     await db.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS vinculo_fim DATE`).catch(() => {});
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS intervalo_meses INTEGER`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS observacao TEXT`).catch(() => {});
     await db.query(`
       CREATE TABLE IF NOT EXISTS polos_passivos (
         id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
