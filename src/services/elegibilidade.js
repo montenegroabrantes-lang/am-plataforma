@@ -113,7 +113,7 @@ export async function verificarElegibilidadeProduto(produtoId, userId) {
   }
 
   const clientes = await db.query(
-    'SELECT id, nome, cargo, orgao FROM clientes WHERE ativo IS NOT FALSE'
+    'SELECT id, nome, cargo, orgao FROM clientes WHERE ativo IS NOT FALSE AND vinculo_ativo = true'
   );
 
   let vinculados = 0;

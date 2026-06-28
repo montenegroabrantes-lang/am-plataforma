@@ -24,7 +24,7 @@ export async function verificarCiclosRecorrentes() {
               c.nome AS cliente_nome, c.cargo, c.orgao, c.vinculo_inicio
        FROM cliente_produtos cp
        JOIN clientes c ON c.id = cp.cliente_id
-       WHERE cp.produto_id = $1 AND c.ativo IS NOT FALSE`,
+       WHERE cp.produto_id = $1 AND c.ativo IS NOT FALSE AND c.vinculo_ativo = true`,
       [prod.id]
     );
 
