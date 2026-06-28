@@ -76,13 +76,16 @@ export async function verificarCiclosRecorrentes() {
       if (tarefaPendente) continue;
 
       // Criar tarefa de novo ciclo
-      const mesAno = dataReferencia.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' });
+      const fmtMesAno = d => d.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' });
+      const dataFim = new Date(dataReferencia);
+      dataFim.setMonth(dataFim.getMonth() + prod.intervalo_meses - 1);
+      const periodoTexto = `${fmtMesAno(dataReferencia)} a ${fmtMesAno(dataFim)}`;
       await db.execute(
         `INSERT INTO tarefas (cliente_produto_id, tipo, descricao, urgencia, status)
          VALUES ($1, 'protocolar', $2, 'MEDIO', 'pendente')`,
         [
           v.cliente_produto_id,
-          `Protocolar processo — ${prod.nome} — ${v.cliente_nome} (novo ciclo a partir de ${mesAno})`,
+          `Protocolar processo — ${prod.nome} — ${v.cliente_nome} | Período a solicitar: ${periodoTexto}`,
         ]
       );
 
