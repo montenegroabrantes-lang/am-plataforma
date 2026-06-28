@@ -780,10 +780,15 @@ processosRouter.delete('/:id', apenasMaster, async (req, res) => {
   if (!podeAcessarProcesso(req.user, antes)) return res.status(403).json({ ok: false, erro: 'Acesso negado a este processo.' });
 
   const pid = req.params.id;
-  await db.execute('DELETE FROM movimentacoes WHERE processo_id = $1', [pid]);
-  await db.execute('DELETE FROM agenda WHERE processo_id = $1', [pid]);
+  await db.execute('DELETE FROM movimentacoes WHERE processo_id = $1', [pid]).catch(() => {});
+  await db.execute('DELETE FROM agenda WHERE processo_id = $1', [pid]).catch(() => {});
+  await db.execute('DELETE FROM prazos WHERE processo_id = $1', [pid]).catch(() => {});
+  await db.execute('DELETE FROM pecas WHERE processo_id = $1', [pid]).catch(() => {});
+  await db.execute('DELETE FROM honorarios WHERE processo_id = $1', [pid]).catch(() => {});
+  await db.execute('DELETE FROM notas WHERE processo_id = $1', [pid]).catch(() => {});
+  await db.execute('DELETE FROM audiencias WHERE processo_id = $1', [pid]).catch(() => {});
   await db.execute('DELETE FROM documentos WHERE processo_id = $1', [pid]).catch(() => {});
-  await db.execute('UPDATE tarefas SET processo_id = NULL WHERE processo_id = $1', [pid]);
+  await db.execute('UPDATE tarefas SET processo_id = NULL WHERE processo_id = $1', [pid]).catch(() => {});
   await db.execute('DELETE FROM processos WHERE id = $1', [pid]);
 
   await registrarAuditoria({
