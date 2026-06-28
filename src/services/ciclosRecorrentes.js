@@ -89,7 +89,7 @@ export async function verificarCiclosRecorrentes() {
         ]
       );
 
-      console.log(`[Ciclos] Tarefa criada: ${prod.nome} — ${v.cliente_nome} (ciclo ${mesAno})`);
+      console.log(`[Ciclos] Tarefa criada: ${prod.nome} — ${v.cliente_nome} | ${periodoTexto}`);
       totalTarefas++;
     }
   }
