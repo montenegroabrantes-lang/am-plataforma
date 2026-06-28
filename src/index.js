@@ -117,7 +117,7 @@ async function iniciar() {
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS intervalo_meses INTEGER`).catch(() => {});
     await db.query(`
       CREATE TABLE IF NOT EXISTS polos_passivos (
-        id        UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         nome      TEXT NOT NULL UNIQUE,
         criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
