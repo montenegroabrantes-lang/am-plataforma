@@ -698,9 +698,8 @@ processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
     }
 
     try {
-      const masterId   = req.user.pode_marcar_restrito ? null : req.user.id;
-      const loteParams = masterId ? [masterId] : [];
-      const filtroM    = masterId ? `AND p.master_responsavel_id = $1` : '';
+      const loteParams = [];
+      const filtroM    = '';
       const filtroPend = forcar ? '' : `AND (p.classificado_em IS NULL OR p.requer_revisao = true)`;
 
       const processos = await db.query(

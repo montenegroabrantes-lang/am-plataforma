@@ -37,19 +37,13 @@ triagemRouter.get('/', async (req, res) => {
   } = req.query;
 
   // Filtro de visibilidade e master (igual ao processos.js)
-  const { pode_marcar_restrito, perfil, id: userId, master_id } = req.user;
-  const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? userId : master_id);
+  const { pode_marcar_restrito } = req.user;
 
   const filterParams = [];
   function fp(val) { filterParams.push(val); return `$${filterParams.length}`; }
 
   const filterWheres = [`p.status IN ('ativo','suspenso')`];
 
-  // Restrição por master (visibilidade de dados por sócio)
-  if (masterId) {
-    filterWheres.push(`(p.master_responsavel_id = ${fp(masterId)} OR p.compartilhado = true)`);
-  }
-  // Oculta processos restritos para quem não tem permissão
   if (!pode_marcar_restrito) {
     filterWheres.push(`(p.visibilidade = 'normal' OR p.visibilidade IS NULL)`);
   }
