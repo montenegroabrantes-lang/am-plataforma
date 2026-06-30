@@ -5,20 +5,24 @@ import { criarBackupWorker }    from './backup.worker.js';
 import { criarAudienciaWorker }        from './audiencia.worker.js';
 import { criarSACWorker, agendarSACWorker } from './sac.worker.js';
 import { criarAlertasWorker }   from './alertas.worker.js';
-import { criarPublicacoesWorker } from './publicacoes.worker.js';
 
 let syncQueue;
 let individualSyncQueue;
 let backupQueue;
 let alertasQueue;
-let publicacoesQueue;
 
 export async function iniciarWorkers() {
   syncQueue           = new Queue('sync-tribunal', { connection: redis });
   individualSyncQueue = new Queue('sync-individual', { connection: redis });
   backupQueue         = new Queue('backup',          { connection: redis });
   alertasQueue        = new Queue('alertas',         { connection: redis });
-  publicacoesQueue    = new Queue('publicacoes',     { connection: redis });
+
+  // Limpa fila de publicações do Redis (legado — sync agora feito via script local)
+  try {
+    const pubQ = new Queue('publicacoes', { connection: redis });
+    await pubQ.obliterate({ force: true });
+    await pubQ.close();
+  } catch { /* ignora se já não existia */ }
 
   criarSyncWorker();
   criarSyncIndividualWorker();
@@ -110,4 +114,4 @@ export async function enfileirarSincronizarProcesso(processoId) {
   });
 }
 
-export { syncQueue, individualSyncQueue, backupQueue, alertasQueue, publicacoesQueue };
+export { syncQueue, individualSyncQueue, backupQueue, alertasQueue };
