@@ -38,12 +38,15 @@ publicacoesRouter.get('/', async (req, res) => {
   res.json({ ok: true, publicacoes: rows, total: Number(total) });
 });
 
-// GET /api/publicacoes/nao-lidas — contador para badge
+// GET /api/publicacoes/nao-lidas — contador para badge + última sync
 publicacoesRouter.get('/nao-lidas', async (req, res) => {
   const [{ total }] = await db.query(
     `SELECT COUNT(*) AS total FROM publicacoes WHERE lido = false AND cancelada = false`
   );
-  res.json({ ok: true, total: Number(total) });
+  const sync = await db.queryOne(
+    `SELECT valor FROM configuracoes WHERE categoria = 'publicacoes' AND chave = 'ultima_sync'`
+  ).catch(() => null);
+  res.json({ ok: true, total: Number(total), ultima_sync: sync?.valor || null });
 });
 
 // PATCH /api/publicacoes/:id/lida — marca como lida
@@ -117,6 +120,13 @@ export async function importarPublicacoesHandler(req, res) {
 
     if (result[0]?.inserted) inseridas++;
   }
+
+  // Registra data/hora da última sincronização
+  await db.query(
+    `INSERT INTO configuracoes (categoria, chave, valor) VALUES ('publicacoes','ultima_sync',$1)
+     ON CONFLICT (categoria, chave) DO UPDATE SET valor = $1, atualizado_em = NOW()`,
+    [new Date().toISOString()]
+  ).catch(() => {});
 
   console.log(`[Comunica/Import] ${inseridas} novas, ${vinculadas} vinculadas (${items.length} recebidas).`);
   res.json({ ok: true, inseridas, vinculadas });
