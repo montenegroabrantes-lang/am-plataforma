@@ -5,10 +5,8 @@ export const rankingsRouter = Router();
 
 // GET /api/rankings
 rankingsRouter.get('/', async (req, res) => {
-  const { id, perfil, master_id, pode_marcar_restrito } = req.user;
-  const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? id : master_id);
-  const params   = masterId ? [masterId] : [];
-  const filtroP  = masterId ? 'AND p.master_responsavel_id = $1' : '';
+  const params  = [];
+  const filtroP = '';
 
   const [
     rankingDemandas,

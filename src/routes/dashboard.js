@@ -5,13 +5,10 @@ export const dashboardRouter = Router();
 
 // GET /api/dashboard — métricas da tela inicial
 dashboardRouter.get('/', async (req, res) => {
-  const { id, perfil, master_id, pode_marcar_restrito } = req.user;
-  const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? id : master_id);
-
-  const params   = masterId ? [masterId] : [];
-  const filtroP  = masterId ? 'AND p.master_responsavel_id = $1' : '';
-  const filtroT  = masterId ? 'AND t.validado_por = $1'          : '';
-  const filtroM  = masterId ? 'AND p.master_responsavel_id = $1' : '';
+  const params  = [];
+  const filtroP = '';
+  const filtroT = '';
+  const filtroM = '';
 
   const [
     totaisProcessos,

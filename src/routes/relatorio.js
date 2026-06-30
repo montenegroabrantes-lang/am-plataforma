@@ -5,12 +5,10 @@ export const relatorioRouter = Router();
 
 // GET /api/relatorio — relatório gerencial consolidado
 relatorioRouter.get('/', async (req, res) => {
-  const { id, perfil, master_id, pode_marcar_restrito } = req.user;
-  const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? id : master_id);
-  const params   = masterId ? [masterId] : [];
-  const fP = masterId ? 'AND p.master_responsavel_id = $1' : '';
-  const fM = masterId ? 'AND master_responsavel_id = $1'   : '';
-  const fT = masterId ? 'AND validado_por = $1'            : '';
+  const params = [];
+  const fP = '';
+  const fM = '';
+  const fT = '';
 
   const [
     processos,
@@ -107,13 +105,9 @@ relatorioRouter.get('/sac', async (req, res) => {
 // GET /api/relatorio/financeiro — detalhamento financeiro por período
 relatorioRouter.get('/financeiro', async (req, res) => {
   const { de, ate } = req.query;
-  const { id, perfil, master_id, pode_marcar_restrito } = req.user;
-  const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? id : master_id);
-
   const params = [];
   const condicoes = ['1=1'];
 
-  if (masterId) { params.push(masterId); condicoes.push(`h.master_responsavel_id = $${params.length}`); }
   if (de)  { params.push(de);  condicoes.push(`h.criado_em >= $${params.length}`); }
   if (ate) { params.push(ate); condicoes.push(`h.criado_em <= $${params.length}`); }
 
@@ -135,12 +129,8 @@ relatorioRouter.get('/financeiro', async (req, res) => {
 // GET /api/relatorio/diligencias?dias=30 — processos sem movimentação há X dias, agrupados por vara
 relatorioRouter.get('/diligencias', async (req, res) => {
   const dias = Math.min(Number(req.query.dias) || 30, 365);
-  const { id, perfil, master_id, pode_marcar_restrito } = req.user;
-  const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? id : master_id);
-
   const params  = [dias];
-  const filtroM = masterId ? `AND p.master_responsavel_id = $2` : '';
-  if (masterId) params.push(masterId);
+  const filtroM = '';
 
   const rows = await db.query(
     `SELECT

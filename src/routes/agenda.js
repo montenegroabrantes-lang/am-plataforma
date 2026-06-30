@@ -7,17 +7,8 @@ export const agendaRouter = Router();
 // GET /api/agenda — lista audiências (com filtros de data e advogado)
 agendaRouter.get('/', async (req, res) => {
   const { de, ate, advogado_id, processo_id } = req.query;
-  const { id, perfil, master_id, pode_marcar_restrito } = req.user;
-
   const params = [];
   const condicoes = ['1=1'];
-
-  // Filtro de visibilidade por sócio
-  if (!pode_marcar_restrito) {
-    const masterId = perfil === 'master' ? id : master_id;
-    params.push(masterId);
-    condicoes.push(`p.master_responsavel_id = $${params.length}`);
-  }
 
   if (de)          { params.push(de);          condicoes.push(`a.data_hora >= $${params.length}`); }
   if (ate)         { params.push(ate);          condicoes.push(`a.data_hora <= $${params.length}`); }
