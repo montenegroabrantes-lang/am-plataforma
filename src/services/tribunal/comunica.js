@@ -13,6 +13,10 @@ function http() {
     baseURL: BASE,
     timeout: 30_000,
     validateStatus: () => true,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; AM-Plataforma/1.0; juridico)',
+      'Accept': 'application/json',
+    },
   });
 }
 
