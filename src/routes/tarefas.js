@@ -20,7 +20,7 @@ tarefasRouter.get('/', async (req, res) => {
   const rows = await db.query(
     `SELECT t.*, p.numero AS processo_numero, p.tribunal,
             u.nome AS atribuido_nome, m.nome AS validador_nome,
-            cl.nome AS cliente_nome, pr.nome AS produto_nome
+            cl.nome AS cliente_nome, cl.cpf AS cliente_cpf, pr.nome AS produto_nome
      FROM tarefas t
      LEFT JOIN processos p  ON p.id = t.processo_id
      LEFT JOIN usuarios u   ON u.id = t.atribuido_a
