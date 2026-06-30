@@ -118,6 +118,8 @@ async function iniciar() {
     console.log('[DB] PostgreSQL conectado.');
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS data_conclusao_bloqueio DATE`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS justificativa_cancelamento TEXT`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas DROP CONSTRAINT IF EXISTS tarefas_status_check`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD CONSTRAINT tarefas_status_check CHECK (status IN ('pendente','em_execucao','aguardando_validacao','concluida','devolvida','cancelada','nao_verificada'))`).catch(() => {});
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS periodo_inicio DATE`).catch(() => {});
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS periodo_fim DATE`).catch(() => {});
     await db.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS vinculo_inicio DATE`).catch(() => {});
