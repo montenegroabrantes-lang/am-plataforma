@@ -69,7 +69,8 @@ publicacoesRouter.patch('/marcar-todas-lidas', apenasMaster, async (req, res) =>
 });
 
 // POST /api/publicacoes/importar — recebe publicações coletadas pelo script local (IP residencial)
-publicacoesRouter.post('/importar', async (req, res) => {
+// Exportado separadamente para ser montado SEM autenticar middleware
+export async function importarPublicacoesHandler(req, res) {
   const chaveEnv = process.env.SYNC_KEY || 'am-sync-2026';
   if (req.headers['x-sync-key'] !== chaveEnv) {
     return res.status(401).json({ ok: false, erro: 'Chave inválida.' });
@@ -119,7 +120,7 @@ publicacoesRouter.post('/importar', async (req, res) => {
 
   console.log(`[Comunica/Import] ${inseridas} novas, ${vinculadas} vinculadas (${items.length} recebidas).`);
   res.json({ ok: true, inseridas, vinculadas });
-});
+}
 
 // POST /api/publicacoes/sincronizar — dispara sync manual imediato (Master)
 publicacoesRouter.post('/sincronizar', apenasMaster, async (req, res) => {

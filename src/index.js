@@ -27,7 +27,7 @@ import { rankingsRouter }      from './routes/rankings.js';
 import { polosPassivosRouter } from './routes/polosPassivos.js';
 import { classificacoesRouter } from './routes/classificacoes.js';
 import { webhookRouter }       from './routes/webhook.js';
-import { publicacoesRouter }   from './routes/publicacoes.js';
+import { publicacoesRouter, importarPublicacoesHandler } from './routes/publicacoes.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -94,6 +94,8 @@ app.use('/api/polos-passivos',    autenticar, polosPassivosRouter);
 app.use('/api/classif',           autenticar, classificacoesRouter);
 // Webhook público — CNJ faz POST sem sessão do usuário
 app.use('/api/webhook',       webhookRouter);
+// /importar usa x-sync-key própria (sem JWT) — script local envia publicações do Mac
+app.post('/api/publicacoes/importar', importarPublicacoesHandler);
 app.use('/api/publicacoes',   autenticar, publicacoesRouter);
 
 // Global error handler — captura erros não tratados nas rotas
