@@ -94,6 +94,12 @@ app.use('/api/classif',           autenticar, classificacoesRouter);
 // Webhook público — CNJ faz POST sem sessão do usuário
 app.use('/api/webhook',       webhookRouter);
 
+// Global error handler — captura erros não tratados nas rotas
+app.use((err, req, res, next) => {
+  console.error('[ERROR]', err.message, err.stack?.split('\n')[1]);
+  res.status(500).json({ ok: false, erro: err.message || 'Erro interno do servidor.' });
+});
+
 // Sobe o servidor imediatamente para o healthcheck passar
 app.listen(PORT, () => {
   console.log(`[API] AM Plataforma escutando na porta ${PORT}`);
