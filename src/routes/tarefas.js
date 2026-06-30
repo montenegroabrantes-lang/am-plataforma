@@ -7,23 +7,10 @@ export const tarefasRouter = Router();
 // GET /api/tarefas — lista tarefas do usuário (ou todas para Master)
 tarefasRouter.get('/', async (req, res) => {
   const { status, urgencia, page = 1, limite = 50 } = req.query;
-  const { id, perfil, master_id } = req.user;
   const offset = (Number(page) - 1) * Number(limite);
 
   const params = [];
   const condicoes = ['1=1'];
-
-  // Junior vê só as suas; Master vê as suas e as dos juniors vinculados
-  if (perfil === 'junior') {
-    params.push(id);
-    condicoes.push(`t.atribuido_a = $${params.length}`);
-  } else {
-    // Master vê as tarefas dos seus juniors + as sem atribuição do seu pool
-    params.push(id);
-    condicoes.push(`(t.validado_por = $${params.length} OR t.atribuido_a IN (
-      SELECT id FROM usuarios WHERE master_id = $${params.length}
-    ) OR t.atribuido_a = $${params.length})`);
-  }
 
   if (status)   { params.push(status);   condicoes.push(`t.status = $${params.length}`); }
   if (urgencia) { params.push(urgencia); condicoes.push(`t.urgencia = $${params.length}`); }
