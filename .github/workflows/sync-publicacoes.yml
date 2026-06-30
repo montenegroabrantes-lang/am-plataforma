@@ -1,0 +1,57 @@
+name: Sync Publicações PJe
+
+on:
+  schedule:
+    - cron: '0 10 * * 1-6'   # 07h00 horário de Brasília (UTC-3) dias úteis
+  workflow_dispatch:           # permite disparar manualmente pelo GitHub
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Busca publicações na Comunica API e envia para Railway
+        env:
+          RAILWAY_URL: ${{ secrets.RAILWAY_URL }}
+          SYNC_KEY: ${{ secrets.SYNC_KEY }}
+        run: |
+          node - <<'EOF'
+          const OAB    = '23176';
+          const UF     = 'PB';
+          const DIAS   = 3;
+          const URL    = process.env.RAILWAY_URL;
+          const KEY    = process.env.SYNC_KEY || 'am-sync-2026';
+
+          const hoje   = new Date();
+          const inicio = new Date(hoje);
+          inicio.setDate(inicio.getDate() - DIAS);
+          const di = inicio.toISOString().substring(0, 10);
+          const df = hoje.toISOString().substring(0, 10);
+
+          console.log(`Buscando OAB ${OAB}/${UF} de ${di} até ${df}...`);
+
+          const itens = [];
+          let pagina = 1;
+          while (true) {
+            const url = `https://comunicaapi.pje.jus.br/api/v1/comunicacao?numeroOab=${OAB}&ufOab=${UF}&dataDisponibilizacaoInicio=${di}&dataDisponibilizacaoFim=${df}&pagina=${pagina}`;
+            const r = await fetch(url, { headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0' } });
+            if (!r.ok) { console.error(`Erro HTTP ${r.status}`); break; }
+            const data = await r.json();
+            if (data.status !== 'success') { console.error('Resposta inesperada:', JSON.stringify(data).substring(0,200)); break; }
+            itens.push(...(data.items || []));
+            console.log(`Pág.${pagina}: ${data.items?.length} itens (${itens.length}/${data.count})`);
+            if (itens.length >= data.count || !data.items?.length) break;
+            pagina++;
+          }
+
+          console.log(`Total: ${itens.length} publicações. Enviando para Railway...`);
+          if (!itens.length) { console.log('Nada a enviar.'); process.exit(0); }
+
+          const resp = await fetch(`${URL}/api/publicacoes/importar`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-sync-key': KEY },
+            body: JSON.stringify({ items: itens }),
+          });
+          const result = await resp.json();
+          if (!result.ok) { console.error('Erro ao importar:', result.erro); process.exit(1); }
+          console.log(`Importado — ${result.inseridas} novas, ${result.vinculadas} vinculadas.`);
+          EOF
