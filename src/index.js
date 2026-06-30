@@ -27,6 +27,7 @@ import { rankingsRouter }      from './routes/rankings.js';
 import { polosPassivosRouter } from './routes/polosPassivos.js';
 import { classificacoesRouter } from './routes/classificacoes.js';
 import { webhookRouter }       from './routes/webhook.js';
+import { publicacoesRouter }   from './routes/publicacoes.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -93,6 +94,7 @@ app.use('/api/polos-passivos',    autenticar, polosPassivosRouter);
 app.use('/api/classif',           autenticar, classificacoesRouter);
 // Webhook público — CNJ faz POST sem sessão do usuário
 app.use('/api/webhook',       webhookRouter);
+app.use('/api/publicacoes',   autenticar, publicacoesRouter);
 
 // Global error handler — captura erros não tratados nas rotas
 app.use((err, req, res, next) => {
@@ -193,6 +195,36 @@ async function iniciar() {
         ('União Federal'),('INSS'),('Município — Outro')
       ON CONFLICT (nome) DO NOTHING
     `).catch(() => {});
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS publicacoes (
+        id                    BIGINT PRIMARY KEY,
+        processo_id           UUID REFERENCES processos(id) ON DELETE SET NULL,
+        numero_processo_raw   TEXT NOT NULL DEFAULT '',
+        numero_processo       TEXT,
+        data_disponibilizacao DATE NOT NULL,
+        tribunal              TEXT,
+        tipo_comunicacao      TEXT,
+        tipo_documento        TEXT,
+        orgao                 TEXT,
+        texto                 TEXT,
+        link                  TEXT,
+        status                TEXT,
+        cancelada             BOOLEAN NOT NULL DEFAULT false,
+        lido                  BOOLEAN NOT NULL DEFAULT false,
+        lido_em               TIMESTAMPTZ,
+        lido_por              UUID REFERENCES usuarios(id),
+        criado_em             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_publicacoes_lido ON publicacoes (lido, data_disponibilizacao DESC)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_publicacoes_processo ON publicacoes (processo_id)`).catch(() => {});
+    // Cadastra OAB 23176/PB como padrão se ainda não existir
+    await db.query(`
+      INSERT INTO configuracoes (categoria, chave, valor)
+      VALUES ('publicacoes', 'oab_1', '23176:PB')
+      ON CONFLICT (categoria, chave) DO NOTHING
+    `).catch(() => {});
+
     // Atualizar descrição de tarefas de ciclo recorrente existentes para incluir período
     await db.query(`
       UPDATE tarefas t

@@ -5,17 +5,20 @@ import { criarBackupWorker }    from './backup.worker.js';
 import { criarAudienciaWorker }        from './audiencia.worker.js';
 import { criarSACWorker, agendarSACWorker } from './sac.worker.js';
 import { criarAlertasWorker }   from './alertas.worker.js';
+import { criarPublicacoesWorker } from './publicacoes.worker.js';
 
 let syncQueue;
 let individualSyncQueue;
 let backupQueue;
 let alertasQueue;
+let publicacoesQueue;
 
 export async function iniciarWorkers() {
   syncQueue           = new Queue('sync-tribunal', { connection: redis });
   individualSyncQueue = new Queue('sync-individual', { connection: redis });
   backupQueue         = new Queue('backup',          { connection: redis });
   alertasQueue        = new Queue('alertas',         { connection: redis });
+  publicacoesQueue    = new Queue('publicacoes',     { connection: redis });
 
   criarSyncWorker();
   criarSyncIndividualWorker();
@@ -23,6 +26,7 @@ export async function iniciarWorkers() {
   criarAudienciaWorker();
   criarSACWorker();
   criarAlertasWorker();
+  criarPublicacoesWorker();
   await agendarSACWorker();
 
   // Agenda sync de todos os processos a cada hora
@@ -91,7 +95,19 @@ export async function iniciarWorkers() {
     }
   );
 
-  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h), Alertas WhatsApp (08h) e Ciclos Recorrentes (07h) iniciados.');
+  // Busca publicações do PJe (Comunica/DJEN) todo dia às 6h
+  await publicacoesQueue.add(
+    'buscar-publicacoes',
+    {},
+    {
+      repeat:           { pattern: '0 6 * * *' },
+      jobId:            'publicacoes-diario-recorrente',
+      removeOnComplete: 3,
+      removeOnFail:     3,
+    }
+  );
+
+  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h), Alertas WhatsApp (08h), Ciclos Recorrentes (07h) e Publicações PJe (06h) iniciados.');
 }
 
 // Dispara sync imediato de um processo — fila separada, não bloqueia pelo lote
@@ -104,4 +120,4 @@ export async function enfileirarSincronizarProcesso(processoId) {
   });
 }
 
-export { syncQueue, individualSyncQueue, backupQueue, alertasQueue };
+export { syncQueue, individualSyncQueue, backupQueue, alertasQueue, publicacoesQueue };
