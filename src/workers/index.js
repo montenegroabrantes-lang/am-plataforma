@@ -26,7 +26,9 @@ export async function iniciarWorkers() {
   criarAudienciaWorker();
   criarSACWorker();
   criarAlertasWorker();
-  criarPublicacoesWorker();
+  // Worker de publicações desativado — Comunica API bloqueia IPs de nuvem (CloudFront 403)
+  // Sync feito via script local (~/sync-publicacoes.mjs) ou GitHub Actions com IP residencial
+  // criarPublicacoesWorker();
   await agendarSACWorker();
 
   // Agenda sync de todos os processos a cada hora
@@ -95,19 +97,7 @@ export async function iniciarWorkers() {
     }
   );
 
-  // Busca publicações do PJe (Comunica/DJEN) todo dia às 6h
-  await publicacoesQueue.add(
-    'buscar-publicacoes',
-    {},
-    {
-      repeat:           { pattern: '0 6 * * *' },
-      jobId:            'publicacoes-diario-recorrente',
-      removeOnComplete: 3,
-      removeOnFail:     3,
-    }
-  );
-
-  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h), Alertas WhatsApp (08h), Ciclos Recorrentes (07h) e Publicações PJe (06h) iniciados.');
+  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h), Alertas WhatsApp (08h) e Ciclos Recorrentes (07h) iniciados.');
 }
 
 // Dispara sync imediato de um processo — fila separada, não bloqueia pelo lote
