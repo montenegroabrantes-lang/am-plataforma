@@ -129,6 +129,15 @@ clientesRouter.post('/:id/criar-tarefas-protocolo', apenasMaster, async (req, re
   res.json({ ok: true, criadas: criadas.length, existentes: existentes.length, tarefas: criadas });
 });
 
+// GET /api/clientes/:id/vinculos — lista vínculos funcionais
+clientesRouter.get('/:id/vinculos', async (req, res) => {
+  const vinculos = await db.query(
+    `SELECT * FROM cliente_vinculos WHERE cliente_id = $1 ORDER BY ordem`,
+    [req.params.id]
+  );
+  res.json({ ok: true, vinculos });
+});
+
 // POST /api/clientes/:id/vinculos — adiciona vínculo funcional
 clientesRouter.post('/:id/vinculos', async (req, res) => {
   const { cargo, orgao, vinculo_inicio, vinculo_fim, polo_passivo, vinculo_ativo } = req.body;

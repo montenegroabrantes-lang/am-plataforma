@@ -20,7 +20,7 @@ tarefasRouter.get('/', async (req, res) => {
   const rows = await db.query(
     `SELECT t.*, p.numero AS processo_numero, p.tribunal,
             u.nome AS atribuido_nome, m.nome AS validador_nome,
-            cl.nome AS cliente_nome, cl.cpf AS cliente_cpf, pr.nome AS produto_nome
+            cl.id AS cliente_id, cl.nome AS cliente_nome, cl.cpf AS cliente_cpf, pr.nome AS produto_nome
      FROM tarefas t
      LEFT JOIN processos p  ON p.id = t.processo_id
      LEFT JOIN usuarios u   ON u.id = t.atribuido_a
@@ -63,7 +63,7 @@ tarefasRouter.post('/', apenasMaster, async (req, res) => {
 
 // PATCH /api/tarefas/:id/concluir-com-numero — conclui tarefa de protocolo inserindo número CNJ
 tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
-  const { numero_processo, periodo_fim } = req.body;
+  const { numero_processo, periodo_fim, vinculo_id } = req.body;
 
   const CNJ_RE = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
   if (!numero_processo || !CNJ_RE.test(numero_processo.trim())) {
@@ -85,6 +85,15 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
   if (!tarefa) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
   if (tarefa.status === 'concluida') return res.status(409).json({ ok: false, erro: 'Tarefa já concluída.' });
   if (tarefa.tipo !== 'protocolar') return res.status(400).json({ ok: false, erro: 'Esta tarefa não é do tipo protocolar.' });
+
+  // Se vinculo_id fornecido, usa polo_passivo daquele vínculo
+  if (vinculo_id) {
+    const vinc = await db.queryOne(
+      `SELECT polo_passivo FROM cliente_vinculos WHERE id = $1 AND cliente_id = $2`,
+      [vinculo_id, tarefa.cliente_id]
+    );
+    if (vinc) tarefa.cliente_polo_passivo = vinc.polo_passivo;
+  }
 
   // Detecta tribunal pelo segmento CNJ (NNNNNNN-DD.AAAA.J.TT.OOOO)
   const segmentos = numeroLimpo.split(/[-.]/).filter(Boolean);
