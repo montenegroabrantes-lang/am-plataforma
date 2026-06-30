@@ -11,19 +11,14 @@ function filtroVisibilidade(user) {
   return `AND (p.visibilidade = 'normal')`;
 }
 
-// Filtro de master: usa parâmetros para evitar SQL injection
-function filtroMaster(user, params) {
-  if (user.pode_marcar_restrito) return '';
-  const masterId = user.perfil === 'master' ? user.id : user.master_id;
-  params.push(masterId);
-  return `AND (p.master_responsavel_id = $${params.length} OR p.compartilhado = true)`;
+// Todos os usuários veem todos os processos (filtroVisibilidade já bloqueia os restritos)
+function filtroMaster(_user, _params) {
+  return '';
 }
 
 // Verifica se o user tem acesso ao processo (para GET/PATCH/DELETE /:id)
-function podeAcessarProcesso(user, processo) {
-  if (user.pode_marcar_restrito) return true;
-  const masterId = user.perfil === 'master' ? user.id : user.master_id;
-  return processo.master_responsavel_id === masterId || processo.compartilhado === true;
+function podeAcessarProcesso(user, _processo) {
+  return true; // acesso bloqueado apenas por visibilidade (filtroVisibilidade)
 }
 
 const FILTROS_PERIODO = {
