@@ -8,16 +8,8 @@ const ETAPAS_ORDEM = ['contato_feito','docs_solicitados','docs_recebidos','cadas
 
 // GET /api/pipeline — kanban completo (agrupado por etapa)
 pipelineRouter.get('/', async (req, res) => {
-  const { id, perfil, master_id, pode_marcar_restrito } = req.user;
-  const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? id : master_id);
-
   const params = [];
   const condicoes = ["l.etapa NOT IN ('convertido','perdido')"];
-
-  if (masterId) {
-    params.push(masterId);
-    condicoes.push(`l.master_responsavel_id = $${params.length}`);
-  }
 
   const rows = await db.query(
     `SELECT l.*, pr.nome AS produto_nome, u.nome AS atribuido_nome
@@ -40,15 +32,12 @@ pipelineRouter.get('/', async (req, res) => {
 // GET /api/pipeline/todos — inclui convertidos e perdidos (para relatório)
 pipelineRouter.get('/todos', async (req, res) => {
   const { etapa, page = 1, limite = 50 } = req.query;
-  const { id, perfil, master_id, pode_marcar_restrito } = req.user;
   const offset = (Number(page) - 1) * Number(limite);
-  const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? id : master_id);
 
   const params = [];
   const condicoes = ['1=1'];
 
-  if (masterId) { params.push(masterId); condicoes.push(`l.master_responsavel_id = $${params.length}`); }
-  if (etapa)    { params.push(etapa);    condicoes.push(`l.etapa = $${params.length}`); }
+  if (etapa) { params.push(etapa); condicoes.push(`l.etapa = $${params.length}`); }
 
   params.push(Number(limite), offset);
 

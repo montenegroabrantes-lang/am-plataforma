@@ -8,18 +8,10 @@ export const financeiroRouter = Router();
 // GET /api/financeiro — lista honorários
 financeiroRouter.get('/', async (req, res) => {
   const { status, page = 1, limite = 30 } = req.query;
-  const { id, perfil, master_id, pode_marcar_restrito } = req.user;
   const offset = (Number(page) - 1) * Number(limite);
-
-  const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? id : master_id);
 
   const params = [];
   const condicoes = ['1=1'];
-
-  if (masterId) {
-    params.push(masterId);
-    condicoes.push(`h.master_responsavel_id = $${params.length}`);
-  }
   if (status) {
     params.push(status);
     condicoes.push(`h.status = $${params.length}`);

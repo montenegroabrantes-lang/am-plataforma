@@ -15,17 +15,8 @@ export const clientesRouter = Router();
 clientesRouter.get('/', async (req, res) => {
   const { busca, page = 1, limite = 30 } = req.query;
   const offset = (Number(page) - 1) * Number(limite);
-  const { id, perfil, master_id, pode_marcar_restrito } = req.user;
-
-  const masterId = pode_marcar_restrito ? null : (perfil === 'master' ? id : master_id);
-
   const params = [];
   const condicoes = ['c.ativo = true'];
-
-  if (masterId) {
-    params.push(masterId);
-    condicoes.push(`c.master_responsavel_id = $${params.length}`);
-  }
 
   if (busca) {
     params.push(`%${busca}%`);
