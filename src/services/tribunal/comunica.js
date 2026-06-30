@@ -14,8 +14,11 @@ function http() {
     timeout: 30_000,
     validateStatus: () => true,
     headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; AM-Plataforma/1.0; juridico)',
-      'Accept': 'application/json',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+      'Accept': 'application/json, text/plain, */*',
+      'Accept-Language': 'pt-BR,pt;q=0.9',
+      'Origin': 'https://comunicaapi.pje.jus.br',
+      'Referer': 'https://comunicaapi.pje.jus.br/',
     },
   });
 }
@@ -40,7 +43,7 @@ export async function buscarPublicacoes({ numeroOab, ufOab, dataInicio, dataFim 
     });
 
     if (resp.status !== 200 || resp.data?.status !== 'success') {
-      console.warn(`[Comunica] Erro pág.${pagina}: HTTP ${resp.status}`, resp.data?.message);
+      console.warn(`[Comunica] Erro pág.${pagina}: HTTP ${resp.status}`, JSON.stringify(resp.data)?.substring(0, 300));
       break;
     }
 
