@@ -164,7 +164,7 @@ authRouter.post('/2fa/ativar', autenticar, async (req, res) => {
 
 // POST /api/auth/logout
 authRouter.get('/me', autenticar, async (req, res) => {
-  const usuario = await db.queryOne('SELECT id, nome, email, cargo, role FROM usuarios WHERE id = $1', [req.user.id]);
+  const usuario = await db.queryOne('SELECT id, nome, email, perfil, pode_marcar_restrito, master_id FROM usuarios WHERE id = $1', [req.user.id]);
   if (!usuario) return res.status(401).json({ erro: 'Usuário não encontrado' });
   res.json({ user: usuario });
 });
