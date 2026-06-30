@@ -185,7 +185,8 @@ processosRouter.get('/', async (req, res) => {
 
 // GET /api/processos/exportar — lista filtrada em texto para WhatsApp
 processosRouter.get('/exportar', async (req, res) => {
-  const { status, situacao_atual, urgente, tribunal, busca, localizacao_processual, tipo_requisicao, periodo } = req.query;
+  const { status, situacao_atual, urgente, tribunal, busca, localizacao_processual, tipo_requisicao, periodo,
+          vara, polo_passivo, produto_id, etapa, tempo_parado_min, funcao_cliente, ano } = req.query;
   const params    = [];
   const condicoes = ['1=1', filtroMaster(req.user, params), filtroVisibilidade(req.user)];
 
@@ -194,6 +195,16 @@ processosRouter.get('/exportar', async (req, res) => {
   if (situacao_atual)        { params.push(situacao_atual);        condicoes.push(`AND p.situacao_atual = $${params.length}`); }
   if (localizacao_processual){ params.push(localizacao_processual);condicoes.push(`AND p.localizacao_processual = $${params.length}`); }
   if (tipo_requisicao)       { params.push(tipo_requisicao);       condicoes.push(`AND p.tipo_requisicao = $${params.length}`); }
+  if (vara)                  { params.push(`%${vara}%`);           condicoes.push(`AND p.vara ILIKE $${params.length}`); }
+  if (polo_passivo)          { params.push(`%${polo_passivo}%`);   condicoes.push(`AND p.polo_passivo ILIKE $${params.length}`); }
+  if (produto_id)            { params.push(produto_id);            condicoes.push(`AND p.produto_id = $${params.length}`); }
+  if (etapa && ETAPA_WHERE[etapa]) condicoes.push(`AND ${ETAPA_WHERE[etapa]}`);
+  if (ano)                   { params.push(ano);                   condicoes.push(`AND EXTRACT(YEAR FROM p.data_distribuicao) = $${params.length}`); }
+  if (funcao_cliente)        { params.push(`%${funcao_cliente}%`); condicoes.push(`AND c.cargo ILIKE $${params.length}`); }
+  const tempoNum = Number(tempo_parado_min);
+  if (tempo_parado_min && !isNaN(tempoNum)) {
+    condicoes.push(`AND (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) < NOW() - INTERVAL '${tempoNum} minutes'`);
+  }
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
   if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
   if (busca) {
