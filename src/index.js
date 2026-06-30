@@ -128,6 +128,27 @@ async function iniciar() {
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS observacao TEXT`).catch(() => {});
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS classificacao TEXT`).catch(() => {});
     await db.query(`
+      CREATE TABLE IF NOT EXISTS cliente_vinculos (
+        id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        cliente_id    UUID NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+        ordem         INTEGER NOT NULL DEFAULT 1,
+        cargo         TEXT,
+        orgao         TEXT,
+        vinculo_inicio DATE,
+        vinculo_fim    DATE,
+        polo_passivo  TEXT,
+        vinculo_ativo BOOLEAN NOT NULL DEFAULT true,
+        criado_em     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.query(`
+      INSERT INTO cliente_vinculos (cliente_id, ordem, cargo, orgao, vinculo_inicio, vinculo_fim, polo_passivo, vinculo_ativo)
+      SELECT id, 1, cargo, orgao, vinculo_inicio, vinculo_fim, polo_passivo, COALESCE(vinculo_ativo, true)
+      FROM clientes
+      WHERE (cargo IS NOT NULL OR orgao IS NOT NULL OR polo_passivo IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM cliente_vinculos cv WHERE cv.cliente_id = clientes.id)
+    `).catch(e => console.warn('[Migration] cliente_vinculos:', e.message));
+    await db.query(`
       CREATE TABLE IF NOT EXISTS classif_campos (
         id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         nome      TEXT NOT NULL UNIQUE,

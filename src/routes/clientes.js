@@ -54,7 +54,7 @@ clientesRouter.get('/:id', async (req, res) => {
   );
   if (!cliente) return res.status(404).json({ ok: false, erro: 'Cliente não encontrado.' });
 
-  const [processos, documentos, teses] = await Promise.all([
+  const [processos, documentos, teses, vinculos] = await Promise.all([
     db.query(
       `SELECT id, numero, tribunal, status, produto_id FROM processos WHERE cliente_id = $1`,
       [req.params.id]
@@ -72,9 +72,13 @@ clientesRouter.get('/:id', async (req, res) => {
        ORDER BY pr.nome`,
       [req.params.id]
     ),
+    db.query(
+      `SELECT * FROM cliente_vinculos WHERE cliente_id = $1 ORDER BY ordem`,
+      [req.params.id]
+    ),
   ]);
 
-  res.json({ ok: true, cliente, processos, documentos, teses });
+  res.json({ ok: true, cliente, processos, documentos, teses, vinculos });
 });
 
 // POST /api/clientes/:id/criar-tarefas-protocolo
@@ -125,32 +129,77 @@ clientesRouter.post('/:id/criar-tarefas-protocolo', apenasMaster, async (req, re
   res.json({ ok: true, criadas: criadas.length, existentes: existentes.length, tarefas: criadas });
 });
 
+// POST /api/clientes/:id/vinculos — adiciona vínculo funcional
+clientesRouter.post('/:id/vinculos', async (req, res) => {
+  const { cargo, orgao, vinculo_inicio, vinculo_fim, polo_passivo, vinculo_ativo } = req.body;
+  const count = await db.queryOne(`SELECT COUNT(*) FROM cliente_vinculos WHERE cliente_id = $1`, [req.params.id]);
+  if (Number(count.count) >= 2) return res.status(400).json({ ok: false, erro: 'Máximo de 2 vínculos por cliente.' });
+  const ordem = Number(count.count) + 1;
+  const [novo] = await db.query(
+    `INSERT INTO cliente_vinculos (cliente_id, ordem, cargo, orgao, vinculo_inicio, vinculo_fim, polo_passivo, vinculo_ativo)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [req.params.id, ordem, cargo||null, orgao||null, vinculo_inicio||null, vinculo_fim||null, polo_passivo||null, vinculo_ativo !== false]
+  );
+  res.status(201).json({ ok: true, vinculo: novo });
+});
+
+// PATCH /api/clientes/:id/vinculos/:vid — edita vínculo funcional
+clientesRouter.patch('/:id/vinculos/:vid', async (req, res) => {
+  const { cargo, orgao, vinculo_inicio, vinculo_fim, polo_passivo, vinculo_ativo } = req.body;
+  await db.execute(
+    `UPDATE cliente_vinculos SET cargo=$1, orgao=$2, vinculo_inicio=$3, vinculo_fim=$4,
+     polo_passivo=$5, vinculo_ativo=$6 WHERE id=$7 AND cliente_id=$8`,
+    [cargo||null, orgao||null, vinculo_inicio||null, vinculo_fim||null, polo_passivo||null, vinculo_ativo !== false, req.params.vid, req.params.id]
+  );
+  res.json({ ok: true });
+});
+
+// DELETE /api/clientes/:id/vinculos/:vid — remove vínculo funcional
+clientesRouter.delete('/:id/vinculos/:vid', async (req, res) => {
+  await db.execute(`DELETE FROM cliente_vinculos WHERE id=$1 AND cliente_id=$2`, [req.params.vid, req.params.id]);
+  res.json({ ok: true });
+});
+
 // POST /api/clientes
 clientesRouter.post('/', async (req, res) => {
-  const { nome, cpf, whatsapp, email, cargo, orgao, periodo_vinculo, vinculo_inicio, vinculo_fim, polo_passivo, lgpd_consentimento, vinculo_ativo } = req.body;
+  const { nome, cpf, whatsapp, email, lgpd_consentimento, vinculos } = req.body;
 
   if (!nome || !cpf) return res.status(400).json({ ok: false, erro: 'nome e cpf são obrigatórios.' });
 
   const masterId = req.user.perfil === 'master' ? req.user.id : req.user.master_id;
+  const v1 = vinculos?.[0] || {};
 
   try {
     const [novo] = await db.query(
-      `INSERT INTO clientes (nome, cpf, whatsapp, email, cargo, orgao, periodo_vinculo,
+      `INSERT INTO clientes (nome, cpf, whatsapp, email, cargo, orgao,
               vinculo_inicio, vinculo_fim, polo_passivo, lgpd_consentimento, lgpd_data, vinculo_ativo,
               master_responsavel_id, cadastrado_por)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
        RETURNING id, nome, cpf`,
       [
         nome.trim(), cpf.replace(/\D/g, ''), whatsapp || null, email || null,
-        cargo || null, orgao || null, periodo_vinculo || null,
-        vinculo_inicio || null, vinculo_fim || null,
-        polo_passivo || null,
+        v1.cargo || null, v1.orgao || null,
+        v1.vinculo_inicio || null, v1.vinculo_fim || null,
+        v1.polo_passivo || null,
         lgpd_consentimento ?? false,
         lgpd_consentimento ? new Date() : null,
-        vinculo_ativo !== false,
+        v1.vinculo_ativo !== false,
         masterId, req.user.id,
       ]
     );
+
+    // Insere vínculos na nova tabela
+    if (vinculos?.length) {
+      for (let i = 0; i < Math.min(vinculos.length, 2); i++) {
+        const v = vinculos[i];
+        if (!v.cargo && !v.orgao && !v.polo_passivo) continue;
+        await db.query(
+          `INSERT INTO cliente_vinculos (cliente_id, ordem, cargo, orgao, vinculo_inicio, vinculo_fim, polo_passivo, vinculo_ativo)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+          [novo.id, i+1, v.cargo||null, v.orgao||null, v.vinculo_inicio||null, v.vinculo_fim||null, v.polo_passivo||null, v.vinculo_ativo !== false]
+        );
+      }
+    }
 
     // Cria pasta no Google Drive em background (não bloqueia o retorno)
     criarPastaCliente(novo.cpf, novo.nome)
