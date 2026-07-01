@@ -6,21 +6,31 @@ export const tarefasRouter = Router();
 
 // GET /api/tarefas — lista tarefas do usuário (ou todas para Master)
 tarefasRouter.get('/', async (req, res) => {
-  const { status, urgencia, page = 1, limite = 50 } = req.query;
+  const { status, urgencia, cliente_id, produto_id, atribuido_a, page = 1, limite = 100 } = req.query;
   const offset = (Number(page) - 1) * Number(limite);
 
   const params = [];
-  const condicoes = ['1=1'];
+  const condicoes = ["t.status != 'cancelada'"];
 
-  if (status)   { params.push(status);   condicoes.push(`t.status = $${params.length}`); }
-  if (urgencia) { params.push(urgencia); condicoes.push(`t.urgencia = $${params.length}`); }
+  if (status)      { params.push(status);      condicoes.push(`t.status = $${params.length}`); }
+  if (urgencia)    { params.push(urgencia);    condicoes.push(`t.urgencia = $${params.length}`); }
+  if (cliente_id)  { params.push(cliente_id);  condicoes.push(`cl.id = $${params.length}`); }
+  if (produto_id)  { params.push(produto_id);  condicoes.push(`pr.id = $${params.length}`); }
+  if (atribuido_a) { params.push(atribuido_a); condicoes.push(`t.atribuido_a = $${params.length}`); }
+
+  // Não-master só vê as próprias tarefas
+  if (req.user.perfil !== 'master') {
+    params.push(req.user.id);
+    condicoes.push(`(t.atribuido_a = $${params.length} OR t.validado_por = $${params.length})`);
+  }
 
   params.push(Number(limite), offset);
 
   const rows = await db.query(
     `SELECT t.*, p.numero AS processo_numero, p.tribunal,
             u.nome AS atribuido_nome, m.nome AS validador_nome,
-            cl.id AS cliente_id, cl.nome AS cliente_nome, cl.cpf AS cliente_cpf, pr.nome AS produto_nome
+            cl.id AS cliente_id, cl.nome AS cliente_nome, cl.cpf AS cliente_cpf,
+            pr.id AS produto_id, pr.nome AS produto_nome
      FROM tarefas t
      LEFT JOIN processos p  ON p.id = t.processo_id
      LEFT JOIN usuarios u   ON u.id = t.atribuido_a
