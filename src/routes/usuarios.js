@@ -111,3 +111,23 @@ usuariosRouter.patch('/:id', apenasMaster, async (req, res) => {
 
   res.json({ ok: true });
 });
+
+// PATCH /api/usuarios/:id/senha — redefine senha (Master)
+usuariosRouter.patch('/:id/senha', apenasMaster, async (req, res) => {
+  const { senha } = req.body;
+  if (!senha || senha.length < 8) return res.status(400).json({ ok: false, erro: 'Senha mínima 8 caracteres.' });
+  const hash = await bcrypt.hash(senha, 12);
+  await db.execute('UPDATE usuarios SET senha_hash = $1 WHERE id = $2', [hash, req.params.id]);
+  res.json({ ok: true });
+});
+
+// DELETE /api/usuarios/:id — exclui usuário (apenas Master com pode_marcar_restrito)
+usuariosRouter.delete('/:id', apenasMaster, async (req, res) => {
+  if (!req.user.pode_marcar_restrito) return res.status(403).json({ ok: false, erro: 'Apenas o Master principal pode excluir usuários.' });
+  const alvo = await db.queryOne('SELECT * FROM usuarios WHERE id = $1', [req.params.id]);
+  if (!alvo) return res.status(404).json({ ok: false, erro: 'Usuário não encontrado.' });
+  if (alvo.id === req.user.id) return res.status(400).json({ ok: false, erro: 'Não é possível excluir a própria conta.' });
+  await db.execute('DELETE FROM usuarios WHERE id = $1', [req.params.id]);
+  await registrarAuditoria({ usuarioId: req.user.id, acao: 'excluir', entidade: 'usuario', entidadeId: req.params.id, valorAntes: alvo, ip: req._ip });
+  res.json({ ok: true });
+});
