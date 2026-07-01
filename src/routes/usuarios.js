@@ -127,7 +127,16 @@ usuariosRouter.delete('/:id', apenasMaster, async (req, res) => {
   const alvo = await db.queryOne('SELECT * FROM usuarios WHERE id = $1', [req.params.id]);
   if (!alvo) return res.status(404).json({ ok: false, erro: 'Usuário não encontrado.' });
   if (alvo.id === req.user.id) return res.status(400).json({ ok: false, erro: 'Não é possível excluir a própria conta.' });
-  await db.execute('DELETE FROM usuarios WHERE id = $1', [req.params.id]);
-  await registrarAuditoria({ usuarioId: req.user.id, acao: 'excluir', entidade: 'usuario', entidadeId: req.params.id, valorAntes: alvo, ip: req._ip });
+
+  // Anula referências antes de excluir para evitar violação de FK
+  const uid = req.params.id;
+  await db.execute(`UPDATE tarefas    SET atribuido_a  = NULL WHERE atribuido_a  = $1`, [uid]);
+  await db.execute(`UPDATE tarefas    SET validado_por = NULL WHERE validado_por = $1`, [uid]);
+  await db.execute(`UPDATE processos  SET master_responsavel_id = NULL WHERE master_responsavel_id = $1`, [uid]);
+  await db.execute(`UPDATE publicacoes SET lido_por = NULL WHERE lido_por = $1`, [uid]);
+  await db.execute(`UPDATE usuarios   SET master_id = NULL WHERE master_id = $1`, [uid]);
+
+  await db.execute('DELETE FROM usuarios WHERE id = $1', [uid]);
+  await registrarAuditoria({ usuarioId: req.user.id, acao: 'excluir', entidade: 'usuario', entidadeId: uid, valorAntes: alvo, ip: req._ip });
   res.json({ ok: true });
 });
