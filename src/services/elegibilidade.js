@@ -27,13 +27,13 @@ function corresponde(valor, lista) {
  */
 export async function verificarElegibilidadeCliente(clienteId, userId) {
   const cliente = await db.queryOne(
-    'SELECT id, nome, cargo, orgao FROM clientes WHERE id = $1',
+    'SELECT id, nome, cargo, orgao, vinculo_inicio FROM clientes WHERE id = $1',
     [clienteId]
   );
   if (!cliente) return { vinculados: 0, tarefas: 0 };
 
   const produtos = await db.query(
-    'SELECT id, nome, cargos_elegiveis, orgaos_elegiveis FROM produtos WHERE ativo = true'
+    'SELECT id, nome, cargos_elegiveis, orgaos_elegiveis, intervalo_meses FROM produtos WHERE ativo = true'
   );
 
   let vinculados = 0;
@@ -77,14 +77,11 @@ export async function verificarElegibilidadeCliente(clienteId, userId) {
     );
     if (tarefaExistente) continue;
 
+    const descricao = gerarDescricaoTarefa(prod, cliente.nome, cliente.vinculo_inicio);
     await db.execute(
       `INSERT INTO tarefas (cliente_produto_id, tipo, descricao, urgencia, validado_por, status)
        VALUES ($1, 'protocolar', $2, 'MEDIO', $3, 'pendente')`,
-      [
-        vinculo.id,
-        `Protocolar processo — ${prod.nome} — ${cliente.nome}`,
-        userId,
-      ]
+      [vinculo.id, descricao, userId]
     );
     tarefas++;
   }
@@ -101,7 +98,7 @@ export async function verificarElegibilidadeCliente(clienteId, userId) {
  */
 export async function verificarElegibilidadeProduto(produtoId, userId) {
   const prod = await db.queryOne(
-    'SELECT id, nome, cargos_elegiveis, orgaos_elegiveis FROM produtos WHERE id = $1 AND ativo = true',
+    'SELECT id, nome, cargos_elegiveis, orgaos_elegiveis, intervalo_meses FROM produtos WHERE id = $1 AND ativo = true',
     [produtoId]
   );
   if (!prod) return { vinculados: 0, tarefas: 0 };
@@ -113,7 +110,7 @@ export async function verificarElegibilidadeProduto(produtoId, userId) {
   }
 
   const clientes = await db.query(
-    'SELECT id, nome, cargo, orgao FROM clientes WHERE ativo IS NOT FALSE AND vinculo_ativo = true'
+    'SELECT id, nome, cargo, orgao, vinculo_inicio FROM clientes WHERE ativo IS NOT FALSE AND vinculo_ativo = true'
   );
 
   let vinculados = 0;
@@ -153,17 +150,25 @@ export async function verificarElegibilidadeProduto(produtoId, userId) {
     );
     if (tarefaExistente) continue;
 
+    const descricao = gerarDescricaoTarefa(prod, cliente.nome, cliente.vinculo_inicio);
     await db.execute(
       `INSERT INTO tarefas (cliente_produto_id, tipo, descricao, urgencia, validado_por, status)
        VALUES ($1, 'protocolar', $2, 'MEDIO', $3, 'pendente')`,
-      [
-        vinculo.id,
-        `Protocolar processo — ${prod.nome} — ${cliente.nome}`,
-        userId,
-      ]
+      [vinculo.id, descricao, userId]
     );
     tarefas++;
   }
 
   return { vinculados, tarefas };
+}
+
+function gerarDescricaoTarefa(prod, clienteNome, vinculoInicio) {
+  if (prod.intervalo_meses && vinculoInicio) {
+    const inicio = new Date(vinculoInicio);
+    const fim = new Date(vinculoInicio);
+    fim.setMonth(fim.getMonth() + prod.intervalo_meses - 1);
+    const fmt = d => d.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' });
+    return `Protocolar processo — ${prod.nome} — ${clienteNome} | Período a solicitar: ${fmt(inicio)} a ${fmt(fim)}`;
+  }
+  return `Protocolar processo — ${prod.nome} — ${clienteNome}`;
 }
