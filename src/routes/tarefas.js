@@ -7,7 +7,7 @@ export const tarefasRouter = Router();
 
 // GET /api/tarefas — lista tarefas do usuário (ou todas para Master)
 tarefasRouter.get('/', async (req, res) => {
-  const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, tipo, page = 1, limite = 100 } = req.query;
+  const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, prazo_de, prazo_ate, tipo, page = 1, limite = 100 } = req.query;
   const offset = (Number(page) - 1) * Number(limite);
 
   const params = [];
@@ -24,7 +24,9 @@ tarefasRouter.get('/', async (req, res) => {
   } else if (status) {
     params.push(status); condicoes.push(`t.status = $${params.length}`);
   }
-  if (tipo)        { params.push(tipo);         condicoes.push(`t.tipo = $${params.length}`); }
+  if (tipo)      { params.push(tipo);     condicoes.push(`t.tipo = $${params.length}`); }
+  if (prazo_de)  { params.push(prazo_de); condicoes.push(`t.prazo_data >= $${params.length}::date`); }
+  if (prazo_ate) { params.push(prazo_ate); condicoes.push(`t.prazo_data <= $${params.length}::date`); }
   if (urgencia)    { params.push(urgencia);    condicoes.push(`t.urgencia = $${params.length}`); }
   if (cliente_id)  { params.push(cliente_id);  condicoes.push(`cl.id = $${params.length}`); }
   if (produto_id)  { params.push(produto_id);  condicoes.push(`pr.id = $${params.length}`); }
