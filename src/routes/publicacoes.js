@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
+import { criarEventoCalendar } from '../services/calendar/index.js';
+import { extrairPrazoPublicacao } from '../services/publicacoes/extrairPrazo.js';
 
 export const publicacoesRouter = Router();
 
@@ -135,11 +137,35 @@ export async function importarPublicacoesHandler(req, res) {
           item.status || null, cancelada,
         ]
       ).catch(() => []);
+      if (!rows[0]?.inserted) return rows[0];
+
+      // Nova publicação — tenta criar evento no Calendar com o prazo extraído
+      if (item.texto) {
+        try {
+          const processo = processoId
+            ? await db.queryOne(`SELECT numero, tribunal, vara FROM processos WHERE id = $1`, [processoId]).catch(() => null)
+            : null;
+          const prazo = extrairPrazoPublicacao(item.texto, item.data_disponibilizacao, processo);
+          if (prazo) {
+            await criarEventoCalendar({
+              titulo:     prazo.titulo,
+              dataHora:   prazo.dataEvento,
+              tipo:       prazo.titulo,
+              vara:       processo?.vara,
+              tribunal:   processo?.tribunal || item.siglaTribunal,
+              processoId,
+              descricao:  prazo.descricao,
+            });
+          }
+        } catch (err) {
+          console.warn('[Publicações] Erro ao criar evento Calendar:', err.message);
+        }
+      }
+
       return rows[0];
     }));
     for (const r of results) {
       if (r?.inserted) inseridas++;
-      if (r && processoMap.has(validItems[i]?.numero_processo)) vinculadas++;
     }
   }
   vinculadas = processoMap.size; // processos únicos vinculados

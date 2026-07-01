@@ -15,7 +15,7 @@ function calendarClient() {
   return google.calendar({ version: 'v3', auth: auth() });
 }
 
-export async function criarEventoCalendar({ titulo, dataHora, tipo, vara, tribunal, processoId }) {
+export async function criarEventoCalendar({ titulo, dataHora, tipo, vara, tribunal, processoId, descricao: descricaoCustom }) {
   if (!process.env.GOOGLE_REFRESH_TOKEN || process.env.GOOGLE_REFRESH_TOKEN === 'configurar_no_railway') {
     console.warn('[Calendar] GOOGLE_REFRESH_TOKEN não configurado — evento não criado.');
     return null;
@@ -25,7 +25,7 @@ export async function criarEventoCalendar({ titulo, dataHora, tipo, vara, tribun
   const inicio    = new Date(dataHora);
   const fim       = new Date(inicio.getTime() + 60 * 60 * 1000); // +1h
 
-  const descricao = [
+  const descricao = descricaoCustom || [
     tipo    ? `Tipo: ${tipo}`      : '',
     vara    ? `Vara: ${vara}`      : '',
     tribunal ? `Tribunal: ${tribunal}` : '',
