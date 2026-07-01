@@ -6,7 +6,7 @@ export const publicacoesRouter = Router();
 
 // GET /api/publicacoes — lista publicações com filtros
 publicacoesRouter.get('/', async (req, res) => {
-  const { lido, processo_id, tribunal, page = 1, limite = 50 } = req.query;
+  const { lido, processo_id, tribunal, dias, page = 1, limite = 50 } = req.query;
   const offset = (Number(page) - 1) * Number(limite);
 
   const params    = [];
@@ -16,6 +16,14 @@ publicacoesRouter.get('/', async (req, res) => {
   if (lido === 'false') condicoes.push('lido = false');
   if (processo_id) { params.push(processo_id); condicoes.push(`processo_id = $${params.length}`); }
   if (tribunal)    { params.push(tribunal);    condicoes.push(`tribunal = $${params.length}`); }
+  if (dias !== undefined) {
+    const d = Number(dias);
+    if (d === 0) {
+      condicoes.push(`data_disponibilizacao = CURRENT_DATE`);
+    } else {
+      condicoes.push(`data_disponibilizacao >= CURRENT_DATE - INTERVAL '${d} days'`);
+    }
+  }
 
   const where = condicoes.join(' AND ');
 
