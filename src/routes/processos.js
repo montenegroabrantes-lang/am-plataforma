@@ -130,7 +130,7 @@ processosRouter.get('/', async (req, res) => {
   const tempoNum = Number(tempo_parado_min);
   if (tempo_parado_min && !isNaN(tempoNum)) {
     params.push(tempoNum);
-    condicoes.push(`AND EXTRACT(DAY FROM NOW() - (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id)) >= $${params.length}`);
+    condicoes.push(`AND EXTRACT(DAY FROM NOW() - ult.data_movimentacao) >= $${params.length}`);
   }
   if (funcao_cliente)         { params.push(`%${funcao_cliente}%`);  condicoes.push(`AND c.cargo ILIKE $${params.length}`); }
   if (busca) {
@@ -139,11 +139,16 @@ processosRouter.get('/', async (req, res) => {
   }
 
   const where = condicoes.filter(Boolean).join(' ');
+  const precisaUlt = !!tempo_parado_min && !isNaN(Number(tempo_parado_min));
 
   const [{ total }] = await db.query(
     `SELECT COUNT(*) AS total
      FROM processos p
      LEFT JOIN clientes c ON c.id = p.cliente_id
+     ${precisaUlt ? `LEFT JOIN LATERAL (
+       SELECT data_movimentacao FROM movimentacoes
+       WHERE processo_id = p.id ORDER BY data_movimentacao DESC LIMIT 1
+     ) ult ON true` : ''}
      WHERE ${where}`,
     params
   );

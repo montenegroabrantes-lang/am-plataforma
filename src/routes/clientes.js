@@ -34,7 +34,7 @@ clientesRouter.get('/', async (req, res) => {
      LEFT JOIN usuarios u ON u.id = c.master_responsavel_id
      LEFT JOIN processos p ON p.cliente_id = c.id
      WHERE ${condicoes.join(' AND ')}
-     GROUP BY c.id, u.nome
+     GROUP BY c.id, u.id, u.nome
      ORDER BY c.nome
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
