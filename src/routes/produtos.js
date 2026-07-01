@@ -18,14 +18,16 @@ produtosRouter.get('/', async (req, res) => {
 // POST /api/produtos — criar produto
 produtosRouter.post('/', apenasMaster, async (req, res) => {
   const { nome, polo_passivo_padrao, codigo_assunto_pje,
-          tribunais_padrao, cargos_elegiveis, orgaos_elegiveis, intervalo_meses } = req.body;
+          tribunais_padrao, cargos_elegiveis, orgaos_elegiveis, intervalo_meses,
+          honorarios_padrao, descricao } = req.body;
 
   if (!nome) return res.status(400).json({ ok: false, erro: 'nome é obrigatório.' });
 
   const [novo] = await db.query(
     `INSERT INTO produtos (nome, polo_passivo_padrao, codigo_assunto_pje,
-                           tribunais_padrao, cargos_elegiveis, orgaos_elegiveis, intervalo_meses)
-     VALUES ($1,$2,$3,$4,$5,$6,$7)
+                           tribunais_padrao, cargos_elegiveis, orgaos_elegiveis, intervalo_meses,
+                           honorarios_padrao, descricao)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
      RETURNING *`,
     [
       nome.trim(),
@@ -35,6 +37,8 @@ produtosRouter.post('/', apenasMaster, async (req, res) => {
       cargos_elegiveis    || null,
       orgaos_elegiveis    || null,
       intervalo_meses     || null,
+      honorarios_padrao   != null && honorarios_padrao !== '' ? Number(honorarios_padrao) : null,
+      descricao           || null,
     ]
   );
   // Varrer clientes elegíveis em background
@@ -50,7 +54,8 @@ produtosRouter.post('/', apenasMaster, async (req, res) => {
 // PATCH /api/produtos/:id — atualizar produto
 produtosRouter.patch('/:id', apenasMaster, async (req, res) => {
   const campos = ['nome', 'polo_passivo_padrao', 'codigo_assunto_pje',
-                  'tribunais_padrao', 'cargos_elegiveis', 'orgaos_elegiveis', 'ativo', 'intervalo_meses'];
+                  'tribunais_padrao', 'cargos_elegiveis', 'orgaos_elegiveis', 'ativo', 'intervalo_meses',
+                  'honorarios_padrao', 'descricao'];
   const updates = [];
   const params  = [];
 
@@ -89,9 +94,15 @@ produtosRouter.delete('/:id', apenasMaster, async (req, res) => {
 
 // POST /api/produtos/clientes/:clienteId — vincular produto ao cliente
 produtosRouter.post('/clientes/:clienteId', apenasMaster, async (req, res) => {
-  const { produto_id, honorarios_pct } = req.body;
-  if (!produto_id || honorarios_pct === undefined) {
-    return res.status(400).json({ ok: false, erro: 'produto_id e honorarios_pct são obrigatórios.' });
+  let { produto_id, honorarios_pct } = req.body;
+  if (!produto_id) {
+    return res.status(400).json({ ok: false, erro: 'produto_id é obrigatório.' });
+  }
+
+  // Se não informou honorarios_pct, busca o padrão do produto
+  if (honorarios_pct === undefined || honorarios_pct === null || honorarios_pct === '') {
+    const prod = await db.queryOne(`SELECT honorarios_padrao FROM produtos WHERE id = $1`, [produto_id]);
+    honorarios_pct = prod?.honorarios_padrao ?? 0;
   }
 
   try {
