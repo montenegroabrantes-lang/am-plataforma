@@ -153,7 +153,7 @@ processosRouter.get('/', async (req, res) => {
             ult.data_movimentacao AS ultima_movimentacao,
             ult.texto             AS ultima_mov_texto,
             EXTRACT(DAY FROM NOW() - ult.data_movimentacao)::int AS dias_parado,
-            COALESCE(NULLIF(p.etapa_atual, ''), ${ETAPA_CASE}) AS etapa
+            ${ETAPA_CASE} AS etapa
      FROM processos p
      LEFT JOIN clientes c  ON c.id  = p.cliente_id
      LEFT JOIN produtos  pr ON pr.id = p.produto_id
