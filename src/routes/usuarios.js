@@ -25,11 +25,11 @@ usuariosRouter.get('/', async (req, res) => {
       [id]
     );
   } else {
-    // Junior vê apenas a si mesmo
+    // Junior vê a si mesmo e os demais usuários do mesmo Master (para indicar responsáveis)
     rows = await db.query(
       `SELECT id, nome, email, perfil, master_id, pode_marcar_restrito, ativo, criado_em, ultimo_acesso
-       FROM usuarios WHERE id = $1`,
-      [id]
+       FROM usuarios WHERE id = $1 OR master_id = $2 OR id = $2 ORDER BY perfil, nome`,
+      [id, req.user.master_id]
     );
   }
 
