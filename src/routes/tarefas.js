@@ -6,13 +6,18 @@ export const tarefasRouter = Router();
 
 // GET /api/tarefas — lista tarefas do usuário (ou todas para Master)
 tarefasRouter.get('/', async (req, res) => {
-  const { status, urgencia, cliente_id, produto_id, atribuido_a, page = 1, limite = 100 } = req.query;
+  const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_hoje, page = 1, limite = 100 } = req.query;
   const offset = (Number(page) - 1) * Number(limite);
 
   const params = [];
   const condicoes = ["t.status != 'cancelada'"];
 
-  if (status)      { params.push(status);      condicoes.push(`t.status = $${params.length}`); }
+  if (prazo_hoje === 'true') {
+    condicoes.push(`t.prazo_data = CURRENT_DATE`);
+    condicoes.push(`t.status NOT IN ('concluida','cancelada')`);
+  } else if (status) {
+    params.push(status); condicoes.push(`t.status = $${params.length}`);
+  }
   if (urgencia)    { params.push(urgencia);    condicoes.push(`t.urgencia = $${params.length}`); }
   if (cliente_id)  { params.push(cliente_id);  condicoes.push(`cl.id = $${params.length}`); }
   if (produto_id)  { params.push(produto_id);  condicoes.push(`pr.id = $${params.length}`); }
