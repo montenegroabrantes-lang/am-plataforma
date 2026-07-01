@@ -133,8 +133,6 @@ usuariosRouter.delete('/:id', apenasMaster, async (req, res) => {
   await db.execute(`UPDATE tarefas        SET atribuido_a            = NULL WHERE atribuido_a            = $1`, [uid]);
   await db.execute(`UPDATE tarefas        SET validado_por           = NULL WHERE validado_por           = $1`, [uid]);
   await db.execute(`UPDATE processos      SET master_responsavel_id  = NULL WHERE master_responsavel_id  = $1`, [uid]);
-  await db.execute(`UPDATE processos      SET cadastrado_por         = NULL WHERE cadastrado_por         = $1`, [uid]);
-  await db.execute(`UPDATE processos      SET atualizado_por         = NULL WHERE atualizado_por         = $1`, [uid]);
   await db.execute(`UPDATE publicacoes    SET lido_por               = NULL WHERE lido_por               = $1`, [uid]);
   await db.execute(`UPDATE usuarios       SET master_id              = NULL WHERE master_id              = $1`, [uid]);
   await db.execute(`UPDATE clientes       SET master_responsavel_id  = NULL WHERE master_responsavel_id  = $1`, [uid]);
