@@ -128,13 +128,29 @@ usuariosRouter.delete('/:id', apenasMaster, async (req, res) => {
   if (!alvo) return res.status(404).json({ ok: false, erro: 'Usuário não encontrado.' });
   if (alvo.id === req.user.id) return res.status(400).json({ ok: false, erro: 'Não é possível excluir a própria conta.' });
 
-  // Anula referências antes de excluir para evitar violação de FK
+  // Anula todas as referências FK antes de excluir
   const uid = req.params.id;
-  await db.execute(`UPDATE tarefas    SET atribuido_a  = NULL WHERE atribuido_a  = $1`, [uid]);
-  await db.execute(`UPDATE tarefas    SET validado_por = NULL WHERE validado_por = $1`, [uid]);
-  await db.execute(`UPDATE processos  SET master_responsavel_id = NULL WHERE master_responsavel_id = $1`, [uid]);
-  await db.execute(`UPDATE publicacoes SET lido_por = NULL WHERE lido_por = $1`, [uid]);
-  await db.execute(`UPDATE usuarios   SET master_id = NULL WHERE master_id = $1`, [uid]);
+  await db.execute(`UPDATE tarefas        SET atribuido_a            = NULL WHERE atribuido_a            = $1`, [uid]);
+  await db.execute(`UPDATE tarefas        SET validado_por           = NULL WHERE validado_por           = $1`, [uid]);
+  await db.execute(`UPDATE processos      SET master_responsavel_id  = NULL WHERE master_responsavel_id  = $1`, [uid]);
+  await db.execute(`UPDATE processos      SET cadastrado_por         = NULL WHERE cadastrado_por         = $1`, [uid]);
+  await db.execute(`UPDATE processos      SET atualizado_por         = NULL WHERE atualizado_por         = $1`, [uid]);
+  await db.execute(`UPDATE publicacoes    SET lido_por               = NULL WHERE lido_por               = $1`, [uid]);
+  await db.execute(`UPDATE usuarios       SET master_id              = NULL WHERE master_id              = $1`, [uid]);
+  await db.execute(`UPDATE clientes       SET master_responsavel_id  = NULL WHERE master_responsavel_id  = $1`, [uid]);
+  await db.execute(`UPDATE clientes       SET cadastrado_por         = NULL WHERE cadastrado_por         = $1`, [uid]);
+  await db.execute(`UPDATE configuracoes  SET atualizado_por         = NULL WHERE atualizado_por         = $1`, [uid]);
+  await db.execute(`UPDATE documentos     SET enviado_por            = NULL WHERE enviado_por            = $1`, [uid]);
+  await db.execute(`UPDATE leads          SET master_responsavel_id  = NULL WHERE master_responsavel_id  = $1`, [uid]);
+  await db.execute(`UPDATE leads          SET atribuido_a            = NULL WHERE atribuido_a            = $1`, [uid]);
+  await db.execute(`UPDATE logs_auditoria SET usuario_id             = NULL WHERE usuario_id             = $1`, [uid]);
+  await db.execute(`UPDATE audiencias  SET advogado_id            = NULL WHERE advogado_id            = $1`, [uid]);
+  await db.execute(`UPDATE pecas       SET aprovada_por           = NULL WHERE aprovada_por           = $1`, [uid]);
+  await db.execute(`UPDATE honorarios  SET master_responsavel_id  = NULL WHERE master_responsavel_id  = $1`, [uid]);
+  await db.execute(`UPDATE honorarios  SET registrado_por         = NULL WHERE registrado_por         = $1`, [uid]);
+  // Deleta registros onde usuario_id é NOT NULL (não pode ser anulado)
+  await db.execute(`DELETE FROM credenciais_tribunal WHERE usuario_id = $1`, [uid]);
+  await db.execute(`DELETE FROM notas WHERE autor_id = $1`, [uid]);
 
   await db.execute('DELETE FROM usuarios WHERE id = $1', [uid]);
   await registrarAuditoria({ usuarioId: req.user.id, acao: 'excluir', entidade: 'usuario', entidadeId: uid, valorAntes: alvo, ip: req._ip });
