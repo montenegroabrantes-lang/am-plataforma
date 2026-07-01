@@ -26,9 +26,10 @@ publicacoesRouter.get('/', async (req, res) => {
   params.push(Number(limite), offset);
 
   const rows = await db.query(
-    `SELECT p.*, pr.numero AS processo_numero
+    `SELECT p.*, pr.numero AS processo_numero, c.nome AS cliente_nome
      FROM publicacoes p
      LEFT JOIN processos pr ON pr.id = p.processo_id
+     LEFT JOIN clientes c ON c.id = pr.cliente_id
      WHERE ${where}
      ORDER BY p.data_disponibilizacao DESC, p.id DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
