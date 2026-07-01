@@ -2,6 +2,7 @@ import { Worker } from 'bullmq';
 import { exec }   from 'child_process';
 import { promisify } from 'util';
 import { redis }  from '../cache/redis.js';
+import { uploadBackup, limparBackupsAntigos } from '../services/drive/index.js';
 import path       from 'path';
 import fs         from 'fs';
 
@@ -15,25 +16,32 @@ export function criarBackupWorker() {
       fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const arquivo   = path.join(BACKUP_DIR, `backup-${timestamp}.sql.gz`);
+      const nomeArquivo = `backup-${timestamp}.sql.gz`;
+      const arquivo     = path.join(BACKUP_DIR, nomeArquivo);
 
-      const dbUrl  = process.env.DATABASE_URL;
-      const cmd    = `pg_dump "${dbUrl}" | gzip > "${arquivo}"`;
+      const dbUrl = process.env.DATABASE_URL;
+      await execAsync(`pg_dump "${dbUrl}" | gzip > "${arquivo}"`);
 
-      await execAsync(cmd);
+      console.log(`[Backup] Arquivo gerado: ${arquivo}`);
 
-      // Mantém apenas os 7 backups mais recentes
-      const arquivos = fs.readdirSync(BACKUP_DIR)
-        .filter(f => f.endsWith('.sql.gz'))
-        .sort()
-        .reverse();
-
-      for (const old of arquivos.slice(7)) {
-        fs.unlinkSync(path.join(BACKUP_DIR, old));
+      // Envia para Google Drive
+      if (process.env.GOOGLE_DRIVE_PASTA_BACKUP) {
+        try {
+          const stream = fs.createReadStream(arquivo);
+          const { url } = await uploadBackup(nomeArquivo, stream);
+          console.log(`[Backup] Enviado ao Google Drive: ${url}`);
+          await limparBackupsAntigos(7);
+        } catch (err) {
+          console.error('[Backup] Erro ao enviar para Drive:', err.message);
+        }
+      } else {
+        console.warn('[Backup] GOOGLE_DRIVE_PASTA_BACKUP não definida — backup salvo apenas localmente.');
       }
 
-      console.log(`[Backup] Gerado: ${arquivo}`);
-      return { arquivo };
+      // Remove arquivo local após upload (tmp não é persistente no Railway)
+      fs.unlink(arquivo, () => {});
+
+      return { arquivo: nomeArquivo };
     },
     { connection: redis }
   );

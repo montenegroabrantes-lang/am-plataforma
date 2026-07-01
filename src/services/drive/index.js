@@ -67,3 +67,44 @@ export async function uploadPdf(pastaId, nomeArquivo, bufferOuStream) {
 
   return { id: arquivo.data.id, url: arquivo.data.webViewLink };
 }
+
+// Upload de backup (.sql.gz) para pasta de backups no Drive
+export async function uploadBackup(nomeArquivo, stream) {
+  const drive   = driveClient();
+  const pastaId = process.env.GOOGLE_DRIVE_PASTA_BACKUP;
+
+  if (!pastaId) throw new Error('GOOGLE_DRIVE_PASTA_BACKUP não configurada.');
+
+  const arquivo = await drive.files.create({
+    requestBody: {
+      name:    nomeArquivo,
+      parents: [pastaId],
+    },
+    media: {
+      mimeType: 'application/gzip',
+      body:     stream,
+    },
+    fields: 'id, webViewLink',
+  });
+
+  return { id: arquivo.data.id, url: arquivo.data.webViewLink };
+}
+
+// Remove backups antigos da pasta (mantém os N mais recentes)
+export async function limparBackupsAntigos(manter = 7) {
+  const drive   = driveClient();
+  const pastaId = process.env.GOOGLE_DRIVE_PASTA_BACKUP;
+  if (!pastaId) return;
+
+  const res = await drive.files.list({
+    q:       `'${pastaId}' in parents and name contains 'backup-' and trashed = false`,
+    fields:  'files(id, name, createdTime)',
+    orderBy: 'createdTime desc',
+  });
+
+  const arquivos = res.data.files || [];
+  const antigos  = arquivos.slice(manter);
+  for (const f of antigos) {
+    await drive.files.delete({ fileId: f.id }).catch(() => {});
+  }
+}
