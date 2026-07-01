@@ -267,3 +267,55 @@ publicacoesRouter.post('/importar-browser', apenasMaster, async (req, res) => {
 publicacoesRouter.post('/sincronizar', apenasMaster, (_req, res) => {
   res.status(503).json({ ok: false, erro: 'Sync automático indisponível. Use o script local: node ~/sync-publicacoes.mjs' });
 });
+
+// POST /api/publicacoes/reprocessar-prazos — gera tarefas retroativas para publicações antigas com prazo detectável
+publicacoesRouter.post('/reprocessar-prazos', apenasMaster, async (req, res) => {
+  // Busca publicações com processo vinculado, texto e sem tarefa de prazo ainda
+  const pubs = await db.query(
+    `SELECT p.id, p.texto, p.data_disponibilizacao, p.processo_id,
+            pr.numero, pr.tribunal, pr.vara
+     FROM publicacoes p
+     JOIN processos pr ON pr.id = p.processo_id
+     WHERE p.texto IS NOT NULL
+       AND p.cancelada = false
+       AND NOT EXISTS (
+         SELECT 1 FROM tarefas t WHERE t.publicacao_id = p.id
+       )
+     ORDER BY p.data_disponibilizacao DESC
+     LIMIT 500`
+  );
+
+  let criadas = 0, ignoradas = 0;
+
+  for (const pub of pubs) {
+    try {
+      const processo = { id: pub.processo_id, numero: pub.numero, tribunal: pub.tribunal, vara: pub.vara };
+      const prazo = extrairPrazoPublicacao(pub.texto, pub.data_disponibilizacao, processo);
+      if (!prazo) { ignoradas++; continue; }
+
+      const diasRestantes = Math.ceil((prazo.dataEvento - new Date()) / (1000 * 60 * 60 * 24));
+      const urgencia = diasRestantes <= 2 ? 'CRITICO' : diasRestantes <= 5 ? 'ALTO' : diasRestantes <= 10 ? 'MEDIO' : 'BAIXO';
+
+      const eventId = await criarEventoCalendar({
+        titulo:    prazo.titulo,
+        dataHora:  prazo.dataEvento,
+        tipo:      prazo.titulo,
+        vara:      processo.vara,
+        tribunal:  processo.tribunal,
+        processoId: processo.id,
+        descricao: prazo.descricao,
+      }).catch(() => null);
+
+      await db.query(
+        `INSERT INTO tarefas
+           (processo_id, publicacao_id, tipo, descricao, urgencia, prazo_data, validado_por, status, calendar_event_id)
+         VALUES ($1,$2,'prazo',$3,$4,$5::date,NULL,'pendente',$6)
+         ON CONFLICT DO NOTHING`,
+        [processo.id, pub.id, prazo.titulo, urgencia, prazo.dataEvento.toISOString().slice(0, 10), eventId || null]
+      );
+      criadas++;
+    } catch { ignoradas++; }
+  }
+
+  res.json({ ok: true, criadas, ignoradas, total: pubs.length });
+});
