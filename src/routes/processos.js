@@ -53,6 +53,14 @@ const ETAPA_WHERE = {
   'Concluso':                `p.situacao_atual = 'concluso'`,
   'Certidão NUMOPED':        `p.situacao_atual = 'certidao_numoped'`,
   'Sem classificação':       `p.situacao_atual IS NULL`,
+  'Citação':                 `p.situacao_atual = 'citacao'`,
+  'Impugnada a Contestação': `p.situacao_atual = 'impugnada_contestacao'`,
+  'Embargos de Declaração':  `p.situacao_atual = 'embargos_declaracao'`,
+  'Impugnado Cumprimento':   `p.situacao_atual = 'impugnado_cumprimento'`,
+  'Alvará Assinado':         `p.situacao_atual = 'alvara_assinado'`,
+  'Intimado do Bloqueio':    `p.situacao_atual = 'intimado_bloqueio'`,
+  'Concluso para Gratuidade':`p.situacao_atual = 'concluso_gratuidade'`,
+  'Gratuidade Deferida':     `p.situacao_atual = 'gratuidade_deferida'`,
 };
 
 const ETAPA_CASE = `
@@ -71,6 +79,14 @@ const ETAPA_CASE = `
     WHEN p.situacao_atual = 'concluso_para_sentenca' THEN 'Concluso para Sentença'
     WHEN p.situacao_atual = 'concluso' THEN 'Concluso'
     WHEN p.situacao_atual = 'certidao_numoped' THEN 'Certidão NUMOPED'
+    WHEN p.situacao_atual = 'citacao' THEN 'Citação'
+    WHEN p.situacao_atual = 'impugnada_contestacao' THEN 'Impugnada a Contestação'
+    WHEN p.situacao_atual = 'embargos_declaracao' THEN 'Embargos de Declaração'
+    WHEN p.situacao_atual = 'impugnado_cumprimento' THEN 'Impugnado Cumprimento'
+    WHEN p.situacao_atual = 'alvara_assinado' THEN 'Alvará Assinado'
+    WHEN p.situacao_atual = 'intimado_bloqueio' THEN 'Intimado do Bloqueio'
+    WHEN p.situacao_atual = 'concluso_gratuidade' THEN 'Concluso para Gratuidade'
+    WHEN p.situacao_atual = 'gratuidade_deferida' THEN 'Gratuidade Deferida'
     ELSE 'Sem classificação'
   END
 `;
