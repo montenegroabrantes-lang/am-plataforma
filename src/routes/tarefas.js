@@ -177,12 +177,12 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
   res.json({ ok: true, processo_id: processoId, numero: numeroLimpo });
 });
 
-// PATCH /api/tarefas/:id/responsavel — troca responsável (Master)
+// PATCH /api/tarefas/:id/responsavel — troca responsável e prazo (Master)
 tarefasRouter.patch('/:id/responsavel', apenasMaster, async (req, res) => {
-  const { atribuido_a } = req.body;
+  const { atribuido_a, prazo_data } = req.body;
   await db.execute(
-    `UPDATE tarefas SET atribuido_a = $1 WHERE id = $2`,
-    [atribuido_a || null, req.params.id]
+    `UPDATE tarefas SET atribuido_a = $1, prazo_data = COALESCE($2::date, prazo_data) WHERE id = $3`,
+    [atribuido_a || null, prazo_data || null, req.params.id]
   );
   res.json({ ok: true });
 });
