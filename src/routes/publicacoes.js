@@ -94,41 +94,55 @@ export async function importarPublicacoesHandler(req, res) {
   }
 
   let inseridas = 0, vinculadas = 0;
-  for (const item of items) {
-    if (!item.id) continue;
+  const validItems = items.filter(i => i.id);
 
-    let processoId = null;
-    if (item.numero_processo) {
-      const proc = await db.queryOne(
-        `SELECT id FROM processos WHERE REGEXP_REPLACE(numero, '[^0-9]', '', 'g') = $1`,
-        [item.numero_processo]
-      ).catch(() => null);
-      if (proc) { processoId = proc.id; vinculadas++; }
-    }
-
-    const cancelada = !item.ativo || !!item.data_cancelamento;
-    const result = await db.query(
-      `INSERT INTO publicacoes
-         (id, processo_id, numero_processo_raw, numero_processo, data_disponibilizacao,
-          tribunal, tipo_comunicacao, tipo_documento, orgao, texto, link, status, cancelada)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-       ON CONFLICT (id) DO UPDATE SET
-         processo_id = COALESCE(EXCLUDED.processo_id, publicacoes.processo_id),
-         cancelada   = EXCLUDED.cancelada, status = EXCLUDED.status
-       RETURNING (xmax = 0) AS inserted`,
-      [
-        item.id, processoId,
-        item.numero_processo || '', item.numeroprocessocommascara || null,
-        item.data_disponibilizacao,
-        item.siglaTribunal || null, item.tipoComunicacao || null,
-        item.tipoDocumento || null, item.nomeOrgao || null,
-        item.texto || null, item.link || null,
-        item.status || null, cancelada,
-      ]
+  // Busca todos os processos vinculáveis em 1 query (evita N+1)
+  const numerosRaw = [...new Set(validItems.map(i => i.numero_processo).filter(Boolean))];
+  const processoMap = new Map();
+  if (numerosRaw.length > 0) {
+    const procs = await db.query(
+      `SELECT id, REGEXP_REPLACE(numero, '[^0-9]', '', 'g') AS numero_limpo
+       FROM processos
+       WHERE REGEXP_REPLACE(numero, '[^0-9]', '', 'g') = ANY($1)`,
+      [numerosRaw]
     ).catch(() => []);
-
-    if (result[0]?.inserted) inseridas++;
+    for (const p of procs) processoMap.set(p.numero_limpo, p.id);
   }
+
+  // Insere em paralelo (chunks de 50 para não sobrecarregar o pool)
+  const chunkSize = 50;
+  for (let i = 0; i < validItems.length; i += chunkSize) {
+    const chunk = validItems.slice(i, i + chunkSize);
+    const results = await Promise.all(chunk.map(async item => {
+      const processoId = processoMap.get(item.numero_processo) || null;
+      const cancelada  = !item.ativo || !!item.data_cancelamento;
+      const rows = await db.query(
+        `INSERT INTO publicacoes
+           (id, processo_id, numero_processo_raw, numero_processo, data_disponibilizacao,
+            tribunal, tipo_comunicacao, tipo_documento, orgao, texto, link, status, cancelada)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         ON CONFLICT (id) DO UPDATE SET
+           processo_id = COALESCE(EXCLUDED.processo_id, publicacoes.processo_id),
+           cancelada   = EXCLUDED.cancelada, status = EXCLUDED.status
+         RETURNING (xmax = 0) AS inserted`,
+        [
+          item.id, processoId,
+          item.numero_processo || '', item.numeroprocessocommascara || null,
+          item.data_disponibilizacao,
+          item.siglaTribunal || null, item.tipoComunicacao || null,
+          item.tipoDocumento || null, item.nomeOrgao || null,
+          item.texto || null, item.link || null,
+          item.status || null, cancelada,
+        ]
+      ).catch(() => []);
+      return rows[0];
+    }));
+    for (const r of results) {
+      if (r?.inserted) inseridas++;
+      if (r && processoMap.has(validItems[i]?.numero_processo)) vinculadas++;
+    }
+  }
+  vinculadas = processoMap.size; // processos únicos vinculados
 
   // Registra data/hora da última sincronização
   await db.query(
@@ -146,45 +160,57 @@ publicacoesRouter.post('/importar-browser', apenasMaster, async (req, res) => {
   const { items } = req.body;
   if (!Array.isArray(items) || items.length === 0) return res.json({ ok: true, inseridas: 0, vinculadas: 0 });
 
-  let inseridas = 0, vinculadas = 0;
-  for (const item of items) {
-    if (!item.id) continue;
-    let processoId = null;
-    if (item.numero_processo) {
-      const proc = await db.queryOne(
-        `SELECT id FROM processos WHERE REGEXP_REPLACE(numero, '[^0-9]', '', 'g') = $1`,
-        [item.numero_processo]
-      ).catch(() => null);
-      if (proc) { processoId = proc.id; vinculadas++; }
-    }
-    const cancelada = !item.ativo || !!item.data_cancelamento;
-    const result = await db.query(
-      `INSERT INTO publicacoes
-         (id, processo_id, numero_processo_raw, numero_processo, data_disponibilizacao,
-          tribunal, tipo_comunicacao, tipo_documento, orgao, texto, link, status, cancelada)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-       ON CONFLICT (id) DO UPDATE SET
-         processo_id = COALESCE(EXCLUDED.processo_id, publicacoes.processo_id),
-         cancelada = EXCLUDED.cancelada, status = EXCLUDED.status
-       RETURNING (xmax = 0) AS inserted`,
-      [
-        item.id, processoId,
-        item.numero_processo || '', item.numeroprocessocommascara || null,
-        item.data_disponibilizacao,
-        item.siglaTribunal || null, item.tipoComunicacao || null,
-        item.tipoDocumento || null, item.nomeOrgao || null,
-        item.texto || null, item.link || null,
-        item.status || null, cancelada,
-      ]
+  let inseridas = 0;
+  const validItems2 = items.filter(i => i.id);
+
+  const numerosRaw2 = [...new Set(validItems2.map(i => i.numero_processo).filter(Boolean))];
+  const processoMap2 = new Map();
+  if (numerosRaw2.length > 0) {
+    const procs = await db.query(
+      `SELECT id, REGEXP_REPLACE(numero, '[^0-9]', '', 'g') AS numero_limpo
+       FROM processos
+       WHERE REGEXP_REPLACE(numero, '[^0-9]', '', 'g') = ANY($1)`,
+      [numerosRaw2]
     ).catch(() => []);
-    if (result[0]?.inserted) inseridas++;
+    for (const p of procs) processoMap2.set(p.numero_limpo, p.id);
   }
+
+  const chunkSize2 = 50;
+  for (let i = 0; i < validItems2.length; i += chunkSize2) {
+    const chunk = validItems2.slice(i, i + chunkSize2);
+    const results = await Promise.all(chunk.map(async item => {
+      const processoId = processoMap2.get(item.numero_processo) || null;
+      const cancelada  = !item.ativo || !!item.data_cancelamento;
+      const rows = await db.query(
+        `INSERT INTO publicacoes
+           (id, processo_id, numero_processo_raw, numero_processo, data_disponibilizacao,
+            tribunal, tipo_comunicacao, tipo_documento, orgao, texto, link, status, cancelada)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         ON CONFLICT (id) DO UPDATE SET
+           processo_id = COALESCE(EXCLUDED.processo_id, publicacoes.processo_id),
+           cancelada = EXCLUDED.cancelada, status = EXCLUDED.status
+         RETURNING (xmax = 0) AS inserted`,
+        [
+          item.id, processoId,
+          item.numero_processo || '', item.numeroprocessocommascara || null,
+          item.data_disponibilizacao,
+          item.siglaTribunal || null, item.tipoComunicacao || null,
+          item.tipoDocumento || null, item.nomeOrgao || null,
+          item.texto || null, item.link || null,
+          item.status || null, cancelada,
+        ]
+      ).catch(() => []);
+      return rows[0];
+    }));
+    for (const r of results) { if (r?.inserted) inseridas++; }
+  }
+
   await db.query(
     `INSERT INTO configuracoes (categoria, chave, valor) VALUES ('publicacoes','ultima_sync',$1)
      ON CONFLICT (categoria, chave) DO UPDATE SET valor = $1, atualizado_em = NOW()`,
     [new Date().toISOString()]
   ).catch(() => {});
-  res.json({ ok: true, inseridas, vinculadas });
+  res.json({ ok: true, inseridas, vinculadas: processoMap2.size });
 });
 
 // POST /api/publicacoes/sincronizar — desativado (Comunica API bloqueia IPs de nuvem)

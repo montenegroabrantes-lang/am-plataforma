@@ -790,7 +790,8 @@ processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
          FROM processos p
          LEFT JOIN produtos pr ON pr.id = p.produto_id
          WHERE p.status IN ('ativo','suspenso') ${filtroM} ${filtroPend}
-         ORDER BY p.classificado_em ASC NULLS FIRST`,
+         ORDER BY p.classificado_em ASC NULLS FIRST
+         LIMIT 500`,
         loteParams
       );
 
