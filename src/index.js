@@ -131,6 +131,7 @@ async function iniciar() {
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS intervalo_meses INTEGER`).catch(() => {});
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS honorarios_padrao NUMERIC(5,2)`).catch(() => {});
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS descricao TEXT`).catch(() => {});
+    await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS polos_passivos_padrao TEXT[]`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS observacao TEXT`).catch(() => {});
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS classificacao TEXT`).catch(() => {});
     await db.query(`

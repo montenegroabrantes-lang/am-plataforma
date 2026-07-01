@@ -17,28 +17,28 @@ produtosRouter.get('/', async (req, res) => {
 
 // POST /api/produtos — criar produto
 produtosRouter.post('/', apenasMaster, async (req, res) => {
-  const { nome, polo_passivo_padrao, codigo_assunto_pje,
+  const { nome, polos_passivos_padrao, codigo_assunto_pje,
           tribunais_padrao, cargos_elegiveis, orgaos_elegiveis, intervalo_meses,
           honorarios_padrao, descricao } = req.body;
 
   if (!nome) return res.status(400).json({ ok: false, erro: 'nome é obrigatório.' });
 
   const [novo] = await db.query(
-    `INSERT INTO produtos (nome, polo_passivo_padrao, codigo_assunto_pje,
+    `INSERT INTO produtos (nome, polos_passivos_padrao, codigo_assunto_pje,
                            tribunais_padrao, cargos_elegiveis, orgaos_elegiveis, intervalo_meses,
                            honorarios_padrao, descricao)
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
      RETURNING *`,
     [
       nome.trim(),
-      polo_passivo_padrao || null,
-      codigo_assunto_pje  || null,
-      tribunais_padrao    || null,
-      cargos_elegiveis    || null,
-      orgaos_elegiveis    || null,
-      intervalo_meses     || null,
-      honorarios_padrao   != null && honorarios_padrao !== '' ? Number(honorarios_padrao) : null,
-      descricao           || null,
+      polos_passivos_padrao || null,
+      codigo_assunto_pje    || null,
+      tribunais_padrao      || null,
+      cargos_elegiveis      || null,
+      orgaos_elegiveis      || null,
+      intervalo_meses       || null,
+      honorarios_padrao != null && honorarios_padrao !== '' ? Number(honorarios_padrao) : null,
+      descricao             || null,
     ]
   );
   // Varrer clientes elegíveis em background
@@ -53,7 +53,7 @@ produtosRouter.post('/', apenasMaster, async (req, res) => {
 
 // PATCH /api/produtos/:id — atualizar produto
 produtosRouter.patch('/:id', apenasMaster, async (req, res) => {
-  const campos = ['nome', 'polo_passivo_padrao', 'codigo_assunto_pje',
+  const campos = ['nome', 'polos_passivos_padrao', 'codigo_assunto_pje',
                   'tribunais_padrao', 'cargos_elegiveis', 'orgaos_elegiveis', 'ativo', 'intervalo_meses',
                   'honorarios_padrao', 'descricao'];
   const updates = [];
