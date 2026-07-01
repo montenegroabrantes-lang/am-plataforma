@@ -224,6 +224,10 @@ async function iniciar() {
     await db.query(`CREATE INDEX IF NOT EXISTS idx_publicacoes_lido ON publicacoes (lido, data_disponibilizacao DESC)`).catch(() => {});
     await db.query(`CREATE INDEX IF NOT EXISTS idx_publicacoes_processo ON publicacoes (processo_id)`).catch(() => {});
 
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS publicacao_id BIGINT REFERENCES publicacoes(id) ON DELETE SET NULL`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS calendar_event_id TEXT`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS observacao TEXT`).catch(() => {});
+
     // ── Índices de performance para suportar 5000+ processos ──────────────────
     await db.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`).catch(() => {});
     await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_status ON processos (status)`).catch(() => {});

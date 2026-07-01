@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
+import { criarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
 
 export const tarefasRouter = Router();
 
@@ -77,6 +78,22 @@ tarefasRouter.post('/', apenasMaster, async (req, res) => {
       urgencia || 'MEDIO', prazo_data || null,
     ]
   );
+
+  // Se tem prazo_data, cria evento no Calendar em background
+  if (prazo_data && processo_id) {
+    const proc = await db.queryOne(`SELECT numero, tribunal, vara FROM processos WHERE id = $1`, [processo_id]).catch(() => null);
+    criarEventoCalendar({
+      titulo:    `${tipo} — ${proc?.numero || descricao}`,
+      dataHora:  new Date(`${prazo_data}T08:00:00`),
+      tipo,
+      vara:      proc?.vara,
+      tribunal:  proc?.tribunal,
+      processoId: processo_id,
+      descricao: `Tarefa: ${descricao}`,
+    }).then(eventId => {
+      if (eventId) db.execute(`UPDATE tarefas SET calendar_event_id = $1 WHERE id = $2`, [eventId, nova.id]).catch(() => {});
+    }).catch(() => {});
+  }
 
   res.status(201).json({ ok: true, tarefa: nova });
 });
@@ -225,6 +242,11 @@ tarefasRouter.patch('/:id/status', async (req, res, next) => {
        justificativa_cancelamento = $4 WHERE id = $5`,
       [status, observacao_devolucao || null, concluida_em, justificativa_cancelamento || null, req.params.id]
     );
+
+    // Remove evento do Calendar se tarefa concluída ou cancelada
+    if (['concluida', 'cancelada'].includes(status) && tarefa.calendar_event_id) {
+      deletarEventoCalendar(tarefa.calendar_event_id).catch(() => {});
+    }
 
     res.json({ ok: true });
   } catch (err) { next(err); }

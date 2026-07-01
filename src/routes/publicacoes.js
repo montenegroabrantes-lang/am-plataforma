@@ -139,26 +139,49 @@ export async function importarPublicacoesHandler(req, res) {
       ).catch(() => []);
       if (!rows[0]?.inserted) return rows[0];
 
-      // Nova publicação — tenta criar evento no Calendar com o prazo extraído
+      // Nova publicação — tenta criar tarefa + evento Calendar com prazo extraído
       if (item.texto) {
         try {
           const processo = processoId
-            ? await db.queryOne(`SELECT numero, tribunal, vara FROM processos WHERE id = $1`, [processoId]).catch(() => null)
+            ? await db.queryOne(`SELECT id, numero, tribunal, vara FROM processos WHERE id = $1`, [processoId]).catch(() => null)
             : null;
           const prazo = extrairPrazoPublicacao(item.texto, item.data_disponibilizacao, processo);
           if (prazo) {
-            await criarEventoCalendar({
-              titulo:     prazo.titulo,
-              dataHora:   prazo.dataEvento,
-              tipo:       prazo.titulo,
-              vara:       processo?.vara,
-              tribunal:   processo?.tribunal || item.siglaTribunal,
+            // Calcula urgência baseada nos dias restantes
+            const diasRestantes = Math.ceil((prazo.dataEvento - new Date()) / (1000 * 60 * 60 * 24));
+            const urgencia = diasRestantes <= 2 ? 'CRITICO' : diasRestantes <= 5 ? 'ALTO' : diasRestantes <= 10 ? 'MEDIO' : 'BAIXO';
+
+            // Cria evento no Calendar
+            const eventId = await criarEventoCalendar({
+              titulo:    prazo.titulo,
+              dataHora:  prazo.dataEvento,
+              tipo:      prazo.titulo,
+              vara:      processo?.vara,
+              tribunal:  processo?.tribunal || item.siglaTribunal,
               processoId,
-              descricao:  prazo.descricao,
-            });
+              descricao: prazo.descricao,
+            }).catch(() => null);
+
+            // Cria tarefa vinculada à publicação e ao processo
+            if (processoId) {
+              await db.query(
+                `INSERT INTO tarefas
+                   (processo_id, publicacao_id, tipo, descricao, urgencia, prazo_data, validado_por, status, calendar_event_id)
+                 VALUES ($1,$2,'prazo',$3,$4,$5::date,NULL,'pendente',$6)
+                 ON CONFLICT DO NOTHING`,
+                [
+                  processoId,
+                  item.id,
+                  prazo.titulo,
+                  urgencia,
+                  prazo.dataEvento.toISOString().slice(0, 10),
+                  eventId || null,
+                ]
+              ).catch(e => console.warn('[Publicações] Tarefa não criada:', e.message));
+            }
           }
         } catch (err) {
-          console.warn('[Publicações] Erro ao criar evento Calendar:', err.message);
+          console.warn('[Publicações] Erro ao criar evento/tarefa:', err.message);
         }
       }
 
