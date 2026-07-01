@@ -845,34 +845,44 @@ processosRouter.delete('/:id', apenasMaster, async (req, res) => {
 
 // GET /api/processos/etapas-custom — lista etapas customizadas do escritório
 processosRouter.get('/etapas-custom', async (req, res) => {
-  const masterId = req.user.perfil === 'master' ? req.user.id : req.user.master_id;
-  const row = await db.queryOne(
-    `SELECT valor FROM configuracoes WHERE categoria = 'etapas' AND chave = $1`,
-    [`custom_${masterId}`]
-  );
-  const opcoes = row?.valor ? JSON.parse(row.valor) : [];
-  res.json({ ok: true, opcoes });
+  try {
+    const masterId = req.user.perfil === 'master' ? req.user.id : req.user.master_id;
+    const row = await db.queryOne(
+      `SELECT valor FROM configuracoes WHERE categoria = 'etapas' AND chave = $1`,
+      [`custom_${masterId}`]
+    );
+    const opcoes = row?.valor ? JSON.parse(row.valor) : [];
+    res.json({ ok: true, opcoes });
+  } catch (err) {
+    console.error('[etapas-custom GET]', err.message);
+    res.json({ ok: true, opcoes: [] });
+  }
 });
 
 // POST /api/processos/etapas-custom — adiciona etapa customizada permanente
 processosRouter.post('/etapas-custom', async (req, res) => {
-  const masterId = req.user.perfil === 'master' ? req.user.id : req.user.master_id;
-  const { label } = req.body;
-  if (!label?.trim()) return res.status(400).json({ ok: false, erro: 'label obrigatório' });
+  try {
+    const masterId = req.user.perfil === 'master' ? req.user.id : req.user.master_id;
+    const { label } = req.body;
+    if (!label?.trim()) return res.status(400).json({ ok: false, erro: 'label obrigatório' });
 
-  const chave = `custom_${masterId}`;
-  const row = await db.queryOne(
-    `SELECT valor FROM configuracoes WHERE categoria = 'etapas' AND chave = $1`, [chave]
-  );
-  const opcoes = row?.valor ? JSON.parse(row.valor) : [];
-  if (!opcoes.includes(label.trim())) {
-    opcoes.push(label.trim());
-    await db.execute(
-      `INSERT INTO configuracoes (categoria, chave, valor)
-       VALUES ('etapas', $1, $2)
-       ON CONFLICT (categoria, chave) DO UPDATE SET valor = $2`,
-      [chave, JSON.stringify(opcoes)]
+    const chave = `custom_${masterId}`;
+    const row = await db.queryOne(
+      `SELECT valor FROM configuracoes WHERE categoria = 'etapas' AND chave = $1`, [chave]
     );
+    const opcoes = row?.valor ? JSON.parse(row.valor) : [];
+    if (!opcoes.includes(label.trim())) {
+      opcoes.push(label.trim());
+      const novoValor = JSON.stringify(opcoes);
+      if (row) {
+        await db.execute(`UPDATE configuracoes SET valor = $1 WHERE categoria = 'etapas' AND chave = $2`, [novoValor, chave]);
+      } else {
+        await db.execute(`INSERT INTO configuracoes (categoria, chave, valor) VALUES ('etapas', $1, $2)`, [chave, novoValor]);
+      }
+    }
+    res.json({ ok: true, opcoes });
+  } catch (err) {
+    console.error('[etapas-custom POST]', err.message);
+    res.status(500).json({ ok: false, erro: err.message });
   }
-  res.json({ ok: true, opcoes });
 });
