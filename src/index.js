@@ -223,6 +223,31 @@ async function iniciar() {
     `).catch(() => {});
     await db.query(`CREATE INDEX IF NOT EXISTS idx_publicacoes_lido ON publicacoes (lido, data_disponibilizacao DESC)`).catch(() => {});
     await db.query(`CREATE INDEX IF NOT EXISTS idx_publicacoes_processo ON publicacoes (processo_id)`).catch(() => {});
+
+    // ── Índices de performance para suportar 5000+ processos ──────────────────
+    await db.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_status ON processos (status)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_situacao_atual ON processos (situacao_atual)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_urgente ON processos (urgente) WHERE urgente = true`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_etapa_atual ON processos (etapa_atual)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_status_urgente ON processos (status, urgente)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_data_dist ON processos (data_distribuicao DESC)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_master ON processos (master_id)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_cliente ON processos (cliente_id)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_vara ON processos USING gin (vara gin_trgm_ops)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_polo_passivo ON processos USING gin (polo_passivo gin_trgm_ops)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_status_rpv ON processos (status_rpv) WHERE status_rpv IS NOT NULL`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_status_prec ON processos (status_precatorio) WHERE status_precatorio IS NOT NULL`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_status_alv ON processos (status_alvara) WHERE status_alvara IS NOT NULL`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_clientes_nome ON clientes USING gin (nome gin_trgm_ops)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_clientes_cargo ON clientes USING gin (cargo gin_trgm_ops)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_clientes_ativo ON clientes (ativo) WHERE ativo = true`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_movimentacoes_processo ON movimentacoes (processo_id, data_movimentacao DESC)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_movimentacoes_criado ON movimentacoes (criado_em DESC)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tarefas_status ON tarefas (status)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tarefas_atribuido ON tarefas (atribuido_a, status)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tarefas_cp ON tarefas (cliente_produto_id)`).catch(() => {});
+    // ──────────────────────────────────────────────────────────────────────────
     // Cadastra OAB 23176/PB como padrão se ainda não existir
     await db.query(`
       INSERT INTO configuracoes (categoria, chave, valor)

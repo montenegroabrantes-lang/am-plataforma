@@ -6,9 +6,10 @@ const { Pool } = pg;
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-  max: 20,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
+  max: 40,
+  idleTimeoutMillis: 60_000,
+  connectionTimeoutMillis: 10_000,
+  statement_timeout: 60_000, // mata queries travadas após 60s
 });
 
 pool.on('error', (err) => {

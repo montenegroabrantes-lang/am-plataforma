@@ -103,16 +103,21 @@ clientesRouter.post('/:id/criar-tarefas-protocolo', apenasMaster, async (req, re
   const criadas = [];
   const existentes = [];
 
+  // Busca todas as tarefas ativas de uma vez (evita N+1)
+  const cpIds = teses.map(t => t.cliente_produto_id);
+  const tarefasAtivas = await db.query(
+    `SELECT cliente_produto_id FROM tarefas
+     WHERE cliente_produto_id = ANY($1) AND tipo = 'protocolar'
+     AND status NOT IN ('concluida', 'cancelada')`,
+    [cpIds]
+  );
+  const cpComTarefa = new Set(tarefasAtivas.map(t => t.cliente_produto_id));
+
   for (const tese of teses) {
-    const jaExiste = await db.queryOne(
-      `SELECT id FROM tarefas
-       WHERE cliente_produto_id = $1 AND tipo = 'protocolar'
-       AND status NOT IN ('concluida', 'cancelada')`,
-      [tese.cliente_produto_id]
-    );
-
-    if (jaExiste) { existentes.push(tese.produto_nome); continue; }
-
+    if (cpComTarefa.has(tese.cliente_produto_id)) {
+      existentes.push(tese.produto_nome);
+      continue;
+    }
     const [nova] = await db.query(
       `INSERT INTO tarefas (cliente_produto_id, tipo, descricao, urgencia, validado_por, status)
        VALUES ($1, 'protocolar', $2, 'MEDIO', $3, 'pendente')
