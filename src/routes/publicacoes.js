@@ -133,6 +133,52 @@ export async function importarPublicacoesHandler(req, res) {
   res.json({ ok: true, inseridas, vinculadas });
 }
 
+// POST /api/publicacoes/importar-browser — recebe publicações coletadas pelo browser (IP do usuário)
+publicacoesRouter.post('/importar-browser', apenasMaster, async (req, res) => {
+  const { items } = req.body;
+  if (!Array.isArray(items) || items.length === 0) return res.json({ ok: true, inseridas: 0, vinculadas: 0 });
+
+  let inseridas = 0, vinculadas = 0;
+  for (const item of items) {
+    if (!item.id) continue;
+    let processoId = null;
+    if (item.numero_processo) {
+      const proc = await db.queryOne(
+        `SELECT id FROM processos WHERE REGEXP_REPLACE(numero, '[^0-9]', '', 'g') = $1`,
+        [item.numero_processo]
+      ).catch(() => null);
+      if (proc) { processoId = proc.id; vinculadas++; }
+    }
+    const cancelada = !item.ativo || !!item.data_cancelamento;
+    const result = await db.query(
+      `INSERT INTO publicacoes
+         (id, processo_id, numero_processo_raw, numero_processo, data_disponibilizacao,
+          tribunal, tipo_comunicacao, tipo_documento, orgao, texto, link, status, cancelada)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       ON CONFLICT (id) DO UPDATE SET
+         processo_id = COALESCE(EXCLUDED.processo_id, publicacoes.processo_id),
+         cancelada = EXCLUDED.cancelada, status = EXCLUDED.status
+       RETURNING (xmax = 0) AS inserted`,
+      [
+        item.id, processoId,
+        item.numero_processo || '', item.numeroprocessocommascara || null,
+        item.data_disponibilizacao,
+        item.siglaTribunal || null, item.tipoComunicacao || null,
+        item.tipoDocumento || null, item.nomeOrgao || null,
+        item.texto || null, item.link || null,
+        item.status || null, cancelada,
+      ]
+    ).catch(() => []);
+    if (result[0]?.inserted) inseridas++;
+  }
+  await db.query(
+    `INSERT INTO configuracoes (categoria, chave, valor) VALUES ('publicacoes','ultima_sync',$1)
+     ON CONFLICT (categoria, chave) DO UPDATE SET valor = $1, atualizado_em = NOW()`,
+    [new Date().toISOString()]
+  ).catch(() => {});
+  res.json({ ok: true, inseridas, vinculadas });
+});
+
 // POST /api/publicacoes/sincronizar — desativado (Comunica API bloqueia IPs de nuvem)
 // Use o script local: node ~/sync-publicacoes.mjs
 publicacoesRouter.post('/sincronizar', apenasMaster, (_req, res) => {
