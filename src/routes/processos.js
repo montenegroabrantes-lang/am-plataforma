@@ -104,7 +104,13 @@ processosRouter.get('/', async (req, res) => {
   if (produto_id)            { params.push(produto_id);            condicoes.push(`AND p.produto_id = $${params.length}`); }
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
   if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
-  if (etapa && ETAPA_WHERE[etapa]) condicoes.push(`AND ${ETAPA_WHERE[etapa]}`);
+  if (etapa) {
+    params.push(etapa);
+    const etapaWhere = ETAPA_WHERE[etapa]
+      ? `(${ETAPA_WHERE[etapa]} OR p.etapa_atual = $${params.length})`
+      : `p.etapa_atual = $${params.length}`;
+    condicoes.push(`AND ${etapaWhere}`);
+  }
   const tempoNum = Number(tempo_parado_min);
   if (tempo_parado_min && !isNaN(tempoNum)) {
     params.push(tempoNum);
@@ -147,7 +153,7 @@ processosRouter.get('/', async (req, res) => {
             ult.data_movimentacao AS ultima_movimentacao,
             ult.texto             AS ultima_mov_texto,
             EXTRACT(DAY FROM NOW() - ult.data_movimentacao)::int AS dias_parado,
-            ${ETAPA_CASE} AS etapa
+            COALESCE(NULLIF(p.etapa_atual, ''), ${ETAPA_CASE}) AS etapa
      FROM processos p
      LEFT JOIN clientes c  ON c.id  = p.cliente_id
      LEFT JOIN produtos  pr ON pr.id = p.produto_id
@@ -198,7 +204,13 @@ processosRouter.get('/exportar', async (req, res) => {
   if (vara)                  { params.push(`%${vara}%`);           condicoes.push(`AND p.vara ILIKE $${params.length}`); }
   if (polo_passivo)          { params.push(`%${polo_passivo}%`);   condicoes.push(`AND p.polo_passivo ILIKE $${params.length}`); }
   if (produto_id)            { params.push(produto_id);            condicoes.push(`AND p.produto_id = $${params.length}`); }
-  if (etapa && ETAPA_WHERE[etapa]) condicoes.push(`AND ${ETAPA_WHERE[etapa]}`);
+  if (etapa) {
+    params.push(etapa);
+    const etapaWhere = ETAPA_WHERE[etapa]
+      ? `(${ETAPA_WHERE[etapa]} OR p.etapa_atual = $${params.length})`
+      : `p.etapa_atual = $${params.length}`;
+    condicoes.push(`AND ${etapaWhere}`);
+  }
   if (ano)                   { params.push(ano);                   condicoes.push(`AND EXTRACT(YEAR FROM p.data_distribuicao) = $${params.length}`); }
   if (funcao_cliente)        { params.push(`%${funcao_cliente}%`); condicoes.push(`AND c.cargo ILIKE $${params.length}`); }
   const tempoNum = Number(tempo_parado_min);
