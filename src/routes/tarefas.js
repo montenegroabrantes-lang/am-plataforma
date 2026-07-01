@@ -7,7 +7,7 @@ export const tarefasRouter = Router();
 
 // GET /api/tarefas — lista tarefas do usuário (ou todas para Master)
 tarefasRouter.get('/', async (req, res) => {
-  const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, page = 1, limite = 100 } = req.query;
+  const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, tipo, page = 1, limite = 100 } = req.query;
   const offset = (Number(page) - 1) * Number(limite);
 
   const params = [];
@@ -24,12 +24,14 @@ tarefasRouter.get('/', async (req, res) => {
   } else if (status) {
     params.push(status); condicoes.push(`t.status = $${params.length}`);
   }
+  if (tipo)        { params.push(tipo);         condicoes.push(`t.tipo = $${params.length}`); }
   if (urgencia)    { params.push(urgencia);    condicoes.push(`t.urgencia = $${params.length}`); }
   if (cliente_id)  { params.push(cliente_id);  condicoes.push(`cl.id = $${params.length}`); }
   if (produto_id)  { params.push(produto_id);  condicoes.push(`pr.id = $${params.length}`); }
   if (atribuido_a) { params.push(atribuido_a); condicoes.push(`t.atribuido_a = $${params.length}`); }
 
   // Não-master só vê as próprias tarefas
+  // Master vê tudo, inclusive tarefas de prazo sem atribuição (geradas por publicações)
   if (req.user.perfil !== 'master') {
     params.push(req.user.id);
     condicoes.push(`(t.atribuido_a = $${params.length} OR t.validado_por = $${params.length})`);
