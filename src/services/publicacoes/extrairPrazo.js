@@ -58,12 +58,31 @@ function parseDateExtenso(str) {
   return new Date(parseInt(m[3]), mes - 1, parseInt(m[1]), hora, min, 0);
 }
 
+// "PETICIONAR ATÉ 48 HORAS ANTES DO INÍCIO DA SESSÃO ... a realizar-se de 13 de Julho de 2026, às 09h00"
+// Prazo de sessão virtual de julgamento: sustentação oral / retirada de pauta deve ser requerida
+// N horas antes do início da sessão.
+function parseSessaoVirtual(texto) {
+  if (!/sess[aã]o\s+virtual/i.test(texto)) return null;
+  const mHoras = texto.match(/peticionar\s+at[eé]\s+(\d+)\s*horas?\s+antes/i);
+  if (!mHoras) return null;
+  const horasAntes = parseInt(mHoras[1]);
+
+  const mData = texto.match(/(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})\s*,?\s*[àa]s?\s+(\d{1,2})h(\d{2})?/i);
+  if (!mData) return null;
+  const mes = MESES[mData[2].toLowerCase()];
+  if (!mes) return null;
+  const inicioSessao = new Date(parseInt(mData[3]), mes - 1, parseInt(mData[1]), parseInt(mData[4]), mData[5] ? parseInt(mData[5]) : 0, 0);
+
+  const prazo = new Date(inicioSessao.getTime() - horasAntes * 60 * 60 * 1000);
+  return { data: prazo, tipo: 'Sustentação Oral' };
+}
+
 function parseDataHoraAudiencia(texto) {
   // "audiência para o dia 20/08/2026 às 14h30"
   const padroes = [
     /audi[eê]ncia[^.]*?(\d{1,2}\/\d{1,2}\/\d{2,4})[^.]*?(?:[àa]s?\s*(\d{1,2})h(\d{2})?)?/i,
     /designou[^.]*?(\d{1,2}\/\d{1,2}\/\d{2,4})[^.]*?(?:[àa]s?\s*(\d{1,2})h(\d{2})?)?/i,
-    /(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})\s+[àa]s?\s+(\d{1,2})h(\d{2})?/i,
+    /(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})\s*,?\s*[àa]s?\s+(\d{1,2})h(\d{2})?/i,
   ];
 
   for (const p of padroes) {
@@ -149,6 +168,16 @@ export function extrairPrazoPublicacao(texto, dataDisponibilizacao, processo) {
   if (!texto) return null;
 
   const tipo = detectarTipoAto(texto);
+
+  // 0. Sessão virtual de julgamento — prazo é N horas antes do início da sessão
+  const sessaoVirtual = parseSessaoVirtual(texto);
+  if (sessaoVirtual) {
+    return {
+      dataEvento: sessaoVirtual.data,
+      titulo: `${sessaoVirtual.tipo}${processo?.numero ? ` — ${processo.numero}` : ''}`,
+      descricao: montarDescricao(sessaoVirtual.tipo, sessaoVirtual.data, null, false, processo, texto),
+    };
+  }
 
   // 1. Tenta audiência com data/hora explícita
   const audiencia = parseDataHoraAudiencia(texto);

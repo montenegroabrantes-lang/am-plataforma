@@ -6,6 +6,49 @@ import { extrairPrazoPublicacao } from '../services/publicacoes/extrairPrazo.js'
 
 export const publicacoesRouter = Router();
 
+// Tenta criar tarefa + evento Calendar com prazo extraído de uma publicação nova.
+// processoId pode ser null (processo ainda não cadastrado) — a tarefa é criada mesmo assim.
+async function criarTarefaDePublicacao(item, processoId) {
+  if (!item.texto) return;
+  try {
+    const processo = processoId
+      ? await db.queryOne(`SELECT id, numero, tribunal, vara FROM processos WHERE id = $1`, [processoId]).catch(() => null)
+      : null;
+    const prazo = extrairPrazoPublicacao(item.texto, item.data_disponibilizacao, processo);
+    if (!prazo) return;
+
+    const diasRestantes = Math.ceil((prazo.dataEvento - new Date()) / (1000 * 60 * 60 * 24));
+    const urgencia = diasRestantes <= 2 ? 'CRITICO' : diasRestantes <= 5 ? 'ALTO' : diasRestantes <= 10 ? 'MEDIO' : 'BAIXO';
+
+    const eventId = await criarEventoCalendar({
+      titulo:    prazo.titulo,
+      dataHora:  prazo.dataEvento,
+      tipo:      prazo.titulo,
+      vara:      processo?.vara,
+      tribunal:  processo?.tribunal || item.siglaTribunal,
+      processoId,
+      descricao: prazo.descricao,
+    }).catch(() => null);
+
+    await db.query(
+      `INSERT INTO tarefas
+         (processo_id, publicacao_id, tipo, descricao, urgencia, prazo_data, validado_por, status, calendar_event_id)
+       VALUES ($1,$2,'prazo',$3,$4,$5::date,NULL,'pendente',$6)
+       ON CONFLICT DO NOTHING`,
+      [
+        processoId,
+        item.id,
+        prazo.titulo,
+        urgencia,
+        prazo.dataEvento.toISOString().slice(0, 10),
+        eventId || null,
+      ]
+    ).catch(e => console.warn('[Publicações] Tarefa não criada:', e.message));
+  } catch (err) {
+    console.warn('[Publicações] Erro ao criar evento/tarefa:', err.message);
+  }
+}
+
 // GET /api/publicacoes — lista publicações com filtros
 publicacoesRouter.get('/', async (req, res) => {
   const { lido, processo_id, tribunal, dias, page = 1, limite = 50 } = req.query;
@@ -140,51 +183,7 @@ export async function importarPublicacoesHandler(req, res) {
       ).catch(() => []);
       if (!rows[0]?.inserted) return rows[0];
 
-      // Nova publicação — tenta criar tarefa + evento Calendar com prazo extraído
-      if (item.texto) {
-        try {
-          const processo = processoId
-            ? await db.queryOne(`SELECT id, numero, tribunal, vara FROM processos WHERE id = $1`, [processoId]).catch(() => null)
-            : null;
-          const prazo = extrairPrazoPublicacao(item.texto, item.data_disponibilizacao, processo);
-          if (prazo) {
-            // Calcula urgência baseada nos dias restantes
-            const diasRestantes = Math.ceil((prazo.dataEvento - new Date()) / (1000 * 60 * 60 * 24));
-            const urgencia = diasRestantes <= 2 ? 'CRITICO' : diasRestantes <= 5 ? 'ALTO' : diasRestantes <= 10 ? 'MEDIO' : 'BAIXO';
-
-            // Cria evento no Calendar
-            const eventId = await criarEventoCalendar({
-              titulo:    prazo.titulo,
-              dataHora:  prazo.dataEvento,
-              tipo:      prazo.titulo,
-              vara:      processo?.vara,
-              tribunal:  processo?.tribunal || item.siglaTribunal,
-              processoId,
-              descricao: prazo.descricao,
-            }).catch(() => null);
-
-            // Cria tarefa vinculada à publicação e ao processo
-            if (processoId) {
-              await db.query(
-                `INSERT INTO tarefas
-                   (processo_id, publicacao_id, tipo, descricao, urgencia, prazo_data, validado_por, status, calendar_event_id)
-                 VALUES ($1,$2,'prazo',$3,$4,$5::date,NULL,'pendente',$6)
-                 ON CONFLICT DO NOTHING`,
-                [
-                  processoId,
-                  item.id,
-                  prazo.titulo,
-                  urgencia,
-                  prazo.dataEvento.toISOString().slice(0, 10),
-                  eventId || null,
-                ]
-              ).catch(e => console.warn('[Publicações] Tarefa não criada:', e.message));
-            }
-          }
-        } catch (err) {
-          console.warn('[Publicações] Erro ao criar evento/tarefa:', err.message);
-        }
-      }
+      await criarTarefaDePublicacao(item, processoId);
 
       return rows[0];
     }));
@@ -250,6 +249,10 @@ publicacoesRouter.post('/importar-browser', apenasMaster, async (req, res) => {
           item.status || null, cancelada,
         ]
       ).catch(() => []);
+      if (!rows[0]?.inserted) return rows[0];
+
+      await criarTarefaDePublicacao(item, processoId);
+
       return rows[0];
     }));
     for (const r of results) { if (r?.inserted) inseridas++; }
@@ -276,7 +279,7 @@ publicacoesRouter.post('/reprocessar-prazos', apenasMaster, async (req, res) => 
     `SELECT p.id, p.texto, p.data_disponibilizacao, p.processo_id,
             pr.numero, pr.tribunal, pr.vara
      FROM publicacoes p
-     JOIN processos pr ON pr.id = p.processo_id
+     LEFT JOIN processos pr ON pr.id = p.processo_id
      WHERE p.texto IS NOT NULL
        AND p.cancelada = false
        AND NOT EXISTS (

@@ -25,6 +25,7 @@ tarefasRouter.get('/', async (req, res) => {
     params.push(status); condicoes.push(`t.status = $${params.length}`);
   }
   if (tipo)      { params.push(tipo);     condicoes.push(`t.tipo = $${params.length}`); }
+  else           condicoes.push(`t.publicacao_id IS NULL`); // prazos de publicação só aparecem na aba própria (tipo=prazo)
   if (prazo_de)  { params.push(prazo_de); condicoes.push(`t.prazo_data >= $${params.length}::date`); }
   if (prazo_ate) { params.push(prazo_ate); condicoes.push(`t.prazo_data <= $${params.length}::date`); }
   if (urgencia)    { params.push(urgencia);    condicoes.push(`t.urgencia = $${params.length}`); }

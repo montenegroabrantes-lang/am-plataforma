@@ -160,12 +160,12 @@ processosRouter.get('/', async (req, res) => {
   res.json({ ok: true, processos: processosComClassif, total: Number(total), page, limite: Number(limite) });
 });
 
-// GET /api/processos/exportar — lista filtrada em texto para WhatsApp
-processosRouter.get('/exportar', async (req, res) => {
+// Monta as condições SQL compartilhadas pelos exports (WhatsApp e Excel)
+function construirFiltrosExportar(query, user) {
   const { status, situacao_atual, urgente, tribunal, busca, localizacao_processual, tipo_requisicao, periodo,
-          vara, polo_passivo, produto_id, etapa, tempo_parado_min, funcao_cliente, ano, movimentacao_pendente } = req.query;
+          vara, polo_passivo, produto_id, etapa, tempo_parado_min, funcao_cliente, ano, movimentacao_pendente } = query;
   const params    = [];
-  const condicoes = ['1=1', filtroVisibilidade(req.user)];
+  const condicoes = ['1=1', filtroVisibilidade(user)];
 
   if (status)                { params.push(status);                condicoes.push(`AND p.status = $${params.length}`); }
   if (tribunal)              { params.push(tribunal);              condicoes.push(`AND p.tribunal = $${params.length}`); }
@@ -206,6 +206,19 @@ processosRouter.get('/exportar', async (req, res) => {
     condicoes.push(`AND (p.numero ILIKE $${iNum2} OR c.nome ILIKE $${iNome2} OR p.polo_ativo ILIKE $${iPAtiv2} OR p.polo_passivo ILIKE $${iPPass2}${cpfCond2})`);
   }
 
+  return { condicoes, params };
+}
+
+function formatarSituacao(situacao) {
+  return situacao
+    ? situacao.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
+    : 'Sem classificação';
+}
+
+// GET /api/processos/exportar — lista filtrada em texto para WhatsApp
+processosRouter.get('/exportar', async (req, res) => {
+  const { condicoes, params } = construirFiltrosExportar(req.query, req.user);
+
   const rows = await db.query(
     `SELECT p.numero, c.nome AS cliente_nome, p.situacao_atual,
             (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) AS ultima_movimentacao
@@ -217,15 +230,42 @@ processosRouter.get('/exportar', async (req, res) => {
     params
   );
 
-  const linhas = rows.map(r => {
-    const situacao = r.situacao_atual
-      ? r.situacao_atual.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
-      : 'Sem classificação';
-    return `${r.numero} | ${r.cliente_nome || '—'} | ${situacao}`;
-  });
+  const linhas = rows.map(r => `${r.numero} | ${r.cliente_nome || '—'} | ${formatarSituacao(r.situacao_atual)}`);
 
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.send(linhas.join('\n'));
+});
+
+// GET /api/processos/exportar-excel — lista filtrada em CSV (abre no Excel)
+processosRouter.get('/exportar-excel', async (req, res) => {
+  const { condicoes, params } = construirFiltrosExportar(req.query, req.user);
+
+  const rows = await db.query(
+    `SELECT p.numero, c.nome AS cliente_nome, c.cpf AS cliente_cpf, p.situacao_atual, p.tribunal, p.vara,
+            p.polo_passivo, p.urgente, p.data_distribuicao,
+            (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) AS ultima_movimentacao
+     FROM processos p
+     LEFT JOIN clientes c ON c.id = p.cliente_id
+     WHERE ${condicoes.filter(Boolean).join(' ')}
+     ORDER BY p.urgente DESC, ultima_movimentacao DESC NULLS LAST
+     LIMIT 500`,
+    params
+  );
+
+  const colunas = ['Número', 'Cliente', 'CPF', 'Situação', 'Tribunal', 'Vara', 'Polo Passivo', 'Urgente', 'Distribuição', 'Última Movimentação'];
+  const escapar = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const linhas = rows.map(r => [
+    r.numero, r.cliente_nome, r.cliente_cpf, formatarSituacao(r.situacao_atual), r.tribunal, r.vara,
+    r.polo_passivo, r.urgente ? 'Sim' : 'Não',
+    r.data_distribuicao ? new Date(r.data_distribuicao).toLocaleDateString('pt-BR') : '',
+    r.ultima_movimentacao ? new Date(r.ultima_movimentacao).toLocaleDateString('pt-BR') : '',
+  ].map(escapar).join(';'));
+
+  const csv = '﻿' + [colunas.map(escapar).join(';'), ...linhas].join('\r\n');
+
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="processos-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(csv);
 });
 
 // GET /api/processos/sync-status — status atual do sync (lock + última execução)
