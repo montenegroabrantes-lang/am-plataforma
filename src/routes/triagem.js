@@ -1,38 +1,15 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
+import { ETAPA_CASE } from '../utils/etapas.js';
 
 export const triagemRouter = Router();
-
-const ETAPA_CASE = `
-  CASE
-    WHEN p.situacao_atual IN ('rpv_paga','pagamento_realizado')
-      OR p.status_rpv = 'paga'
-      OR p.status_alvara = 'pagamento_realizado'         THEN 'Pagamento'
-    WHEN p.situacao_atual IN ('arquivado','autos_baixados') THEN 'Arquivado'
-    WHEN p.tipo_requisicao = 'alvara'
-      OR p.situacao_atual IN ('aguardando_alvara','alvara_expedido') THEN 'Alvará'
-    WHEN p.tipo_requisicao = 'precatorio'
-      OR p.situacao_atual IN ('em_precatorio','minuta_precatorio_juntada',
-        'precatorio_assinado','precatorio_remetido','precatorio_incluido_fila') THEN 'Precatório'
-    WHEN p.tipo_requisicao = 'rpv'
-      OR p.situacao_atual IN ('aguardando_rpv','em_rpv','rpv_expedida') THEN 'RPV'
-    WHEN p.situacao_atual IN ('cumprimento_sentenca','calculos_apresentados',
-      'fazenda_intimada_impugnar','impugnacao_fazenda_apresentada',
-      'calculos_homologados') THEN 'Cumprimento de Sentença'
-    WHEN p.situacao_atual IN ('em_recurso','em_segundo_grau','aguardando_baixa') THEN 'Recurso'
-    WHEN p.situacao_atual IN ('concluso_sentenca','sentenca_proferida','sentenca_publicada') THEN 'Sentença'
-    WHEN p.situacao_atual IN ('contestacao_apresentada','impugnacao_contestacao',
-      'manifestacao_provas') THEN 'Contestação'
-    WHEN p.situacao_atual IN ('em_conhecimento','aguardando_contestacao') THEN 'Inicial'
-    ELSE 'Sem classificação'
-  END
-`;
 
 // GET /api/triagem
 triagemRouter.get('/', async (req, res) => {
   const {
     busca, ano, tribunal, vara, produto_id,
     polo_passivo, etapa, tempo_parado_min, pagamento,
+    funcao_cliente, movimentacao_pendente,
     pagina = 1, por_pagina = 50,
   } = req.query;
 
@@ -68,6 +45,8 @@ triagemRouter.get('/', async (req, res) => {
     filterWheres.push(`(p.situacao_atual IN ('rpv_paga','pagamento_realizado')
       OR p.status_rpv = 'paga' OR p.status_alvara = 'pagamento_realizado')`);
   }
+  if (funcao_cliente)         filterWheres.push(`c.cargo ILIKE ${fp('%' + funcao_cliente + '%')}`);
+  if (movimentacao_pendente === 'true') filterWheres.push(`p.requer_revisao = true`);
 
   const WHERE = `WHERE ${filterWheres.join(' AND ')}`;
 
@@ -80,6 +59,8 @@ triagemRouter.get('/', async (req, res) => {
         NULLIF(TRIM(p.vara), '')         AS vara,
         NULLIF(TRIM(p.polo_passivo), '') AS polo_passivo,
         COALESCE(c.nome, p.polo_ativo) AS cliente,
+        NULLIF(TRIM(c.cargo), '') AS funcao,
+        p.requer_revisao AS movimentacao_pendente,
         pr.id   AS produto_id,
         pr.nome AS produto,
         EXTRACT(DAY FROM NOW() - ult.data_movimentacao)::int AS dias_parado,
@@ -147,6 +128,11 @@ triagemRouter.get('/', async (req, res) => {
            SELECT COALESCE(polo_passivo,'Não informado') AS polo_passivo, COUNT(*)::int AS total
            FROM base GROUP BY polo_passivo ORDER BY total DESC LIMIT 30
          ) r) AS por_polo_passivo,
+         (SELECT json_agg(r ORDER BY r.total DESC) FROM (
+           SELECT COALESCE(funcao,'Não informada') AS funcao, COUNT(*)::int AS total
+           FROM base GROUP BY funcao ORDER BY total DESC LIMIT 30
+         ) r) AS por_funcao,
+         (SELECT COUNT(*)::int FROM base WHERE movimentacao_pendente = true) AS movimentacao_pendente,
          (SELECT json_agg(r ORDER BY r.min_dias) FROM (
            SELECT
              CASE
@@ -185,7 +171,9 @@ triagemRouter.get('/', async (req, res) => {
       por_vara:         stats.por_vara          || [],
       por_produto:      stats.por_produto       || [],
       por_polo_passivo: stats.por_polo_passivo  || [],
+      por_funcao:       stats.por_funcao        || [],
       por_tempo:        stats.por_tempo         || [],
+      movimentacao_pendente: Number(stats.movimentacao_pendente || 0),
     },
   });
 });
