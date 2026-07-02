@@ -126,8 +126,18 @@ processosRouter.get('/', async (req, res) => {
   }
   if (funcao_cliente)         { params.push(`%${funcao_cliente}%`);  condicoes.push(`AND c.cargo ILIKE $${params.length}`); }
   if (busca) {
-    params.push(`%${busca}%`, `%${busca}%`, `%${busca}%`, `%${busca}%`);
-    condicoes.push(`AND (p.numero ILIKE $${params.length - 3} OR c.nome ILIKE $${params.length - 2} OR p.polo_ativo ILIKE $${params.length - 1} OR p.polo_passivo ILIKE $${params.length})`);
+    const t = `%${busca}%`;
+    params.push(t); const iNum   = params.length;
+    params.push(t); const iNome  = params.length;
+    params.push(t); const iPAtiv = params.length;
+    params.push(t); const iPPass = params.length;
+    let cpfCond = '';
+    const soDigitos = busca.replace(/\D/g, '');
+    if (soDigitos.length >= 6) {
+      params.push(`%${soDigitos}%`);
+      cpfCond = ` OR REGEXP_REPLACE(c.cpf,'[^0-9]','','g') ILIKE $${params.length}`;
+    }
+    condicoes.push(`AND (p.numero ILIKE $${iNum} OR c.nome ILIKE $${iNome} OR p.polo_ativo ILIKE $${iPAtiv} OR p.polo_passivo ILIKE $${iPPass}${cpfCond})`);
   }
 
   const where = condicoes.filter(Boolean).join(' ');
@@ -233,8 +243,18 @@ processosRouter.get('/exportar', async (req, res) => {
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
   if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
   if (busca) {
-    params.push(`%${busca}%`); params.push(`%${busca}%`); params.push(`%${busca}%`); params.push(`%${busca}%`);
-    condicoes.push(`AND (p.numero ILIKE $${params.length-3} OR c.nome ILIKE $${params.length-2} OR p.polo_ativo ILIKE $${params.length-1} OR p.polo_passivo ILIKE $${params.length})`);
+    const t2 = `%${busca}%`;
+    params.push(t2); const iNum2   = params.length;
+    params.push(t2); const iNome2  = params.length;
+    params.push(t2); const iPAtiv2 = params.length;
+    params.push(t2); const iPPass2 = params.length;
+    let cpfCond2 = '';
+    const soDigitos2 = busca.replace(/\D/g, '');
+    if (soDigitos2.length >= 6) {
+      params.push(`%${soDigitos2}%`);
+      cpfCond2 = ` OR REGEXP_REPLACE(c.cpf,'[^0-9]','','g') ILIKE $${params.length}`;
+    }
+    condicoes.push(`AND (p.numero ILIKE $${iNum2} OR c.nome ILIKE $${iNome2} OR p.polo_ativo ILIKE $${iPAtiv2} OR p.polo_passivo ILIKE $${iPPass2}${cpfCond2})`);
   }
 
   const rows = await db.query(
