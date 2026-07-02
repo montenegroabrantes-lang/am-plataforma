@@ -50,17 +50,19 @@ app.use(express.json({ limit: '2mb' }));
 app.use(auditar);
 
 let dbOk = false;
+let dbJaConectouUmaVez = false;
 
-// Healthcheck — durante boot retorna 200 (Railway precisa disso para não matar o processo)
-// Após conectar, retorna db:false se banco cair (para monitoramento externo)
+// Healthcheck — durante o boot (antes da primeira conexão) sempre 200, para o Railway
+// não matar o processo enquanto o Postgres ainda está de pé. Depois de já ter conectado
+// ao menos uma vez, uma queda real do banco retorna 503 (Railway reinicia via ON_FAILURE,
+// limitado a 3 tentativas por railway.json — não é loop infinito).
 app.get('/health', async (_req, res) => {
-  if (!dbOk) return res.json({ ok: true, db: false, iniciando: true, env: process.env.NODE_ENV });
+  if (!dbJaConectouUmaVez) return res.json({ ok: true, db: false, iniciando: true, env: process.env.NODE_ENV });
   try {
     await db.query('SELECT 1');
     res.json({ ok: true, db: true, env: process.env.NODE_ENV });
   } catch {
-    // Retorna 200 mesmo com banco fora — Railway não deve reiniciar por isso (seria loop)
-    res.json({ ok: true, db: false, env: process.env.NODE_ENV });
+    res.status(503).json({ ok: false, db: false, env: process.env.NODE_ENV });
   }
 });
 
@@ -148,6 +150,7 @@ async function iniciar() {
   try {
     await db.query('SELECT 1');
     dbOk = true;
+    dbJaConectouUmaVez = true;
     console.log('[DB] PostgreSQL conectado.');
     await db.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS senha_temporaria BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS data_conclusao_bloqueio DATE`).catch(() => {});
