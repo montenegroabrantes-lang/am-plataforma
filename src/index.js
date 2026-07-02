@@ -51,14 +51,16 @@ app.use(auditar);
 
 let dbOk = false;
 
-// Healthcheck — retorna 503 se banco offline (Railway reinicia quando necessário)
+// Healthcheck — durante boot retorna 200 (Railway precisa disso para não matar o processo)
+// Após conectar, retorna db:false se banco cair (para monitoramento externo)
 app.get('/health', async (_req, res) => {
-  if (!dbOk) return res.status(503).json({ ok: false, db: false, env: process.env.NODE_ENV });
+  if (!dbOk) return res.json({ ok: true, db: false, iniciando: true, env: process.env.NODE_ENV });
   try {
     await db.query('SELECT 1');
     res.json({ ok: true, db: true, env: process.env.NODE_ENV });
   } catch {
-    res.status(503).json({ ok: false, db: false, env: process.env.NODE_ENV });
+    // Retorna 200 mesmo com banco fora — Railway não deve reiniciar por isso (seria loop)
+    res.json({ ok: true, db: false, env: process.env.NODE_ENV });
   }
 });
 
