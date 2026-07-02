@@ -12,14 +12,6 @@ function filtroVisibilidade(user) {
 }
 
 // Todos os usuários veem todos os processos (filtroVisibilidade já bloqueia os restritos)
-function filtroMaster(_user, _params) {
-  return '';
-}
-
-// Verifica se o user tem acesso ao processo (para GET/PATCH/DELETE /:id)
-function podeAcessarProcesso(user, _processo) {
-  return true; // acesso bloqueado apenas por visibilidade (filtroVisibilidade)
-}
 
 const FILTROS_PERIODO = {
   'hoje':   `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date`,
@@ -103,7 +95,7 @@ processosRouter.get('/', async (req, res) => {
   const offset = (page - 1) * Number(limite);
 
   const params    = [];
-  const condicoes = ['1=1', filtroMaster(req.user, params), filtroVisibilidade(req.user)];
+  const condicoes = ['1=1', filtroVisibilidade(req.user)];
 
   if (status)                { params.push(status);                condicoes.push(`AND p.status = $${params.length}`); }
   if (tribunal)              { params.push(tribunal);              condicoes.push(`AND p.tribunal = $${params.length}`); }
@@ -215,7 +207,7 @@ processosRouter.get('/exportar', async (req, res) => {
   const { status, situacao_atual, urgente, tribunal, busca, localizacao_processual, tipo_requisicao, periodo,
           vara, polo_passivo, produto_id, etapa, tempo_parado_min, funcao_cliente, ano } = req.query;
   const params    = [];
-  const condicoes = ['1=1', filtroMaster(req.user, params), filtroVisibilidade(req.user)];
+  const condicoes = ['1=1', filtroVisibilidade(req.user)];
 
   if (status)                { params.push(status);                condicoes.push(`AND p.status = $${params.length}`); }
   if (tribunal)              { params.push(tribunal);              condicoes.push(`AND p.tribunal = $${params.length}`); }
@@ -368,7 +360,6 @@ processosRouter.get('/:id', async (req, res) => {
 
   if (!p) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
 
-  if (!podeAcessarProcesso(req.user, p)) {
     return res.status(403).json({ ok: false, erro: 'Acesso negado a este processo.' });
   }
 
@@ -439,7 +430,6 @@ processosRouter.post('/', async (req, res) => {
 processosRouter.patch('/:id', async (req, res) => {
   const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado FROM processos WHERE id = $1', [req.params.id]);
   if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
-  if (!podeAcessarProcesso(req.user, dono)) return res.status(403).json({ ok: false, erro: 'Acesso negado a este processo.' });
 
   const campos      = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas', 'periodo_inicio', 'periodo_fim', 'classificacao'];
   const camposData  = new Set(['periodo_inicio', 'periodo_fim']);
@@ -550,7 +540,6 @@ processosRouter.post('/:id/sync', async (req, res) => {
 processosRouter.patch('/:id/urgente', async (req, res) => {
   const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado FROM processos WHERE id = $1', [req.params.id]);
   if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
-  if (!podeAcessarProcesso(req.user, dono)) return res.status(403).json({ ok: false, erro: 'Acesso negado.' });
 
   const { urgente } = req.body;
   await db.execute(
@@ -564,7 +553,6 @@ processosRouter.patch('/:id/urgente', async (req, res) => {
 processosRouter.patch('/:id/situacao', async (req, res) => {
   const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, situacao_atual, etapa_atual FROM processos WHERE id = $1', [req.params.id]);
   if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
-  if (!podeAcessarProcesso(req.user, dono)) return res.status(403).json({ ok: false, erro: 'Acesso negado.' });
 
   const campos  = ['situacao_atual','etapa_atual','localizacao_processual','tipo_requisicao',
                    'status_rpv','status_precatorio','status_alvara','valor_homologado','urgente',
@@ -617,7 +605,6 @@ processosRouter.post('/:id/classificar', async (req, res) => {
     [req.params.id]
   );
   if (!processo) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
-  if (!podeAcessarProcesso(req.user, processo)) return res.status(403).json({ ok: false, erro: 'Acesso negado.' });
 
   const movimentacoes = await db.query(
     `SELECT texto, data_movimentacao FROM movimentacoes WHERE processo_id = $1 ORDER BY data_movimentacao DESC LIMIT 15`,
@@ -882,7 +869,6 @@ processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
 processosRouter.delete('/:id', apenasMaster, async (req, res) => {
   const antes = await db.queryOne('SELECT * FROM processos WHERE id = $1', [req.params.id]);
   if (!antes) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
-  if (!podeAcessarProcesso(req.user, antes)) return res.status(403).json({ ok: false, erro: 'Acesso negado a este processo.' });
 
   const pid = req.params.id;
   try {

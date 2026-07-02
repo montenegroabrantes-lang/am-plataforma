@@ -1,10 +1,20 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
+import { redis }   from '../cache/redis.js';
 
 export const dashboardRouter = Router();
 
+const CACHE_KEY = 'dashboard:metricas';
+const CACHE_TTL = 60; // segundos
+
 // GET /api/dashboard — métricas da tela inicial
 dashboardRouter.get('/', async (req, res) => {
+  // Serve do cache se disponível (evita 12 queries pesadas a cada carregamento)
+  try {
+    const cached = await redis.get(CACHE_KEY);
+    if (cached) return res.json({ ok: true, ...JSON.parse(cached), _cache: true });
+  } catch { /* Redis indisponível — continua sem cache */ }
+
   const filtroM = '';
   const filtroP = '';
   const filtroT = '';
@@ -155,7 +165,7 @@ dashboardRouter.get('/', async (req, res) => {
 
   const ultimaExecucao = syncExecucoes[0] || null;
 
-  res.json({
+  const payload = {
     ok: true,
     processos: {
       totais: {
@@ -215,5 +225,10 @@ dashboardRouter.get('/', async (req, res) => {
       total_causa:       Number(agg.total_causa       || 0),
       processos_com_valor:Number(agg.processos_com_valor || 0),
     },
-  });
+  };
+
+  // Salva no cache por 60s
+  redis.set(CACHE_KEY, JSON.stringify(payload), 'EX', CACHE_TTL).catch(() => {});
+
+  res.json({ ok: true, ...payload });
 });

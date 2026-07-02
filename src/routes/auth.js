@@ -58,8 +58,8 @@ authRouter.post('/login', async (req, res) => {
     return res.status(401).json({ ok: false, erro: 'Credenciais inválidas.' });
   }
 
-  // Força troca de senha no primeiro acesso
-  if (!user.totp_ativo && user.totp_secret === null && user.criado_em === user.ultimo_acesso) {
+  // Força troca de senha no primeiro acesso (flag explícita — sem heurística de timestamp)
+  if (user.senha_temporaria) {
     return res.status(200).json({ ok: false, primeiro_acesso: true, userId: user.id });
   }
 
@@ -113,19 +113,15 @@ authRouter.post('/trocar-senha', async (req, res) => {
   if (novaSenha.length < 8)  return res.status(400).json({ ok: false, erro: 'Senha deve ter no mínimo 8 caracteres.' });
 
   const user = await db.queryOne(
-    'SELECT id, criado_em, ultimo_acesso FROM usuarios WHERE id = $1 AND ativo = true',
+    'SELECT id, senha_temporaria FROM usuarios WHERE id = $1 AND ativo = true',
     [userId]
   );
   if (!user) return res.status(404).json({ ok: false, erro: 'Usuário não encontrado.' });
-
-  const primeiroAcesso = Math.abs(new Date(user.criado_em) - new Date(user.ultimo_acesso)) < 2000;
-  if (!primeiroAcesso) {
-    return res.status(403).json({ ok: false, erro: 'Operação não permitida.' });
-  }
+  if (!user.senha_temporaria) return res.status(403).json({ ok: false, erro: 'Operação não permitida.' });
 
   const hash = await bcrypt.hash(novaSenha, 12);
   await db.execute(
-    'UPDATE usuarios SET senha_hash = $1, ultimo_acesso = NOW() WHERE id = $2',
+    'UPDATE usuarios SET senha_hash = $1, senha_temporaria = false, ultimo_acesso = NOW() WHERE id = $2',
     [hash, userId]
   );
   res.json({ ok: true, mensagem: 'Senha atualizada.' });

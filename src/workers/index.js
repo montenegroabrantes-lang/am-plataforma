@@ -107,6 +107,7 @@ export async function iniciarWorkers() {
 // Dispara sync imediato de um processo — fila separada, não bloqueia pelo lote
 export async function enfileirarSincronizarProcesso(processoId) {
   await individualSyncQueue.add('sincronizar-processo', { processoId }, {
+    jobId:            `sync-proc-${processoId}`,
     attempts:         2,
     backoff:          { type: 'fixed', delay: 10_000 },
     removeOnComplete: 20,

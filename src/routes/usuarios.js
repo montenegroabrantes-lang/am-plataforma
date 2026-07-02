@@ -57,8 +57,8 @@ usuariosRouter.post('/', apenasMaster, async (req, res) => {
 
   try {
     const [novo] = await db.query(
-      `INSERT INTO usuarios (nome, email, senha_hash, perfil, master_id)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO usuarios (nome, email, senha_hash, perfil, master_id, senha_temporaria)
+       VALUES ($1, $2, $3, $4, $5, true)
        RETURNING id, nome, email, perfil, master_id`,
       [nome.trim(), email.toLowerCase().trim(), hash, perfil, master_id ?? null]
     );

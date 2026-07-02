@@ -147,6 +147,7 @@ async function iniciar() {
     await db.query('SELECT 1');
     dbOk = true;
     console.log('[DB] PostgreSQL conectado.');
+    await db.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS senha_temporaria BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS data_conclusao_bloqueio DATE`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS justificativa_cancelamento TEXT`).catch(() => {});
     await db.query(`ALTER TABLE tarefas DROP CONSTRAINT IF EXISTS tarefas_status_check`).catch(() => {});

@@ -39,6 +39,20 @@ tarefasRouter.get('/', async (req, res) => {
     condicoes.push(`(t.atribuido_a = $${params.length} OR t.validado_por = $${params.length})`);
   }
 
+  // COUNT antes de adicionar LIMIT/OFFSET
+  const [{ total }] = await db.query(
+    `SELECT COUNT(*) AS total
+     FROM tarefas t
+     LEFT JOIN processos p  ON p.id = t.processo_id
+     LEFT JOIN usuarios u   ON u.id = t.atribuido_a
+     LEFT JOIN usuarios m   ON m.id = t.validado_por
+     LEFT JOIN cliente_produtos cp ON cp.id = t.cliente_produto_id
+     LEFT JOIN clientes cl  ON cl.id = cp.cliente_id
+     LEFT JOIN produtos pr  ON pr.id = cp.produto_id
+     WHERE ${condicoes.join(' AND ')}`,
+    params
+  );
+
   params.push(Number(limite), offset);
 
   const rows = await db.query(
@@ -61,7 +75,7 @@ tarefasRouter.get('/', async (req, res) => {
     params
   );
 
-  res.json({ ok: true, tarefas: rows });
+  res.json({ ok: true, tarefas: rows, total: Number(total), page: Number(page), limite: Number(limite) });
 });
 
 // POST /api/tarefas — cria tarefa (Master atribui ao Junior)
