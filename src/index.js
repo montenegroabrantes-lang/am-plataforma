@@ -51,8 +51,16 @@ app.use(auditar);
 
 let dbOk = false;
 
-// Healthcheck SEMPRE responde — Railway depende disso
-app.get('/health', (_req, res) => res.json({ ok: true, db: dbOk, env: process.env.NODE_ENV }));
+// Healthcheck — retorna 503 se banco offline (Railway reinicia quando necessário)
+app.get('/health', async (_req, res) => {
+  if (!dbOk) return res.status(503).json({ ok: false, db: false, env: process.env.NODE_ENV });
+  try {
+    await db.query('SELECT 1');
+    res.json({ ok: true, db: true, env: process.env.NODE_ENV });
+  } catch {
+    res.status(503).json({ ok: false, db: false, env: process.env.NODE_ENV });
+  }
+});
 
 // Gate: até o DB conectar, rejeita o resto com 503 (não 500 silencioso)
 app.use((req, res, next) => {
@@ -60,17 +68,28 @@ app.use((req, res, next) => {
   next();
 });
 
-// Rate limiting no login — máx 20 tentativas por 15 min por IP
+// Rate limiting — login e rotas sensíveis de auth
 const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 15 * 60 * 1000, max: 20,
+  standardHeaders: true, legacyHeaders: false,
   message: { ok: false, erro: 'Muitas tentativas. Aguarde 15 minutos.' },
+});
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 30,
+  standardHeaders: true, legacyHeaders: false,
+  message: { ok: false, erro: 'Muitas requisições. Aguarde 15 minutos.' },
+});
+const importLimiter = rateLimit({
+  windowMs: 60 * 1000, max: 10,
+  standardHeaders: true, legacyHeaders: false,
+  message: { ok: false, erro: 'Limite de importação atingido. Aguarde 1 minuto.' },
 });
 
 // Rotas públicas
-app.use('/api/auth/login', loginLimiter);
+app.use('/api/auth/login',        loginLimiter);
+app.use('/api/auth/refresh',      authLimiter);
+app.use('/api/auth/trocar-senha', authLimiter);
+app.use('/api/auth/2fa',          authLimiter);
 app.use('/api/auth', authRouter);
 
 // Rotas protegidas
@@ -95,13 +114,21 @@ app.use('/api/classif',           autenticar, classificacoesRouter);
 // Webhook público — CNJ faz POST sem sessão do usuário
 app.use('/api/webhook',       webhookRouter);
 // /importar usa x-sync-key própria (sem JWT) — script local envia publicações do Mac
-app.post('/api/publicacoes/importar', importarPublicacoesHandler);
+app.post('/api/publicacoes/importar', importLimiter, importarPublicacoesHandler);
 app.use('/api/publicacoes',   autenticar, publicacoesRouter);
 
 // Global error handler — captura erros não tratados nas rotas
 app.use((err, req, res, next) => {
   console.error('[ERROR]', err.message, err.stack?.split('\n')[1]);
   res.status(500).json({ ok: false, erro: err.message || 'Erro interno do servidor.' });
+});
+
+// Handlers globais — evitam derrubar o processo por erro não tratado
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection]', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err.message, err.stack);
 });
 
 // Sobe o servidor imediatamente para o healthcheck passar

@@ -91,7 +91,7 @@ usuariosRouter.patch('/:id', apenasMaster, async (req, res) => {
   const { id } = req.params;
   const { nome, email, ativo } = req.body;
 
-  const antes = await db.queryOne('SELECT * FROM usuarios WHERE id = $1', [id]);
+  const antes = await db.queryOne('SELECT id, nome, email, perfil, ativo, criado_em FROM usuarios WHERE id = $1', [id]);
   if (!antes) return res.status(404).json({ ok: false, erro: 'Usuário não encontrado.' });
 
   const novoNome  = nome  ?? antes.nome;
@@ -124,7 +124,7 @@ usuariosRouter.patch('/:id/senha', apenasMaster, async (req, res) => {
 // DELETE /api/usuarios/:id — exclui usuário (apenas Master com pode_marcar_restrito)
 usuariosRouter.delete('/:id', apenasMaster, async (req, res) => {
   if (!req.user.pode_marcar_restrito) return res.status(403).json({ ok: false, erro: 'Apenas o Master principal pode excluir usuários.' });
-  const alvo = await db.queryOne('SELECT * FROM usuarios WHERE id = $1', [req.params.id]);
+  const alvo = await db.queryOne('SELECT id, nome, email, perfil, ativo FROM usuarios WHERE id = $1', [req.params.id]);
   if (!alvo) return res.status(404).json({ ok: false, erro: 'Usuário não encontrado.' });
   if (alvo.id === req.user.id) return res.status(400).json({ ok: false, erro: 'Não é possível excluir a própria conta.' });
 

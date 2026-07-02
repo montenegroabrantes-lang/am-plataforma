@@ -85,7 +85,8 @@ publicacoesRouter.patch('/marcar-todas-lidas', apenasMaster, async (req, res) =>
 // POST /api/publicacoes/importar — recebe publicações coletadas pelo script local (IP residencial)
 // Exportado separadamente para ser montado SEM autenticar middleware
 export async function importarPublicacoesHandler(req, res) {
-  const chaveEnv = process.env.SYNC_KEY || 'am-sync-2026';
+  const chaveEnv = process.env.SYNC_KEY;
+  if (!chaveEnv) return res.status(503).json({ ok: false, erro: 'SYNC_KEY não configurada no servidor.' });
   if (req.headers['x-sync-key'] !== chaveEnv) {
     return res.status(401).json({ ok: false, erro: 'Chave inválida.' });
   }

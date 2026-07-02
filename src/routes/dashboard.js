@@ -29,7 +29,7 @@ dashboardRouter.get('/', async (req, res) => {
     db.queryOne(`
       SELECT
         COUNT(*) FILTER (WHERE status = 'ativo')     AS total_ativo,
-        COUNT(*) FILTER (WHERE status = 'inativo')   AS total_inativo,
+        COUNT(*) FILTER (WHERE status = 'encerrado')  AS total_inativo,
         COUNT(*) FILTER (WHERE status = 'suspenso')  AS total_suspenso,
         COUNT(*) FILTER (WHERE status = 'arquivado') AS total_arquivado,
         COUNT(*) FILTER (WHERE sync_status = 'ok')        AS sync_ok,

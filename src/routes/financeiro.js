@@ -79,6 +79,16 @@ financeiroRouter.patch('/:id', apenasMaster, async (req, res) => {
   const antes = await db.queryOne('SELECT * FROM honorarios WHERE id = $1', [req.params.id]);
   if (!antes) return res.status(404).json({ ok: false, erro: 'Honorário não encontrado.' });
 
+  const statusValidos = ['a_receber', 'recebido', 'cancelado'];
+  if (status && !statusValidos.includes(status)) {
+    return res.status(400).json({ ok: false, erro: `Status inválido. Use: ${statusValidos.join(', ')}` });
+  }
+  if (status === 'recebido') {
+    const val = Number(valor_recebido ?? antes.valor_recebido);
+    if (!val || val <= 0) return res.status(400).json({ ok: false, erro: 'Valor recebido deve ser maior que zero.' });
+    if (val > Number(antes.valor_honorario) * 1.5) return res.status(400).json({ ok: false, erro: 'Valor recebido excede 150% do honorário — confirme o valor.' });
+  }
+
   await db.execute(
     `UPDATE honorarios SET
        status = COALESCE($1, status),
