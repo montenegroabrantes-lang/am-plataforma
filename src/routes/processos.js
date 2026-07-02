@@ -88,7 +88,7 @@ processosRouter.get('/', async (req, res) => {
   const {
     status, tribunal, vara, polo_passivo, ano, busca, situacao_atual, urgente,
     localizacao_processual, tipo_requisicao, periodo,
-    produto_id, etapa, tempo_parado_min, funcao_cliente,
+    produto_id, etapa, tempo_parado_min, funcao_cliente, movimentacao_pendente,
     limite = 30,
   } = req.query;
   const page   = Number(req.query.page || req.query.pagina || 1);
@@ -119,6 +119,7 @@ processosRouter.get('/', async (req, res) => {
       : `p.etapa_atual = $${params.length}`;
     condicoes.push(`AND ${etapaWhere}`);
   }
+  if (movimentacao_pendente === 'true') condicoes.push(`AND p.requer_revisao = true`);
   const tempoNum = Number(tempo_parado_min);
   if (tempo_parado_min && !isNaN(tempoNum)) {
     params.push(tempoNum);
@@ -215,7 +216,7 @@ processosRouter.get('/', async (req, res) => {
 // GET /api/processos/exportar — lista filtrada em texto para WhatsApp
 processosRouter.get('/exportar', async (req, res) => {
   const { status, situacao_atual, urgente, tribunal, busca, localizacao_processual, tipo_requisicao, periodo,
-          vara, polo_passivo, produto_id, etapa, tempo_parado_min, funcao_cliente, ano } = req.query;
+          vara, polo_passivo, produto_id, etapa, tempo_parado_min, funcao_cliente, ano, movimentacao_pendente } = req.query;
   const params    = [];
   const condicoes = ['1=1', filtroVisibilidade(req.user)];
 
@@ -242,6 +243,7 @@ processosRouter.get('/exportar', async (req, res) => {
   }
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
   if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
+  if (movimentacao_pendente === 'true') condicoes.push(`AND p.requer_revisao = true`);
   if (busca) {
     const t2 = `%${busca}%`;
     params.push(t2); const iNum2   = params.length;
@@ -361,6 +363,143 @@ processosRouter.post('/etapas-custom', async (req, res) => {
     res.json({ ok: true, opcoes });
   } catch (err) {
     console.error('[etapas-custom POST]', err.message);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// GET /api/processos/opcoes — valores distintos usados hoje, para montar botões estáticos de filtro
+processosRouter.get('/opcoes', async (req, res) => {
+  try {
+    const vis = filtroVisibilidade(req.user);
+    const [varas, produtos] = await Promise.all([
+      db.query(
+        `SELECT p.vara AS valor, COUNT(*)::int AS total
+         FROM processos p
+         WHERE p.vara IS NOT NULL AND p.vara <> '' ${vis}
+         GROUP BY p.vara
+         ORDER BY total DESC
+         LIMIT 100`
+      ),
+      db.query(
+        `SELECT pr.id, pr.nome, COUNT(p.id)::int AS total
+         FROM produtos pr
+         LEFT JOIN processos p ON p.produto_id = pr.id ${vis}
+         GROUP BY pr.id, pr.nome
+         ORDER BY pr.nome`
+      ),
+    ]);
+    res.json({ ok: true, varas, produtos });
+  } catch (err) {
+    console.error('[processos/opcoes]', err.message);
+    res.status(500).json({ ok: false, erro: err.message });
+  }
+});
+
+// Monta WHERE + params reaproveitando os mesmos filtros da listagem principal,
+// permitindo excluir uma dimensão (para contagem facetada: "quantos em cada vara,
+// já considerando os demais filtros ativos, exceto o próprio filtro de vara").
+function montarFiltrosContadores(req, excluir = []) {
+  const q = req.query;
+  const params    = [];
+  const condicoes = ['1=1', filtroVisibilidade(req.user)];
+  const pula = (chave) => excluir.includes(chave);
+
+  if (!pula('status') && q.status)          { params.push(q.status);            condicoes.push(`AND p.status = $${params.length}`); }
+  if (!pula('tribunal') && q.tribunal)      { params.push(q.tribunal);          condicoes.push(`AND p.tribunal = $${params.length}`); }
+  if (!pula('vara') && q.vara)              { params.push(`%${q.vara}%`);       condicoes.push(`AND p.vara ILIKE $${params.length}`); }
+  if (!pula('polo_passivo') && q.polo_passivo) { params.push(`%${q.polo_passivo}%`); condicoes.push(`AND p.polo_passivo ILIKE $${params.length}`); }
+  if (!pula('situacao_atual') && q.situacao_atual) { params.push(q.situacao_atual); condicoes.push(`AND p.situacao_atual = $${params.length}`); }
+  if (!pula('tipo_requisicao') && q.tipo_requisicao) { params.push(q.tipo_requisicao); condicoes.push(`AND p.tipo_requisicao = $${params.length}`); }
+  if (!pula('produto_id') && q.produto_id)  { params.push(q.produto_id);        condicoes.push(`AND p.produto_id = $${params.length}`); }
+  if (!pula('urgente') && q.urgente === 'true') condicoes.push(`AND p.urgente = true`);
+  if (!pula('periodo') && q.periodo && FILTROS_PERIODO[q.periodo]) condicoes.push(FILTROS_PERIODO[q.periodo]);
+  if (!pula('etapa') && q.etapa) {
+    params.push(q.etapa);
+    const etapaWhere = ETAPA_WHERE[q.etapa]
+      ? `(${ETAPA_WHERE[q.etapa]} OR p.etapa_atual = $${params.length})`
+      : `p.etapa_atual = $${params.length}`;
+    condicoes.push(`AND ${etapaWhere}`);
+  }
+  if (!pula('movimentacao_pendente') && q.movimentacao_pendente === 'true') condicoes.push(`AND p.requer_revisao = true`);
+  if (!pula('funcao_cliente') && q.funcao_cliente) { params.push(`%${q.funcao_cliente}%`); condicoes.push(`AND c.cargo ILIKE $${params.length}`); }
+
+  return { where: condicoes.filter(Boolean).join(' '), params };
+}
+
+// GET /api/processos/contadores — contagens agregadas para badges dos botões de triagem.
+// Aceita os mesmos filtros de GET / (combináveis); cada bloco de contagem ignora
+// apenas o próprio filtro daquela dimensão, para dar contagem facetada real.
+processosRouter.get('/contadores', async (req, res) => {
+  try {
+    const base = montarFiltrosContadores(req);
+    const semEtapa   = montarFiltrosContadores(req, ['etapa']);
+    const semVara    = montarFiltrosContadores(req, ['vara']);
+    const semProduto = montarFiltrosContadores(req, ['produto_id']);
+    const semPeriodo = montarFiltrosContadores(req, ['periodo']);
+    const semPendente= montarFiltrosContadores(req, ['movimentacao_pendente']);
+
+    const [
+      [{ total }],
+      etapas,
+      varas,
+      produtos,
+      periodos,
+      [{ movimentacao_pendente: movPendenteTotal }],
+    ] = await Promise.all([
+      db.query(`SELECT COUNT(*)::int AS total FROM processos p LEFT JOIN clientes c ON c.id = p.cliente_id WHERE ${base.where}`, base.params),
+      db.query(
+        `SELECT ${ETAPA_CASE} AS etapa, COUNT(*)::int AS total
+         FROM processos p LEFT JOIN clientes c ON c.id = p.cliente_id
+         WHERE ${semEtapa.where}
+         GROUP BY 1 ORDER BY total DESC`,
+        semEtapa.params
+      ),
+      db.query(
+        `SELECT p.vara AS valor, COUNT(*)::int AS total
+         FROM processos p LEFT JOIN clientes c ON c.id = p.cliente_id
+         WHERE p.vara IS NOT NULL AND p.vara <> '' AND ${semVara.where}
+         GROUP BY p.vara ORDER BY total DESC LIMIT 50`,
+        semVara.params
+      ),
+      db.query(
+        `SELECT pr.id, pr.nome, COUNT(p.id)::int AS total
+         FROM produtos pr
+         LEFT JOIN LATERAL (
+           SELECT p.id
+           FROM processos p
+           LEFT JOIN clientes c ON c.id = p.cliente_id
+           WHERE p.produto_id = pr.id AND ${semProduto.where}
+         ) p ON true
+         GROUP BY pr.id, pr.nome ORDER BY pr.nome`,
+        semProduto.params
+      ),
+      Promise.all(Object.keys(FILTROS_PERIODO).map(async (chave) => {
+        const cond = `${semPeriodo.where} ${FILTROS_PERIODO[chave]}`;
+        const [{ total: t }] = await db.query(
+          `SELECT COUNT(*)::int AS total FROM processos p LEFT JOIN clientes c ON c.id = p.cliente_id WHERE ${cond}`,
+          semPeriodo.params
+        );
+        return [chave, t];
+      })).then(Object.fromEntries),
+      db.query(
+        `SELECT COUNT(*)::int AS movimentacao_pendente
+         FROM processos p LEFT JOIN clientes c ON c.id = p.cliente_id
+         WHERE p.requer_revisao = true AND ${semPendente.where}`,
+        semPendente.params
+      ),
+    ]);
+
+    res.json({
+      ok: true,
+      total,
+      etapas,
+      varas,
+      produtos,
+      periodos,
+      movimentacaoPendente: movPendenteTotal,
+    });
+  } catch (err) {
+    console.error('[processos/contadores]', err.message);
     res.status(500).json({ ok: false, erro: err.message });
   }
 });
