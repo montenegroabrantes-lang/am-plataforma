@@ -8,7 +8,8 @@ export const ETAPA_WHERE = {
   'Pagamento':               `(p.situacao_atual IN ('rpv_paga','pagamento_realizado') OR p.status_rpv = 'paga' OR p.status_alvara = 'pagamento_realizado')`,
   'Arquivado':               `p.situacao_atual IN ('arquivado','autos_baixados')`,
   'Alvará':                  `(p.tipo_requisicao = 'alvara' OR p.situacao_atual IN ('aguardando_alvara','alvara_expedido'))`,
-  'Precatório':              `(p.tipo_requisicao = 'precatorio' OR p.situacao_atual IN ('em_precatorio','minuta_precatorio_juntada','precatorio_assinado','precatorio_remetido','precatorio_incluido_fila'))`,
+  'Minuta de Precatório':    `p.situacao_atual = 'minuta_precatorio_juntada'`,
+  'Precatório':              `(p.tipo_requisicao = 'precatorio' OR p.situacao_atual IN ('em_precatorio','precatorio_assinado','precatorio_remetido','precatorio_incluido_fila'))`,
   'RPV':                     `(p.tipo_requisicao = 'rpv' OR p.situacao_atual IN ('aguardando_rpv','em_rpv','rpv_expedida'))`,
   'Cumprimento de Sentença': `p.situacao_atual IN ('cumprimento_sentenca','calculos_apresentados','fazenda_intimada_impugnar','impugnacao_fazenda_apresentada','calculos_homologados')`,
   'Recurso':                 `p.situacao_atual IN ('em_recurso','em_segundo_grau','aguardando_baixa')`,
@@ -35,7 +36,8 @@ export const ETAPA_CASE = `
     WHEN p.situacao_atual IN ('rpv_paga','pagamento_realizado') OR p.status_rpv = 'paga' OR p.status_alvara = 'pagamento_realizado' THEN 'Pagamento'
     WHEN p.situacao_atual IN ('arquivado','autos_baixados') THEN 'Arquivado'
     WHEN p.tipo_requisicao = 'alvara' OR p.situacao_atual IN ('aguardando_alvara','alvara_expedido') THEN 'Alvará'
-    WHEN p.tipo_requisicao = 'precatorio' OR p.situacao_atual IN ('em_precatorio','minuta_precatorio_juntada','precatorio_assinado','precatorio_remetido','precatorio_incluido_fila') THEN 'Precatório'
+    WHEN p.situacao_atual = 'minuta_precatorio_juntada' THEN 'Minuta de Precatório'
+    WHEN p.tipo_requisicao = 'precatorio' OR p.situacao_atual IN ('em_precatorio','precatorio_assinado','precatorio_remetido','precatorio_incluido_fila') THEN 'Precatório'
     WHEN p.tipo_requisicao = 'rpv' OR p.situacao_atual IN ('aguardando_rpv','em_rpv','rpv_expedida') THEN 'RPV'
     WHEN p.situacao_atual IN ('cumprimento_sentenca','calculos_apresentados','fazenda_intimada_impugnar','impugnacao_fazenda_apresentada','calculos_homologados') THEN 'Cumprimento de Sentença'
     WHEN p.situacao_atual IN ('em_recurso','em_segundo_grau','aguardando_baixa') THEN 'Recurso'
