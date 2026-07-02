@@ -360,9 +360,6 @@ processosRouter.get('/:id', async (req, res) => {
 
   if (!p) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
 
-    return res.status(403).json({ ok: false, erro: 'Acesso negado a este processo.' });
-  }
-
   if (p.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
     return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
   }
