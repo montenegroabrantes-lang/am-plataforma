@@ -17,7 +17,7 @@ tarefasRouter.get('/', async (req, res) => {
     const dias = Number(prazo_dias);
     if (dias === 0) {
       condicoes.push(`t.prazo_data = CURRENT_DATE`);
-    } else {
+    } else if (Number.isInteger(dias) && dias > 0) {
       condicoes.push(`t.prazo_data BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '${dias} days'`);
     }
     condicoes.push(`t.status NOT IN ('concluida','cancelada')`);
@@ -57,12 +57,13 @@ tarefasRouter.get('/', async (req, res) => {
   params.push(Number(limite), offset);
 
   const rows = await db.query(
-    `SELECT t.*, p.numero AS processo_numero, p.tribunal,
+    `SELECT t.*, COALESCE(p.numero, pub.numero_processo) AS processo_numero, COALESCE(p.tribunal, pub.tribunal) AS tribunal,
             u.nome AS atribuido_nome, m.nome AS validador_nome,
             cl.id AS cliente_id, cl.nome AS cliente_nome, cl.cpf AS cliente_cpf,
             pr.id AS produto_id, pr.nome AS produto_nome
      FROM tarefas t
-     LEFT JOIN processos p  ON p.id = t.processo_id
+     LEFT JOIN processos p    ON p.id = t.processo_id
+     LEFT JOIN publicacoes pub ON pub.id = t.publicacao_id
      LEFT JOIN usuarios u   ON u.id = t.atribuido_a
      LEFT JOIN usuarios m   ON m.id = t.validado_por
      LEFT JOIN cliente_produtos cp ON cp.id = t.cliente_produto_id

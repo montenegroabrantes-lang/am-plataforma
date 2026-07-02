@@ -11,9 +11,13 @@ export const publicacoesRouter = Router();
 async function criarTarefaDePublicacao(item, processoId) {
   if (!item.texto) return;
   try {
-    const processo = processoId
+    const processoCadastrado = processoId
       ? await db.queryOne(`SELECT id, numero, tribunal, vara FROM processos WHERE id = $1`, [processoId]).catch(() => null)
       : null;
+    // Sem processo cadastrado ainda: usa o número bruto da própria publicação para o título/descrição
+    const processo = processoCadastrado || (item.numeroprocessocommascara || item.numero_processo
+      ? { numero: item.numeroprocessocommascara || item.numero_processo, tribunal: item.siglaTribunal, vara: null }
+      : null);
     const prazo = extrairPrazoPublicacao(item.texto, item.data_disponibilizacao, processo);
     if (!prazo) return;
 
@@ -65,7 +69,7 @@ publicacoesRouter.get('/', async (req, res) => {
     const d = Number(dias);
     if (d === 0) {
       condicoes.push(`data_disponibilizacao = CURRENT_DATE`);
-    } else {
+    } else if (Number.isInteger(d) && d > 0) {
       condicoes.push(`data_disponibilizacao >= CURRENT_DATE - INTERVAL '${d} days'`);
     }
   }
@@ -276,7 +280,7 @@ publicacoesRouter.post('/sincronizar', apenasMaster, (_req, res) => {
 publicacoesRouter.post('/reprocessar-prazos', apenasMaster, async (req, res) => {
   // Busca publicações com processo vinculado, texto e sem tarefa de prazo ainda
   const pubs = await db.query(
-    `SELECT p.id, p.texto, p.data_disponibilizacao, p.processo_id,
+    `SELECT p.id, p.texto, p.data_disponibilizacao, p.processo_id, p.numero_processo, p.tribunal AS pub_tribunal,
             pr.numero, pr.tribunal, pr.vara
      FROM publicacoes p
      LEFT JOIN processos pr ON pr.id = p.processo_id
@@ -293,7 +297,11 @@ publicacoesRouter.post('/reprocessar-prazos', apenasMaster, async (req, res) => 
 
   for (const pub of pubs) {
     try {
-      const processo = { id: pub.processo_id, numero: pub.numero, tribunal: pub.tribunal, vara: pub.vara };
+      // Sem processo cadastrado: usa o número bruto da própria publicação
+      const processo = pub.processo_id
+        ? { id: pub.processo_id, numero: pub.numero, tribunal: pub.tribunal, vara: pub.vara }
+        : (pub.numero_processo ? { id: null, numero: pub.numero_processo, tribunal: pub.pub_tribunal, vara: null } : null);
+      if (!processo) { ignoradas++; continue; }
       const prazo = extrairPrazoPublicacao(pub.texto, pub.data_disponibilizacao, processo);
       if (!prazo) { ignoradas++; continue; }
 
