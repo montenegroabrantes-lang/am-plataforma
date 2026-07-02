@@ -74,6 +74,11 @@ REGRAS DE FLUXO (sequência lógica):
 - Cálculos apresentados → calculos_apresentados → fazenda_intimada_impugnar → calculos_homologados
 - RPV determinada → aguardando_rpv → em_rpv → rpv_expedida → rpv_paga
 - Precatório iniciado → em_precatorio → minuta_precatorio_juntada → precatorio_assinado → precatorio_remetido → precatorio_incluido_fila
+  • em_precatorio: fase de cumprimento em que o precatório ainda não foi expedido/elaborado
+  • minuta_precatorio_juntada: use quando a movimentação mencionar "juntada de minuta de precatório", "expedição de minuta", "minuta de precatório juntada aos autos" ou similar
+  • precatorio_assinado: minuta já assinada pelo juiz
+  • precatorio_remetido: remetido ao tribunal/presidência
+  • precatorio_incluido_fila: incluído na fila de pagamento do precatório
 - Alvará determinado → aguardando_alvara → alvara_expedido
 - Processo encerrado → pagamento_realizado / arquivado / autos_baixados
 
