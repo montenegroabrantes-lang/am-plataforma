@@ -9,7 +9,7 @@ export const ETAPA_WHERE = {
   'Arquivado':               `p.situacao_atual IN ('arquivado','autos_baixados')`,
   'Alvará':                  `(p.tipo_requisicao = 'alvara' OR p.situacao_atual IN ('aguardando_alvara','alvara_expedido'))`,
   'Minuta de Precatório':    `p.situacao_atual = 'minuta_precatorio_juntada'`,
-  'Precatório':              `(p.tipo_requisicao = 'precatorio' OR p.situacao_atual IN ('em_precatorio','precatorio_assinado','precatorio_remetido','precatorio_incluido_fila'))`,
+  'Precatório':              `((p.tipo_requisicao = 'precatorio' OR p.situacao_atual IN ('em_precatorio','precatorio_assinado','precatorio_remetido','precatorio_incluido_fila')) AND p.situacao_atual IS DISTINCT FROM 'minuta_precatorio_juntada')`,
   'RPV':                     `(p.tipo_requisicao = 'rpv' OR p.situacao_atual IN ('aguardando_rpv','em_rpv','rpv_expedida'))`,
   'Cumprimento de Sentença': `p.situacao_atual IN ('cumprimento_sentenca','calculos_apresentados','fazenda_intimada_impugnar','impugnacao_fazenda_apresentada','calculos_homologados')`,
   'Recurso':                 `p.situacao_atual IN ('em_recurso','em_segundo_grau','aguardando_baixa')`,
