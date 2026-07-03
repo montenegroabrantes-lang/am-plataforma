@@ -31,7 +31,7 @@ configAiRouter.post('/', async (req, res) => {
 
   const { roteamento, modelos } = req.body;
 
-  const MODELOS_CLAUDE = ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'];
+  const MODELOS_CLAUDE = ['claude-sonnet-5', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-haiku-4-5-20251001', 'claude-opus-4-8', 'claude-opus-4-7'];
   const MODELOS_OPENAI = ['gpt-4o', 'gpt-4.5', 'gpt-5'];
 
   const PROVEDORES = ['claude', 'openai'];
@@ -127,7 +127,7 @@ configAiRouter.post('/camila', async (req, res) => {
   const secret = process.env.CAMILA_ADMIN_SECRET;
   if (!url) return res.status(503).json({ ok: false, erro: 'CAMILA_ADMIN_URL não configurada no Railway.' });
   try {
-    const MODELOS_CLAUDE = ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-7'];
+    const MODELOS_CLAUDE = ['claude-sonnet-5', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-haiku-4-5-20251001', 'claude-opus-4-8', 'claude-opus-4-7'];
     const MODELOS_OPENAI = ['gpt-4o', 'gpt-4.5', 'gpt-5'];
     const payload = { ...req.body };
     if (payload.claude_modelo          && !MODELOS_CLAUDE.includes(payload.claude_modelo))          delete payload.claude_modelo;

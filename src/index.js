@@ -258,6 +258,9 @@ async function iniciar() {
     await db.query(`CREATE INDEX IF NOT EXISTS idx_publicacoes_processo ON publicacoes (processo_id)`).catch(() => {});
 
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS publicacao_id BIGINT REFERENCES publicacoes(id) ON DELETE SET NULL`).catch(() => {});
+    // Uma tarefa de prazo por publicação — dá alvo real ao ON CONFLICT DO NOTHING das rotas de publicações
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_tarefas_publicacao ON tarefas (publicacao_id) WHERE publicacao_id IS NOT NULL`)
+      .catch(e => console.warn('[Migration] uq_tarefas_publicacao (há duplicatas existentes?):', e.message));
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS calendar_event_id TEXT`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS observacao TEXT`).catch(() => {});
 
