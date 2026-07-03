@@ -28,6 +28,7 @@ import { polosPassivosRouter } from './routes/polosPassivos.js';
 import { classificacoesRouter } from './routes/classificacoes.js';
 import { webhookRouter }       from './routes/webhook.js';
 import { publicacoesRouter, importarPublicacoesHandler } from './routes/publicacoes.js';
+import { estimativasRouter } from './routes/estimativas.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -120,6 +121,7 @@ app.use('/api/webhook',       webhookRouter);
 // /importar usa x-sync-key própria (sem JWT) — script local envia publicações do Mac
 app.post('/api/publicacoes/importar', importLimiter, importarPublicacoesHandler);
 app.use('/api/publicacoes',   autenticar, publicacoesRouter);
+app.use('/api/estimativas',   autenticar, estimativasRouter);
 
 // Global error handler — captura erros não tratados nas rotas
 app.use((err, req, res, next) => {
