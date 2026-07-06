@@ -4,8 +4,11 @@
 // esses processos como "Sem classificação", enquanto processos.js mostrava a
 // etapa correta — resultado: a mesma situação aparecia diferente em cada tela.
 
-// Condições da situação (sem considerar a etapa manual) — usadas como fallback quando não há etapa_atual
-const ETAPA_WHERE_AUTO = {
+// "Etapa" = estágio atual do processo, sempre derivado de situacao_atual.
+// etapa_atual é um campo distinto — "Movimentação Pendente" na UI — que
+// descreve o que falta acontecer, não o estágio atual. Não deve ser
+// confundido com a etapa nem sobrepor sua exibição/filtro.
+export const ETAPA_WHERE = {
   'Pagamento':               `(p.situacao_atual IN ('rpv_paga','pagamento_realizado') OR p.status_rpv = 'paga' OR p.status_alvara = 'pagamento_realizado')`,
   'Arquivado':               `p.situacao_atual IN ('arquivado','autos_baixados')`,
   'Alvará':                  `(p.tipo_requisicao = 'alvara' OR p.situacao_atual IN ('aguardando_alvara','alvara_expedido'))`,
@@ -32,17 +35,8 @@ const ETAPA_WHERE_AUTO = {
   'Gratuidade Deferida':     `p.situacao_atual = 'gratuidade_deferida'`,
 };
 
-// Filtro por etapa exibida: bate com a etapa classificada manualmente (etapa_atual)
-// ou, se ela não existir, com a etapa derivada automaticamente da situação.
-export const ETAPA_WHERE = Object.fromEntries(
-  Object.entries(ETAPA_WHERE_AUTO).map(([etapa, condicaoAuto]) => [
-    etapa,
-    `(p.etapa_atual = '${etapa.replace(/'/g, "''")}' OR (p.etapa_atual IS NULL AND ${condicaoAuto}))`,
-  ])
-);
-
-// Etapa derivada automaticamente da situação (sem considerar classificação manual)
-export const ETAPA_AUTO_CASE = `
+// Etapa derivada da situação — usada tanto para exibição quanto para filtro.
+export const ETAPA_CASE = `
   CASE
     WHEN p.situacao_atual IN ('rpv_paga','pagamento_realizado') OR p.status_rpv = 'paga' OR p.status_alvara = 'pagamento_realizado' THEN 'Pagamento'
     WHEN p.situacao_atual IN ('arquivado','autos_baixados') THEN 'Arquivado'
@@ -70,7 +64,3 @@ export const ETAPA_AUTO_CASE = `
     ELSE 'Sem classificação'
   END
 `;
-
-// Etapa exibida: prioriza a classificação manual (etapa_atual); cai para a
-// derivação automática apenas quando não há etapa_atual definida.
-export const ETAPA_CASE = `COALESCE(p.etapa_atual, (${ETAPA_AUTO_CASE}))`;

@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { apenasMaster }       from '../middleware/auth.js';
-import { ETAPA_WHERE, ETAPA_CASE, ETAPA_AUTO_CASE } from '../utils/etapas.js';
+import { ETAPA_WHERE, ETAPA_CASE } from '../utils/etapas.js';
 
 export const processosRouter = Router();
 
@@ -124,8 +124,7 @@ processosRouter.get('/', async (req, res) => {
             ult.data_movimentacao AS ultima_movimentacao,
             ult.texto             AS ultima_mov_texto,
             EXTRACT(DAY FROM NOW() - ult.data_movimentacao)::int AS dias_parado,
-            ${ETAPA_CASE} AS etapa,
-            (${ETAPA_AUTO_CASE}) AS etapa_auto
+            ${ETAPA_CASE} AS etapa
      FROM processos p
      LEFT JOIN clientes c  ON c.id  = p.cliente_id
      LEFT JOIN produtos  pr ON pr.id = p.produto_id
