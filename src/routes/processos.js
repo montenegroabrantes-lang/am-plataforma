@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { apenasMaster }       from '../middleware/auth.js';
-import { ETAPA_WHERE, ETAPA_CASE } from '../utils/etapas.js';
+import { ETAPA_WHERE, ETAPA_CASE, ETAPA_AUTO_CASE } from '../utils/etapas.js';
 
 export const processosRouter = Router();
 
@@ -124,7 +124,8 @@ processosRouter.get('/', async (req, res) => {
             ult.data_movimentacao AS ultima_movimentacao,
             ult.texto             AS ultima_mov_texto,
             EXTRACT(DAY FROM NOW() - ult.data_movimentacao)::int AS dias_parado,
-            ${ETAPA_CASE} AS etapa
+            ${ETAPA_CASE} AS etapa,
+            (${ETAPA_AUTO_CASE}) AS etapa_auto
      FROM processos p
      LEFT JOIN clientes c  ON c.id  = p.cliente_id
      LEFT JOIN produtos  pr ON pr.id = p.produto_id
@@ -419,6 +420,22 @@ processosRouter.post('/', async (req, res) => {
       entidadeId: novo.id, valorDepois: novo, ip: req._ip,
     });
 
+    // Religa publicações e tarefas de prazo órfãs que chegaram antes do cadastro deste processo
+    try {
+      const numeroLimpo = numero.replace(/\D/g, '');
+      await db.query(
+        `UPDATE publicacoes SET processo_id = $1
+         WHERE processo_id IS NULL AND numero_processo_raw = $2`,
+        [novo.id, numeroLimpo]
+      );
+      await db.query(
+        `UPDATE tarefas t SET processo_id = $1
+         FROM publicacoes pub
+         WHERE t.publicacao_id = pub.id AND t.processo_id IS NULL AND pub.processo_id = $1`,
+        [novo.id]
+      );
+    } catch (e) { console.warn('[Processos] Religamento de publicações/tarefas falhou:', e.message); }
+
     // Enfileira sync individual imediato pelo DataJud (fila separada, não bloqueia o lote)
     try {
       const { enfileirarSincronizarProcesso } = await import('../workers/index.js');
@@ -583,10 +600,8 @@ processosRouter.patch('/:id/situacao', async (req, res) => {
   params.push(req.user.id);
   updates.push(`classificado_por = $${params.length}`);
   updates.push(`classificado_em = NOW()`);
-  // Só marca como revisado se a situação realmente mudou
-  if (req.body.situacao_atual && req.body.situacao_atual !== dono.situacao_atual) {
-    updates.push(`requer_revisao = false`);
-  }
+  // Qualquer revisão manual (mudando ou confirmando o valor) satisfaz o pedido de revisão
+  updates.push(`requer_revisao = false`);
   updates.push(`atualizado_em = NOW()`);
   params.push(req.params.id);
 

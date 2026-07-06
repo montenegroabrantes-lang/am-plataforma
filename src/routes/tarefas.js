@@ -7,7 +7,7 @@ export const tarefasRouter = Router();
 
 // GET /api/tarefas — lista tarefas do usuário (ou todas para Master)
 tarefasRouter.get('/', async (req, res) => {
-  const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, prazo_de, prazo_ate, tipo, page = 1, limite = 100 } = req.query;
+  const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, prazo_de, prazo_ate, tipo, processo_id, page = 1, limite = 100 } = req.query;
   const offset = (Number(page) - 1) * Number(limite);
 
   const params = [];
@@ -24,8 +24,9 @@ tarefasRouter.get('/', async (req, res) => {
   } else if (status) {
     params.push(status); condicoes.push(`t.status = $${params.length}`);
   }
+  if (processo_id) { params.push(processo_id); condicoes.push(`t.processo_id = $${params.length}`); }
   if (tipo)      { params.push(tipo);     condicoes.push(`t.tipo = $${params.length}`); }
-  else           condicoes.push(`t.publicacao_id IS NULL`); // prazos de publicação só aparecem na aba própria (tipo=prazo)
+  else if (!processo_id) condicoes.push(`t.publicacao_id IS NULL`); // prazos de publicação só aparecem na aba própria (tipo=prazo) ou no detalhe do processo
   if (prazo_de)  { params.push(prazo_de); condicoes.push(`t.prazo_data >= $${params.length}::date`); }
   if (prazo_ate) { params.push(prazo_ate); condicoes.push(`t.prazo_data <= $${params.length}::date`); }
   if (urgencia)    { params.push(urgencia);    condicoes.push(`t.urgencia = $${params.length}`); }
