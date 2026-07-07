@@ -3,6 +3,7 @@ import { db }      from '../db/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { apenasMaster }       from '../middleware/auth.js';
 import { ETAPA_WHERE, ETAPA_CASE } from '../utils/etapas.js';
+import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
 
 export const processosRouter = Router();
 
@@ -115,7 +116,7 @@ processosRouter.get('/', async (req, res) => {
             p.requer_revisao, p.classificado_por, p.classificado_em, p.criado_em, p.classificacao,
             p.data_distribuicao,
             EXTRACT(YEAR FROM p.data_distribuicao)::int AS ano,
-            p.data_conclusao_bloqueio,
+            p.data_conclusao_bloqueio, p.data_limite_pagamento,
             CASE WHEN p.situacao_atual = 'concluso_para_bloqueio' AND p.data_conclusao_bloqueio IS NOT NULL
                  THEN EXTRACT(DAY FROM NOW() - p.data_conclusao_bloqueio)::int
                  ELSE NULL END AS dias_concluso,
@@ -221,7 +222,7 @@ processosRouter.get('/exportar', async (req, res) => {
   const { condicoes, params } = construirFiltrosExportar(req.query, req.user);
 
   const rows = await db.query(
-    `SELECT p.numero, c.nome AS cliente_nome, p.situacao_atual,
+    `SELECT p.numero, c.nome AS cliente_nome, p.situacao_atual, p.vara,
             (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) AS ultima_movimentacao
      FROM processos p
      LEFT JOIN clientes c ON c.id = p.cliente_id
@@ -231,7 +232,7 @@ processosRouter.get('/exportar', async (req, res) => {
     params
   );
 
-  const linhas = rows.map(r => `${r.numero} | ${r.cliente_nome || '—'} | ${formatarSituacao(r.situacao_atual)}`);
+  const linhas = rows.map(r => `${r.numero} | ${r.cliente_nome || '—'} | ${r.vara || 'Vara não informada'} | ${formatarSituacao(r.situacao_atual)}`);
 
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.send(linhas.join('\n'));
@@ -642,12 +643,12 @@ processosRouter.patch('/:id/urgente', async (req, res) => {
 
 // PATCH /api/processos/:id/situacao — classificação manual
 processosRouter.patch('/:id/situacao', async (req, res) => {
-  const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, situacao_atual, etapa_atual FROM processos WHERE id = $1', [req.params.id]);
+  const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, situacao_atual, etapa_atual, numero, tribunal, vara, data_limite_pagamento FROM processos WHERE id = $1', [req.params.id]);
   if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
 
   const campos  = ['situacao_atual','etapa_atual','localizacao_processual','tipo_requisicao',
                    'status_rpv','status_precatorio','status_alvara','valor_homologado','urgente',
-                   'data_conclusao_bloqueio'];
+                   'data_conclusao_bloqueio','data_limite_pagamento'];
   const updates = [];
   const params  = [];
 
@@ -682,6 +683,47 @@ processosRouter.patch('/:id/situacao', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,'manual')`,
       [req.params.id, dono.situacao_atual, req.body.situacao_atual, dono.etapa_atual, req.body.etapa_atual || null, req.user.id]
     ).catch(err => console.warn(`[Situacao] historico_situacao falhou ${req.params.id}:`, err.message));
+  }
+
+  // Prazo limite de pagamento (RPV/Precatório): mantém uma única tarefa de prazo por processo,
+  // criando/atualizando o evento no Calendar quando a data muda.
+  if (req.body.data_limite_pagamento !== undefined && req.body.data_limite_pagamento !== dono.data_limite_pagamento) {
+    const novaData = req.body.data_limite_pagamento;
+    const tarefaExistente = await db.queryOne(
+      `SELECT id, calendar_event_id FROM tarefas WHERE processo_id = $1 AND tipo = 'prazo_pagamento' AND status NOT IN ('concluida','cancelada')`,
+      [req.params.id]
+    );
+
+    if (!novaData) {
+      // Prazo removido: cancela a tarefa e apaga o evento
+      if (tarefaExistente) {
+        await db.execute(`UPDATE tarefas SET status = 'cancelada' WHERE id = $1`, [tarefaExistente.id]);
+        if (tarefaExistente.calendar_event_id) deletarEventoCalendar(tarefaExistente.calendar_event_id).catch(() => {});
+      }
+    } else if (tarefaExistente) {
+      await db.execute(`UPDATE tarefas SET prazo_data = $1 WHERE id = $2`, [novaData, tarefaExistente.id]);
+      if (tarefaExistente.calendar_event_id) {
+        atualizarEventoCalendar(tarefaExistente.calendar_event_id, { dataHora: new Date(`${novaData}T08:00:00`) }).catch(() => {});
+      }
+    } else {
+      const [novaTarefa] = await db.query(
+        `INSERT INTO tarefas (processo_id, tipo, descricao, urgencia, prazo_data, validado_por, status)
+         VALUES ($1, 'prazo_pagamento', $2, 'ALTO', $3::date, $4, 'pendente')
+         RETURNING id`,
+        [req.params.id, `Prazo limite de pagamento — ${dono.numero}`, novaData, req.user.id]
+      );
+      criarEventoCalendar({
+        titulo:    `Prazo de Pagamento — ${dono.numero}`,
+        dataHora:  new Date(`${novaData}T08:00:00`),
+        tipo:      'Prazo de Pagamento',
+        vara:      dono.vara,
+        tribunal:  dono.tribunal,
+        processoId: req.params.id,
+        descricao: `Prazo limite para pagamento de RPV/Precatório do processo ${dono.numero}.`,
+      }).then(eventId => {
+        if (eventId) db.execute(`UPDATE tarefas SET calendar_event_id = $1 WHERE id = $2`, [eventId, novaTarefa.id]).catch(() => {});
+      }).catch(() => {});
+    }
   }
 
   res.json({ ok: true });

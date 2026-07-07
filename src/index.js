@@ -169,6 +169,8 @@ async function iniciar() {
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS polos_passivos_padrao TEXT[]`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS observacao TEXT`).catch(() => {});
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS classificacao TEXT`).catch(() => {});
+    // Prazo limite para pagamento de RPV/Precatório
+    await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS data_limite_pagamento DATE`).catch(() => {});
     await db.query(`
       CREATE TABLE IF NOT EXISTS cliente_vinculos (
         id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
