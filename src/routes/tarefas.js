@@ -59,7 +59,7 @@ tarefasRouter.get('/', async (req, res) => {
 
   const rows = await db.query(
     `SELECT t.*, COALESCE(p.numero, pub.numero_processo) AS processo_numero, COALESCE(p.tribunal, pub.tribunal) AS tribunal,
-            u.nome AS atribuido_nome, m.nome AS validador_nome,
+            u.nome AS atribuido_nome, m.nome AS validador_nome, ass.nome AS assinado_nome,
             cl.id AS cliente_id, cl.nome AS cliente_nome, cl.cpf AS cliente_cpf,
             pr.id AS produto_id, pr.nome AS produto_nome
      FROM tarefas t
@@ -67,6 +67,7 @@ tarefasRouter.get('/', async (req, res) => {
      LEFT JOIN publicacoes pub ON pub.id = t.publicacao_id
      LEFT JOIN usuarios u   ON u.id = t.atribuido_a
      LEFT JOIN usuarios m   ON m.id = t.validado_por
+     LEFT JOIN usuarios ass ON ass.id = t.assinado_por
      LEFT JOIN cliente_produtos cp ON cp.id = t.cliente_produto_id
      LEFT JOIN clientes cl  ON cl.id = cp.cliente_id
      LEFT JOIN produtos pr  ON pr.id = cp.produto_id
@@ -294,6 +295,71 @@ tarefasRouter.patch('/:id/status', async (req, res, next) => {
 
     res.json({ ok: true });
   } catch (err) { next(err); }
+});
+
+// POST /api/tarefas/lote-assinatura — A envia vários processos de uma vez para B conferir e assinar
+// body: { numeros: ["0000000-00.0000.0.00.0000", ...], atribuido_a, descricao, urgencia?, prazo_data? }
+tarefasRouter.post('/lote-assinatura', apenasMaster, async (req, res) => {
+  const { numeros, atribuido_a, descricao, urgencia, prazo_data } = req.body;
+
+  if (!Array.isArray(numeros) || numeros.length === 0) {
+    return res.status(400).json({ ok: false, erro: 'Informe ao menos um número de processo.' });
+  }
+  if (!atribuido_a) return res.status(400).json({ ok: false, erro: 'Informe quem vai conferir e assinar.' });
+  if (!descricao?.trim()) return res.status(400).json({ ok: false, erro: 'Descreva o ato praticado (ex: Impugnação juntada).' });
+  if (atribuido_a === req.user.id) {
+    return res.status(400).json({ ok: false, erro: 'Quem envia para assinatura não pode ser o próprio assinante.' });
+  }
+
+  // Resolve números (com ou sem máscara) para processos cadastrados
+  const numerosLimpos = [...new Set(numeros.map(n => String(n).replace(/\D/g, '')).filter(Boolean))];
+  const procs = await db.query(
+    `SELECT id, numero, REGEXP_REPLACE(numero, '[^0-9]', '', 'g') AS numero_limpo
+     FROM processos
+     WHERE REGEXP_REPLACE(numero, '[^0-9]', '', 'g') = ANY($1)`,
+    [numerosLimpos]
+  );
+  const mapa = new Map(procs.map(p => [p.numero_limpo, p]));
+
+  const criadas = [];
+  const nao_encontrados = [];
+
+  for (const limpo of numerosLimpos) {
+    const proc = mapa.get(limpo);
+    if (!proc) { nao_encontrados.push(limpo); continue; }
+    const [t] = await db.query(
+      `INSERT INTO tarefas (processo_id, tipo, descricao, atribuido_a, validado_por, urgencia, prazo_data)
+       VALUES ($1, 'assinatura', $2, $3, $4, $5, $6)
+       RETURNING id`,
+      [proc.id, `${descricao.trim()} — ${proc.numero}`, atribuido_a, req.user.id,
+       urgencia || 'ALTO', prazo_data || null]
+    );
+    criadas.push({ id: t.id, processo: proc.numero });
+  }
+
+  res.status(201).json({ ok: true, criadas: criadas.length, nao_encontrados, tarefas: criadas });
+});
+
+// PATCH /api/tarefas/:id/assinar — B confirma que conferiu e assinou a peça no PJe
+tarefasRouter.patch('/:id/assinar', apenasMaster, async (req, res) => {
+  const tarefa = await db.queryOne(`SELECT * FROM tarefas WHERE id = $1`, [req.params.id]);
+  if (!tarefa) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
+  if (tarefa.tipo !== 'assinatura') return res.status(400).json({ ok: false, erro: 'Esta tarefa não é de assinatura.' });
+  if (tarefa.status === 'concluida') return res.status(409).json({ ok: false, erro: 'Tarefa já assinada.' });
+  // Quem enviou para assinatura não pode assinar a própria peça
+  if (tarefa.validado_por === req.user.id) {
+    return res.status(403).json({ ok: false, erro: 'Quem enviou a peça não pode assiná-la. Outro usuário deve conferir e assinar.' });
+  }
+
+  await db.execute(
+    `UPDATE tarefas SET status = 'concluida', assinado_por = $1, assinado_em = NOW(), concluida_em = NOW()
+     WHERE id = $2`,
+    [req.user.id, req.params.id]
+  );
+
+  if (tarefa.calendar_event_id) deletarEventoCalendar(tarefa.calendar_event_id).catch(() => {});
+
+  res.json({ ok: true });
 });
 
 // POST /api/tarefas/sincronizar-calendar — cria no Google Calendar os eventos

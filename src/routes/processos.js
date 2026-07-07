@@ -124,7 +124,8 @@ processosRouter.get('/', async (req, res) => {
             ult.data_movimentacao AS ultima_movimentacao,
             ult.texto             AS ultima_mov_texto,
             EXTRACT(DAY FROM NOW() - ult.data_movimentacao)::int AS dias_parado,
-            ${ETAPA_CASE} AS etapa
+            ${ETAPA_CASE} AS etapa,
+            EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id) AS tem_cessao
      FROM processos p
      LEFT JOIN clientes c  ON c.id  = p.cliente_id
      LEFT JOIN produtos  pr ON pr.id = p.produto_id
@@ -373,7 +374,75 @@ processosRouter.get('/:id', async (req, res) => {
     return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
   }
 
-  res.json({ ok: true, processo: p });
+  const cessoes = await db.query(
+    `SELECT cc.*, u.nome AS criado_por_nome
+     FROM cessoes_credito cc
+     LEFT JOIN usuarios u ON u.id = cc.criado_por
+     WHERE cc.processo_id = $1
+     ORDER BY cc.criado_em DESC`,
+    [req.params.id]
+  ).catch(() => []);
+
+  res.json({ ok: true, processo: { ...p, tem_cessao: cessoes.length > 0 }, cessoes });
+});
+
+// POST /api/processos/:id/cessao — registra cessão de crédito e gera tarefa de habilitação
+processosRouter.post('/:id/cessao', apenasMaster, async (req, res) => {
+  const { cessionario_nome, cessionario_documento, valor_face, valor_cessao,
+          percentual_cedido, data_cessao, observacoes, atribuido_a } = req.body;
+
+  if (!cessionario_nome?.trim()) {
+    return res.status(400).json({ ok: false, erro: 'Nome do cessionário é obrigatório.' });
+  }
+
+  const proc = await db.queryOne(`SELECT id, numero FROM processos WHERE id = $1`, [req.params.id]);
+  if (!proc) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+
+  const [cessao] = await db.query(
+    `INSERT INTO cessoes_credito
+       (processo_id, cessionario_nome, cessionario_documento, valor_face, valor_cessao,
+        percentual_cedido, data_cessao, observacoes, criado_por)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     RETURNING *`,
+    [req.params.id, cessionario_nome.trim(), cessionario_documento || null,
+     valor_face || null, valor_cessao || null, percentual_cedido || 100,
+     data_cessao || null, observacoes || null, req.user.id]
+  );
+
+  // Gera automaticamente a tarefa de habilitação do cessionário (entra no fluxo de assinatura)
+  const [tarefa] = await db.query(
+    `INSERT INTO tarefas (processo_id, tipo, descricao, instrucao, atribuido_a, validado_por, urgencia)
+     VALUES ($1, 'assinatura', $2, $3, $4, $5, 'ALTO')
+     RETURNING *`,
+    [req.params.id,
+     `Habilitação do cessionário — ${cessionario_nome.trim()} — ${proc.numero}`,
+     'Preparar e juntar no PJe a petição de habilitação do cessionário; depois conferir e assinar.',
+     atribuido_a || null, req.user.id]
+  ).catch(() => [null]);
+
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'criar', entidade: 'cessao_credito',
+    entidadeId: cessao.id, valorDepois: cessao, ip: req._ip,
+  }).catch(() => {});
+
+  res.status(201).json({ ok: true, cessao, tarefa });
+});
+
+// DELETE /api/processos/:id/cessao/:cessaoId — remove registro de cessão
+processosRouter.delete('/:id/cessao/:cessaoId', apenasMaster, async (req, res) => {
+  const cessao = await db.queryOne(
+    `SELECT * FROM cessoes_credito WHERE id = $1 AND processo_id = $2`,
+    [req.params.cessaoId, req.params.id]
+  );
+  if (!cessao) return res.status(404).json({ ok: false, erro: 'Cessão não encontrada.' });
+
+  await db.execute(`DELETE FROM cessoes_credito WHERE id = $1`, [req.params.cessaoId]);
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'excluir', entidade: 'cessao_credito',
+    entidadeId: req.params.cessaoId, valorAntes: cessao, ip: req._ip,
+  }).catch(() => {});
+
+  res.json({ ok: true });
 });
 
 // POST /api/processos — cadastro manual por número

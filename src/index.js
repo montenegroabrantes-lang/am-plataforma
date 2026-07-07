@@ -266,6 +266,28 @@ async function iniciar() {
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS calendar_event_id TEXT`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS observacao TEXT`).catch(() => {});
 
+    // Fluxo de assinatura de peças (A prepara/junta no PJe → B confere e assina)
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS assinado_por UUID REFERENCES usuarios(id)`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS assinado_em TIMESTAMPTZ`).catch(() => {});
+
+    // Cessão de crédito: cliente (cedente) cede o crédito do processo a um terceiro (cessionário)
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS cessoes_credito (
+        id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        processo_id           UUID NOT NULL REFERENCES processos(id) ON DELETE CASCADE,
+        cessionario_nome      TEXT NOT NULL,
+        cessionario_documento TEXT,
+        valor_face            NUMERIC(14,2),
+        valor_cessao          NUMERIC(14,2),
+        percentual_cedido     NUMERIC(5,2) NOT NULL DEFAULT 100,
+        data_cessao           DATE,
+        observacoes           TEXT,
+        criado_por            UUID REFERENCES usuarios(id),
+        criado_em             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_cessoes_processo ON cessoes_credito (processo_id)`).catch(() => {});
+
     // ── Índices de performance para suportar 5000+ processos ──────────────────
     await db.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`).catch(() => {});
     await db.query(`CREATE INDEX IF NOT EXISTS idx_processos_status ON processos (status)`).catch(() => {});
