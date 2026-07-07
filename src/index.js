@@ -272,6 +272,11 @@ async function iniciar() {
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS assinado_por UUID REFERENCES usuarios(id)`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS assinado_em TIMESTAMPTZ`).catch(() => {});
 
+    // Cadeia demanda → executor (junta no PJe) → assinatura de terceiro
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS assinante_sugerido UUID REFERENCES usuarios(id)`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS tarefa_origem_id UUID REFERENCES tarefas(id) ON DELETE SET NULL`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tarefas_origem ON tarefas (tarefa_origem_id) WHERE tarefa_origem_id IS NOT NULL`).catch(() => {});
+
     // Cessão de crédito: cliente (cedente) cede o crédito do processo a um terceiro (cessionário)
     await db.query(`
       CREATE TABLE IF NOT EXISTS cessoes_credito (

@@ -60,6 +60,7 @@ tarefasRouter.get('/', async (req, res) => {
   const rows = await db.query(
     `SELECT t.*, COALESCE(p.numero, pub.numero_processo) AS processo_numero, COALESCE(p.tribunal, pub.tribunal) AS tribunal,
             u.nome AS atribuido_nome, m.nome AS validador_nome, ass.nome AS assinado_nome,
+            sug.nome AS assinante_sugerido_nome, origem.descricao AS origem_descricao,
             cl.id AS cliente_id, cl.nome AS cliente_nome, cl.cpf AS cliente_cpf,
             pr.id AS produto_id, pr.nome AS produto_nome
      FROM tarefas t
@@ -68,6 +69,8 @@ tarefasRouter.get('/', async (req, res) => {
      LEFT JOIN usuarios u   ON u.id = t.atribuido_a
      LEFT JOIN usuarios m   ON m.id = t.validado_por
      LEFT JOIN usuarios ass ON ass.id = t.assinado_por
+     LEFT JOIN usuarios sug ON sug.id = t.assinante_sugerido
+     LEFT JOIN tarefas origem ON origem.id = t.tarefa_origem_id
      LEFT JOIN cliente_produtos cp ON cp.id = t.cliente_produto_id
      LEFT JOIN clientes cl  ON cl.id = cp.cliente_id
      LEFT JOIN produtos pr  ON pr.id = cp.produto_id
@@ -84,20 +87,20 @@ tarefasRouter.get('/', async (req, res) => {
 
 // POST /api/tarefas — cria tarefa (Master atribui ao Junior)
 tarefasRouter.post('/', apenasMaster, async (req, res) => {
-  const { processo_id, tipo, descricao, instrucao, atribuido_a, urgencia, prazo_data } = req.body;
+  const { processo_id, tipo, descricao, instrucao, atribuido_a, urgencia, prazo_data, assinante_sugerido } = req.body;
 
   if (!tipo || !descricao) {
     return res.status(400).json({ ok: false, erro: 'tipo e descricao são obrigatórios.' });
   }
 
   const [nova] = await db.query(
-    `INSERT INTO tarefas (processo_id, tipo, descricao, instrucao, atribuido_a, validado_por, urgencia, prazo_data)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+    `INSERT INTO tarefas (processo_id, tipo, descricao, instrucao, atribuido_a, validado_por, urgencia, prazo_data, assinante_sugerido)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
      RETURNING *`,
     [
       processo_id || null, tipo, descricao, instrucao || null,
       atribuido_a || null, req.user.id,
-      urgencia || 'MEDIO', prazo_data || null,
+      urgencia || 'MEDIO', prazo_data || null, assinante_sugerido || null,
     ]
   );
 
@@ -360,6 +363,46 @@ tarefasRouter.patch('/:id/assinar', apenasMaster, async (req, res) => {
   if (tarefa.calendar_event_id) deletarEventoCalendar(tarefa.calendar_event_id).catch(() => {});
 
   res.json({ ok: true });
+});
+
+// PATCH /api/tarefas/:id/encaminhar-assinatura — executor conclui a demanda (juntada no PJe)
+// e encaminha automaticamente para um terceiro conferir e assinar.
+tarefasRouter.patch('/:id/encaminhar-assinatura', async (req, res) => {
+  const { assinante_a, descricao } = req.body;
+
+  const tarefa = await db.queryOne(
+    `SELECT t.*, p.numero AS processo_numero FROM tarefas t LEFT JOIN processos p ON p.id = t.processo_id WHERE t.id = $1`,
+    [req.params.id]
+  );
+  if (!tarefa) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
+  if (tarefa.tipo !== 'demanda') return res.status(400).json({ ok: false, erro: 'Esta tarefa não é uma demanda.' });
+  if (['concluida', 'cancelada'].includes(tarefa.status)) {
+    return res.status(409).json({ ok: false, erro: 'Demanda já finalizada.' });
+  }
+
+  const assinante = assinante_a || tarefa.assinante_sugerido;
+  if (!assinante) return res.status(400).json({ ok: false, erro: 'Informe quem vai conferir e assinar.' });
+  if (assinante === req.user.id) {
+    return res.status(400).json({ ok: false, erro: 'Quem faz a juntada não pode ser o próprio assinante.' });
+  }
+
+  const [tarefaAssinatura] = await db.query(
+    `INSERT INTO tarefas (processo_id, tipo, descricao, atribuido_a, validado_por, urgencia, tarefa_origem_id)
+     VALUES ($1, 'assinatura', $2, $3, $4, $5, $6)
+     RETURNING *`,
+    [
+      tarefa.processo_id,
+      descricao?.trim() || `${tarefa.descricao} — conferir e assinar`,
+      assinante, req.user.id, tarefa.urgencia || 'ALTO', tarefa.id,
+    ]
+  );
+
+  await db.execute(
+    `UPDATE tarefas SET status = 'concluida', concluida_em = NOW() WHERE id = $1`,
+    [req.params.id]
+  );
+
+  res.json({ ok: true, tarefa_assinatura: tarefaAssinatura });
 });
 
 // POST /api/tarefas/sincronizar-calendar — cria no Google Calendar os eventos
