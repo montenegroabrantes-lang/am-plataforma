@@ -6,6 +6,7 @@ import { apenasMaster } from '../middleware/auth.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { criarPastaCliente, criarSubpasta, uploadPdf } from '../services/drive/index.js';
 import { verificarElegibilidadeCliente } from '../services/elegibilidade.js';
+import { encrypt, decrypt } from '../utils/crypto.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
@@ -53,6 +54,16 @@ clientesRouter.get('/:id', async (req, res) => {
     [req.params.id]
   );
   if (!cliente) return res.status(404).json({ ok: false, erro: 'Cliente não encontrado.' });
+
+  // Anotações ficam cifradas em repouso (podem conter credenciais de portais do servidor) —
+  // decifra para exibir e nunca devolve o blob cifrado ao cliente.
+  const anotacoesEnc = cliente.anotacoes_enc;
+  delete cliente.anotacoes_enc;
+  cliente.anotacoes = null;
+  if (anotacoesEnc) {
+    try { cliente.anotacoes = decrypt(anotacoesEnc); }
+    catch (e) { console.warn(`[Clientes] Falha ao decifrar anotações ${req.params.id}:`, e.message); }
+  }
 
   const [processos, documentos, teses, vinculos] = await Promise.all([
     db.query(
@@ -264,6 +275,12 @@ clientesRouter.patch('/:id', async (req, res) => {
       params.push(valor);
       updates.push(`${campo} = $${params.length}`);
     }
+  }
+
+  // Anotações são cifradas antes de gravar — nunca ficam em texto puro no banco
+  if (req.body.anotacoes !== undefined) {
+    params.push(req.body.anotacoes ? encrypt(req.body.anotacoes) : null);
+    updates.push(`anotacoes_enc = $${params.length}`);
   }
 
   if (!updates.length) return res.status(400).json({ ok: false, erro: 'Nenhum campo para atualizar.' });

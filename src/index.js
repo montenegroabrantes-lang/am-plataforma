@@ -163,6 +163,9 @@ async function iniciar() {
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS periodo_fim DATE`).catch(() => {});
     await db.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS vinculo_inicio DATE`).catch(() => {});
     await db.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS vinculo_fim DATE`).catch(() => {});
+    // Anotações do cadastro do cliente — cifradas (AES-256-GCM) por poderem conter credenciais
+    // de portais do servidor (ex: senha do contracheque), nunca gravadas em texto puro.
+    await db.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS anotacoes_enc TEXT`).catch(() => {});
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS intervalo_meses INTEGER`).catch(() => {});
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS honorarios_padrao NUMERIC(5,2)`).catch(() => {});
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS descricao TEXT`).catch(() => {});
