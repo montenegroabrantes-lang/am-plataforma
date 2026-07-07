@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
-import { criarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
+import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
 
 export const tarefasRouter = Router();
 
@@ -218,10 +218,33 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
 // PATCH /api/tarefas/:id/responsavel — troca responsável e prazo (Master)
 tarefasRouter.patch('/:id/responsavel', apenasMaster, async (req, res) => {
   const { atribuido_a, prazo_data } = req.body;
-  await db.execute(
-    `UPDATE tarefas SET atribuido_a = $1, prazo_data = COALESCE($2::date, prazo_data) WHERE id = $3`,
+  const [tarefa] = await db.query(
+    `UPDATE tarefas SET atribuido_a = $1, prazo_data = COALESCE($2::date, prazo_data) WHERE id = $3 RETURNING *`,
     [atribuido_a || null, prazo_data || null, req.params.id]
   );
+
+  // Mantém o evento do Calendar em dia quando o prazo muda
+  if (prazo_data && tarefa) {
+    if (tarefa.calendar_event_id) {
+      atualizarEventoCalendar(tarefa.calendar_event_id, { dataHora: new Date(`${prazo_data}T08:00:00`) }).catch(() => {});
+    } else {
+      const proc = tarefa.processo_id
+        ? await db.queryOne(`SELECT numero, tribunal, vara FROM processos WHERE id = $1`, [tarefa.processo_id]).catch(() => null)
+        : null;
+      criarEventoCalendar({
+        titulo:    `${tarefa.tipo} — ${proc?.numero || tarefa.descricao}`,
+        dataHora:  new Date(`${prazo_data}T08:00:00`),
+        tipo:      tarefa.tipo,
+        vara:      proc?.vara,
+        tribunal:  proc?.tribunal,
+        processoId: tarefa.processo_id,
+        descricao: `Tarefa: ${tarefa.descricao}`,
+      }).then(eventId => {
+        if (eventId) db.execute(`UPDATE tarefas SET calendar_event_id = $1 WHERE id = $2`, [eventId, tarefa.id]).catch(() => {});
+      }).catch(() => {});
+    }
+  }
+
   res.json({ ok: true });
 });
 
@@ -271,4 +294,45 @@ tarefasRouter.patch('/:id/status', async (req, res, next) => {
 
     res.json({ ok: true });
   } catch (err) { next(err); }
+});
+
+// POST /api/tarefas/sincronizar-calendar — cria no Google Calendar os eventos
+// de prazos/tarefas ativos que ainda não têm calendar_event_id (backfill).
+tarefasRouter.post('/sincronizar-calendar', apenasMaster, async (req, res) => {
+  const pendentes = await db.query(
+    `SELECT t.*, p.numero AS processo_numero, p.tribunal, p.vara
+     FROM tarefas t
+     LEFT JOIN processos p ON p.id = t.processo_id
+     WHERE t.prazo_data IS NOT NULL
+       AND t.status NOT IN ('concluida','cancelada')
+       AND t.calendar_event_id IS NULL
+     ORDER BY t.prazo_data ASC`
+  );
+
+  let criados = 0, falhas = 0;
+
+  for (const t of pendentes) {
+    try {
+      const eventId = await criarEventoCalendar({
+        titulo:    t.tipo === 'prazo' ? `${t.descricao}` : `${t.tipo} — ${t.processo_numero || t.descricao}`,
+        dataHora:  new Date(`${new Date(t.prazo_data).toISOString().slice(0, 10)}T08:00:00`),
+        tipo:      t.tipo,
+        vara:      t.vara,
+        tribunal:  t.tribunal,
+        processoId: t.processo_id,
+        descricao: `Tarefa: ${t.descricao}`,
+      });
+      if (eventId) {
+        await db.execute(`UPDATE tarefas SET calendar_event_id = $1 WHERE id = $2`, [eventId, t.id]);
+        criados++;
+      } else {
+        falhas++;
+      }
+    } catch (e) {
+      console.warn(`[Calendar] Falha ao sincronizar tarefa ${t.id}:`, e.message);
+      falhas++;
+    }
+  }
+
+  res.json({ ok: true, total: pendentes.length, criados, falhas });
 });
