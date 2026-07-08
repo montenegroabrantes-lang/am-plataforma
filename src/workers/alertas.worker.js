@@ -3,6 +3,7 @@ import { redis }  from '../cache/redis.js';
 import { db }     from '../db/index.js';
 import { enviarAlerta } from '../services/digisac/index.js';
 import { verificarCiclosRecorrentes } from '../services/ciclosRecorrentes.js';
+import { verificarWatchdogSAC } from './sac.worker.js';
 
 export function criarAlertasWorker() {
   return new Worker('alertas', async job => {
@@ -12,6 +13,10 @@ export function criarAlertasWorker() {
     if (job.name === 'ciclos-recorrentes') {
       const { tarefas } = await verificarCiclosRecorrentes();
       console.log(`[Ciclos] Verificação diária concluída — ${tarefas} tarefas criadas.`);
+      await verificarWatchdogSAC().catch(err => console.warn('[SAC Watchdog] Falha na verificação:', err.message));
+    }
+    if (job.name === 'escalonamento-vespera') {
+      await enviarEscalonamentoVespera();
     }
   }, { connection: redis, concurrency: 1 });
 }
@@ -54,4 +59,42 @@ async function enviarLembretesDiarios() {
   }
 
   console.log(`[Alertas] Lembretes diários enviados para ${masters.length} master(s).`);
+}
+
+// Escalonamento de véspera — alerta diretamente o responsável (atribuído) por tarefas
+// cujo prazo vence amanhã ou hoje, além de notificar o master validador em caso crítico.
+async function enviarEscalonamentoVespera() {
+  const tarefas = await db.query(
+    `SELECT t.id, t.descricao, t.tipo, t.prazo_data,
+            (t.prazo_data::date - CURRENT_DATE) AS dias_restantes,
+            ua.id AS atribuido_id, ua.nome AS atribuido_nome, ua.whatsapp AS atribuido_whatsapp,
+            um.id AS master_id, um.nome AS master_nome, um.whatsapp AS master_whatsapp
+     FROM tarefas t
+     JOIN usuarios ua ON ua.id = t.atribuido_a
+     LEFT JOIN usuarios um ON um.id = t.validado_por
+     WHERE t.status NOT IN ('concluida', 'cancelada', 'devolvida')
+       AND t.prazo_data IS NOT NULL
+       AND (t.prazo_data::date - CURRENT_DATE) IN (0, 1)`
+  );
+
+  const porResponsavel = new Map();
+  for (const t of tarefas) {
+    if (!t.atribuido_whatsapp) continue;
+    if (!porResponsavel.has(t.atribuido_id)) porResponsavel.set(t.atribuido_id, { nome: t.atribuido_nome, whatsapp: t.atribuido_whatsapp, tarefas: [] });
+    porResponsavel.get(t.atribuido_id).tarefas.push(t);
+  }
+
+  for (const { nome, whatsapp, tarefas: lista } of porResponsavel.values()) {
+    const linhas = lista.map(t => {
+      const quando = Number(t.dias_restantes) === 0 ? 'HOJE' : 'AMANHÃ';
+      return `🔴 ${quando} — ${t.descricao}`;
+    });
+    const msg =
+      `⏰ *Atenção, ${nome.split(' ')[0]}!*\n\n` +
+      `Você tem ${lista.length} prazo${lista.length > 1 ? 's' : ''} vencendo:\n${linhas.join('\n')}\n\n` +
+      `Acesse a plataforma para regularizar.`;
+    await enviarAlerta(whatsapp, msg).catch(err => console.warn(`[Escalonamento] Falha ao alertar ${nome}:`, err.message));
+  }
+
+  console.log(`[Alertas] Escalonamento de véspera enviado para ${porResponsavel.size} responsável(is) — ${tarefas.length} tarefa(s) críticas.`);
 }

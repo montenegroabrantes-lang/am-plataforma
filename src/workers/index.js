@@ -101,7 +101,19 @@ export async function iniciarWorkers() {
     }
   );
 
-  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h), Alertas WhatsApp (08h) e Ciclos Recorrentes (07h) iniciados.');
+  // Escalonamento de véspera de prazos — alerta o responsável direto às 8h30 e 16h
+  await alertasQueue.add(
+    'escalonamento-vespera',
+    {},
+    {
+      repeat:           { pattern: '30 8,16 * * *' },
+      jobId:            'escalonamento-vespera-recorrente',
+      removeOnComplete: 3,
+      removeOnFail:     3,
+    }
+  );
+
+  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h), Alertas WhatsApp (08h), Ciclos Recorrentes (07h) e Escalonamento de Véspera (8h30/16h) iniciados.');
 }
 
 // Dispara sync imediato de um processo — fila separada, não bloqueia pelo lote

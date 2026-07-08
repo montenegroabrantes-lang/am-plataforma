@@ -22,13 +22,69 @@ function resolverNumero(str) {
   return NUMEROS_EXTENSO[str.toLowerCase().trim()] || null;
 }
 
+// Domingo de Páscoa via algoritmo de Gauss — base para os feriados móveis.
+function pascoa(ano) {
+  const a = ano % 19, b = Math.floor(ano / 100), c = ano % 100;
+  const d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mes = Math.floor((h + l - 7 * m + 114) / 31);
+  const dia = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(ano, mes - 1, dia);
+}
+
+const cacheFeriados = new Map();
+
+// Feriados nacionais fixos + móveis (Carnaval, Sexta-feira Santa, Corpus Christi).
+// Não inclui feriados estaduais/municipais/forenses específicos de cada tribunal.
+function feriadosNacionais(ano) {
+  if (cacheFeriados.has(ano)) return cacheFeriados.get(ano);
+  const pasc = pascoa(ano);
+  const maisDias = (data, dias) => { const d = new Date(data); d.setDate(d.getDate() + dias); return d; };
+  const datas = [
+    new Date(ano, 0, 1),      // Confraternização Universal
+    maisDias(pasc, -47),      // Carnaval (segunda)
+    maisDias(pasc, -46),      // Carnaval (terça)
+    maisDias(pasc, -2),       // Sexta-feira Santa
+    maisDias(pasc, 60),       // Corpus Christi
+    new Date(ano, 3, 21),     // Tiradentes
+    new Date(ano, 4, 1),      // Dia do Trabalho
+    new Date(ano, 8, 7),      // Independência
+    new Date(ano, 9, 12),     // Nossa Senhora Aparecida
+    new Date(ano, 10, 2),     // Finados
+    new Date(ano, 10, 15),    // Proclamação da República
+    new Date(ano, 11, 25),    // Natal
+  ];
+  const set = new Set(datas.map(d => d.toISOString().slice(0, 10)));
+  cacheFeriados.set(ano, set);
+  return set;
+}
+
+function ehFeriado(data) {
+  return feriadosNacionais(data.getFullYear()).has(data.toISOString().slice(0, 10));
+}
+
+function ehDiaUtil(data) {
+  const dow = data.getDay();
+  return dow !== 0 && dow !== 6 && !ehFeriado(data);
+}
+
+// CPC art. 224, §1º — se o prazo terminar em dia não útil, prorroga-se para o próximo dia útil.
+function proximoDiaUtil(data) {
+  const d = new Date(data);
+  while (!ehDiaUtil(d)) d.setDate(d.getDate() + 1);
+  return d;
+}
+
 function adicionarDiasUteis(data, dias) {
   const d = new Date(data);
   let adicionados = 0;
   while (adicionados < dias) {
     d.setDate(d.getDate() + 1);
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6) adicionados++; // pula sábado e domingo
+    if (ehDiaUtil(d)) adicionados++;
   }
   return d;
 }
@@ -36,7 +92,7 @@ function adicionarDiasUteis(data, dias) {
 function adicionarDias(data, dias) {
   const d = new Date(data);
   d.setDate(d.getDate() + dias);
-  return d;
+  return proximoDiaUtil(d);
 }
 
 function parseDateBR(str) {
@@ -126,8 +182,8 @@ function extrairDiasPrazo(texto) {
     /prazo\s+de\s+(um|dois|tr[eê]s|quatro|cinco|seis|sete|oito|nove|dez|onze|doze|treze|quatorze|quinze|dezesseis|dezessete|dezoito|dezenove|vinte(?:\s+e\s+\w+)?|trinta)\s+dias?\s*(úteis?|corridos?)?/i,
     // "no prazo de 15 dias"
     /no\s+prazo\s+de\s+(\d+)\s*(?:\([^)]+\))?\s*dias?\s*(úteis?|corridos?)?/i,
-    // "em 15 dias"
-    /\bem\s+(\d+)\s+dias?\s*(úteis?|corridos?)?/i,
+    // "em 15 dias" — evita falso-positivo em referências ao passado ("nos últimos 15 dias")
+    /(?<!últimos\s)(?<!passados\s)(?<!anteriores\s)\bem\s+(\d+)\s+dias?\s*(úteis?|corridos?)?/i,
   ];
 
   for (const p of padroes) {
@@ -202,8 +258,12 @@ export function extrairPrazoPublicacao(texto, dataDisponibilizacao, processo) {
   // 3. Tenta extrair número de dias e calcular a partir da data de disponibilização
   const prazoDias = extrairDiasPrazo(texto);
   if (prazoDias) {
-    const base = new Date(dataDisponibilizacao);
+    // CPC art. 224 — exclui o dia da publicação/disponibilização; a contagem começa
+    // no primeiro dia útil seguinte.
+    let base = new Date(dataDisponibilizacao);
     base.setHours(8, 0, 0, 0);
+    base.setDate(base.getDate() + 1);
+    base = proximoDiaUtil(base);
     const dataEvento = prazoDias.uteis
       ? adicionarDiasUteis(base, prazoDias.dias)
       : adicionarDias(base, prazoDias.dias);

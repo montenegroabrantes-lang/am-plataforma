@@ -7,6 +7,7 @@ import { registrarAuditoria } from '../middleware/auditoria.js';
 import { criarPastaCliente, criarSubpasta, uploadPdf } from '../services/drive/index.js';
 import { verificarElegibilidadeCliente } from '../services/elegibilidade.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
+import { cpfValido } from '../utils/cpf.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
@@ -190,6 +191,8 @@ clientesRouter.post('/', async (req, res) => {
   const { nome, cpf, whatsapp, email, lgpd_consentimento, vinculos } = req.body;
 
   if (!nome || !cpf) return res.status(400).json({ ok: false, erro: 'nome e cpf são obrigatórios.' });
+  if (!cpfValido(cpf)) return res.status(400).json({ ok: false, erro: 'CPF inválido.' });
+  if (!lgpd_consentimento) return res.status(400).json({ ok: false, erro: 'É necessário registrar o consentimento LGPD do titular para cadastrar o cliente.' });
 
   const masterId = req.user.perfil === 'master' ? req.user.id : req.user.master_id;
   const v1 = vinculos?.[0] || {};
