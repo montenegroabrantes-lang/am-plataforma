@@ -642,19 +642,28 @@ processosRouter.patch('/:id/urgente', async (req, res) => {
 });
 
 // PATCH /api/processos/:id/situacao — classificação manual
-processosRouter.patch('/:id/situacao', async (req, res) => {
-  const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, situacao_atual, etapa_atual, numero, tribunal, vara, data_limite_pagamento FROM processos WHERE id = $1', [req.params.id]);
+processosRouter.patch('/:id/situacao', async (req, res, next) => {
+ try {
+  const dono = await db.queryOne(
+    `SELECT master_responsavel_id, compartilhado, situacao_atual, etapa_atual, numero, tribunal, vara,
+            data_limite_pagamento, status_rpv, status_precatorio, valor_homologado, cliente_id, produto_id
+     FROM processos WHERE id = $1`,
+    [req.params.id]
+  );
   if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
 
   const campos  = ['situacao_atual','etapa_atual','localizacao_processual','tipo_requisicao',
                    'status_rpv','status_precatorio','status_alvara','valor_homologado','urgente',
                    'data_conclusao_bloqueio','data_limite_pagamento'];
+  // Colunas DATE/NUMERIC não aceitam string vazia — o frontend manda '' para "campo limpo".
+  const camposVazioViraNull = new Set(['valor_homologado', 'data_conclusao_bloqueio', 'data_limite_pagamento']);
   const updates = [];
   const params  = [];
 
   for (const campo of campos) {
     if (req.body[campo] !== undefined) {
-      params.push(req.body[campo]);
+      const valor = camposVazioViraNull.has(campo) && req.body[campo] === '' ? null : req.body[campo];
+      params.push(valor);
       updates.push(`${campo} = $${params.length}`);
     }
   }
@@ -726,7 +735,40 @@ processosRouter.patch('/:id/situacao', async (req, res) => {
     }
   }
 
+  // RPV paga / precatório com pagamento disponibilizado: gera o honorário automaticamente,
+  // usando o percentual já contratado (cliente_produtos.honorarios_pct) — evita lançamento
+  // manual duplicado e mantém o Financeiro em dia com o que já foi homologado.
+  const rpvVirouPaga        = req.body.status_rpv === 'paga' && dono.status_rpv !== 'paga';
+  const precatorioVirouPago = req.body.status_precatorio === 'pagamento_disponibilizado' && dono.status_precatorio !== 'pagamento_disponibilizado';
+  const valorHomologado     = req.body.valor_homologado !== undefined ? req.body.valor_homologado : dono.valor_homologado;
+
+  if ((rpvVirouPaga || precatorioVirouPago) && valorHomologado && dono.cliente_id && dono.produto_id) {
+    const tipoHonorario = rpvVirouPaga ? 'rpv' : 'precatorio';
+    const jaExiste = await db.queryOne(
+      `SELECT id FROM honorarios WHERE processo_id = $1 AND tipo = $2`,
+      [req.params.id, tipoHonorario]
+    ).catch(() => null);
+
+    if (!jaExiste) {
+      const vinculo = await db.queryOne(
+        `SELECT honorarios_pct FROM cliente_produtos WHERE cliente_id = $1 AND produto_id = $2`,
+        [dono.cliente_id, dono.produto_id]
+      ).catch(() => null);
+
+      if (vinculo?.honorarios_pct) {
+        const valorHonorario = (Number(valorHomologado) * Number(vinculo.honorarios_pct)) / 100;
+        await db.query(
+          `INSERT INTO honorarios (processo_id, master_responsavel_id, tipo, valor_bruto, percentual, valor_honorario, registrado_por)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [req.params.id, req.user.perfil === 'master' ? req.user.id : req.user.master_id,
+           tipoHonorario, valorHomologado, vinculo.honorarios_pct, valorHonorario, req.user.id]
+        ).catch(err => console.warn(`[Financeiro] Honorário automático falhou ${req.params.id}:`, err.message));
+      }
+    }
+  }
+
   res.json({ ok: true });
+ } catch (err) { next(err); }
 });
 
 // POST /api/processos/:id/classificar — classifica com Claude

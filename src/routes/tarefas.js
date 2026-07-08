@@ -29,7 +29,18 @@ tarefasRouter.get('/', async (req, res) => {
   else if (!processo_id) condicoes.push(`t.publicacao_id IS NULL`); // prazos de publicação só aparecem na aba própria (tipo=prazo) ou no detalhe do processo
   if (prazo_de)  { params.push(prazo_de); condicoes.push(`t.prazo_data >= $${params.length}::date`); }
   if (prazo_ate) { params.push(prazo_ate); condicoes.push(`t.prazo_data <= $${params.length}::date`); }
-  if (urgencia)    { params.push(urgencia);    condicoes.push(`t.urgencia = $${params.length}`); }
+  if (urgencia) {
+    params.push(urgencia);
+    condicoes.push(`(
+      CASE
+        WHEN t.prazo_data IS NULL OR t.status IN ('concluida','cancelada') THEN t.urgencia
+        WHEN t.prazo_data - CURRENT_DATE <= 2  THEN 'CRITICO'
+        WHEN t.prazo_data - CURRENT_DATE <= 5  THEN 'ALTO'
+        WHEN t.prazo_data - CURRENT_DATE <= 10 THEN 'MEDIO'
+        ELSE 'BAIXO'
+      END
+    ) = $${params.length}`);
+  }
   if (cliente_id)  { params.push(cliente_id);  condicoes.push(`cl.id = $${params.length}`); }
   if (produto_id)  { params.push(produto_id);  condicoes.push(`pr.id = $${params.length}`); }
   if (atribuido_a) { params.push(atribuido_a); condicoes.push(`t.atribuido_a = $${params.length}`); }
@@ -62,7 +73,16 @@ tarefasRouter.get('/', async (req, res) => {
             u.nome AS atribuido_nome, m.nome AS validador_nome, ass.nome AS assinado_nome,
             sug.nome AS assinante_sugerido_nome, origem.descricao AS origem_descricao,
             cl.id AS cliente_id, cl.nome AS cliente_nome, cl.cpf AS cliente_cpf,
-            pr.id AS produto_id, pr.nome AS produto_nome
+            pr.id AS produto_id, pr.nome AS produto_nome,
+            -- Urgência recalculada pela proximidade real do prazo (não fica congelada no valor da criação)
+            CASE
+              WHEN t.prazo_data IS NULL THEN t.urgencia
+              WHEN t.status IN ('concluida','cancelada') THEN t.urgencia
+              WHEN t.prazo_data - CURRENT_DATE <= 2  THEN 'CRITICO'
+              WHEN t.prazo_data - CURRENT_DATE <= 5  THEN 'ALTO'
+              WHEN t.prazo_data - CURRENT_DATE <= 10 THEN 'MEDIO'
+              ELSE 'BAIXO'
+            END AS urgencia_efetiva
      FROM tarefas t
      LEFT JOIN processos p    ON p.id = t.processo_id
      LEFT JOIN publicacoes pub ON pub.id = t.publicacao_id
@@ -76,7 +96,14 @@ tarefasRouter.get('/', async (req, res) => {
      LEFT JOIN produtos pr  ON pr.id = cp.produto_id
      WHERE ${condicoes.join(' AND ')}
      ORDER BY
-       CASE t.urgencia WHEN 'CRITICO' THEN 1 WHEN 'ALTO' THEN 2 WHEN 'MEDIO' THEN 3 ELSE 4 END,
+       CASE
+         WHEN t.prazo_data IS NULL OR t.status IN ('concluida','cancelada') THEN
+           CASE t.urgencia WHEN 'CRITICO' THEN 1 WHEN 'ALTO' THEN 2 WHEN 'MEDIO' THEN 3 ELSE 4 END
+         WHEN t.prazo_data - CURRENT_DATE <= 2  THEN 1
+         WHEN t.prazo_data - CURRENT_DATE <= 5  THEN 2
+         WHEN t.prazo_data - CURRENT_DATE <= 10 THEN 3
+         ELSE 4
+       END,
        t.prazo_data ASC NULLS LAST
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
@@ -296,6 +323,17 @@ tarefasRouter.patch('/:id/status', async (req, res, next) => {
       deletarEventoCalendar(tarefa.calendar_event_id).catch(() => {});
     }
 
+    // Devolução de uma tarefa de assinatura reabre a demanda que a originou —
+    // sem isso, o executor só descobre a devolução se fuçar a aba errada.
+    if (status === 'devolvida' && tarefa.tipo === 'assinatura' && tarefa.tarefa_origem_id) {
+      await db.execute(
+        `UPDATE tarefas SET status = 'devolvida',
+           observacao_devolucao = $1, concluida_em = NULL
+         WHERE id = $2 AND status = 'concluida'`,
+        [observacao_devolucao ? `Assinatura devolvida: ${observacao_devolucao}` : 'Assinatura devolvida — revisar.', tarefa.tarefa_origem_id]
+      ).catch(err => console.warn('[Tarefas] Falha ao reabrir demanda de origem:', err.message));
+    }
+
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -362,7 +400,59 @@ tarefasRouter.patch('/:id/assinar', apenasMaster, async (req, res) => {
 
   if (tarefa.calendar_event_id) deletarEventoCalendar(tarefa.calendar_event_id).catch(() => {});
 
+  // Baixa em cascata: se esta assinatura veio de uma demanda que, por sua vez, veio de um
+  // prazo (cadeia prazo → demanda → assinatura), assinar conclui o prazo original também.
+  if (tarefa.tarefa_origem_id) {
+    const demanda = await db.queryOne(`SELECT tarefa_origem_id FROM tarefas WHERE id = $1`, [tarefa.tarefa_origem_id]);
+    if (demanda?.tarefa_origem_id) {
+      const prazoOrigem = await db.queryOne(
+        `SELECT id, calendar_event_id FROM tarefas WHERE id = $1 AND tipo IN ('prazo','prazo_pagamento') AND status NOT IN ('concluida','cancelada')`,
+        [demanda.tarefa_origem_id]
+      );
+      if (prazoOrigem) {
+        await db.execute(`UPDATE tarefas SET status = 'concluida', concluida_em = NOW() WHERE id = $1`, [prazoOrigem.id]);
+        if (prazoOrigem.calendar_event_id) deletarEventoCalendar(prazoOrigem.calendar_event_id).catch(() => {});
+      }
+    }
+  }
+
   res.json({ ok: true });
+});
+
+// POST /api/tarefas/:id/gerar-demanda — a partir de uma tarefa de prazo, gera a demanda de
+// preparar/juntar a peça no PJe, já ligada ao prazo (cadeia prazo → demanda → assinatura).
+tarefasRouter.post('/:id/gerar-demanda', apenasMaster, async (req, res) => {
+  const { atribuido_a, assinante_sugerido, descricao, instrucao } = req.body;
+
+  const prazo = await db.queryOne(
+    `SELECT t.*, p.numero AS processo_numero FROM tarefas t LEFT JOIN processos p ON p.id = t.processo_id WHERE t.id = $1`,
+    [req.params.id]
+  );
+  if (!prazo) return res.status(404).json({ ok: false, erro: 'Prazo não encontrado.' });
+  if (!['prazo', 'prazo_pagamento'].includes(prazo.tipo)) {
+    return res.status(400).json({ ok: false, erro: 'Esta tarefa não é um prazo.' });
+  }
+  if (!atribuido_a) return res.status(400).json({ ok: false, erro: 'Informe quem vai preparar e juntar a peça.' });
+
+  const jaTemDemanda = await db.queryOne(
+    `SELECT id FROM tarefas WHERE tarefa_origem_id = $1 AND tipo = 'demanda' AND status NOT IN ('cancelada')`,
+    [req.params.id]
+  );
+  if (jaTemDemanda) return res.status(409).json({ ok: false, erro: 'Este prazo já tem uma demanda gerada.' });
+
+  const [demanda] = await db.query(
+    `INSERT INTO tarefas (processo_id, tipo, descricao, instrucao, atribuido_a, validado_por, urgencia, prazo_data, assinante_sugerido, tarefa_origem_id)
+     VALUES ($1, 'demanda', $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING *`,
+    [
+      prazo.processo_id,
+      descricao?.trim() || `${prazo.descricao}${prazo.processo_numero ? ` — ${prazo.processo_numero}` : ''}`,
+      instrucao || null, atribuido_a, req.user.id, prazo.urgencia || 'ALTO',
+      prazo.prazo_data, assinante_sugerido || null, prazo.id,
+    ]
+  );
+
+  res.status(201).json({ ok: true, demanda });
 });
 
 // PATCH /api/tarefas/:id/encaminhar-assinatura — executor conclui a demanda (juntada no PJe)
