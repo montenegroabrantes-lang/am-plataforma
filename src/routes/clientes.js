@@ -13,6 +13,36 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 
 export const clientesRouter = Router();
 
+// POST /api/clientes/backfill-drive-orfaos — cria a pasta do Drive para clientes que
+// ainda não têm (ex.: cadastrados antes do token ter escopo de Drive). Rota temporária.
+clientesRouter.post('/backfill-drive-orfaos', apenasMaster, async (req, res) => {
+  const orfaos = await db.query(
+    `SELECT id, nome, cpf FROM clientes WHERE drive_pasta_id IS NULL ORDER BY nome`
+  );
+
+  const resultado = [];
+  for (const c of orfaos) {
+    try {
+      const { id: pastaId, url } = await criarPastaCliente(c.cpf || c.id, c.nome);
+      await db.execute(
+        'UPDATE clientes SET drive_pasta_id=$1, drive_pasta_url=$2 WHERE id=$3',
+        [pastaId, url, c.id]
+      );
+      await Promise.all([
+        criarSubpasta(pastaId, 'Documentos Pessoais'),
+        criarSubpasta(pastaId, 'Vínculo Funcional'),
+        criarSubpasta(pastaId, 'Procurações'),
+        criarSubpasta(pastaId, 'Petições'),
+      ]);
+      resultado.push({ nome: c.nome, ok: true });
+    } catch (err) {
+      resultado.push({ nome: c.nome, ok: false, erro: err.message });
+    }
+  }
+
+  res.json({ ok: true, total: orfaos.length, resultado });
+});
+
 // GET /api/clientes
 clientesRouter.get('/', async (req, res) => {
   const { busca, page = 1, limite = 30 } = req.query;
