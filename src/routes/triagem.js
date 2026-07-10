@@ -59,6 +59,7 @@ triagemRouter.get('/', async (req, res) => {
         NULLIF(TRIM(p.vara), '')         AS vara,
         NULLIF(TRIM(p.polo_passivo), '') AS polo_passivo,
         c.id AS cliente_id,
+        c.cpf AS cliente_cpf,
         COALESCE(c.nome, p.polo_ativo) AS cliente,
         NULLIF(TRIM(c.cargo), '') AS funcao,
         p.requer_revisao AS movimentacao_pendente,
