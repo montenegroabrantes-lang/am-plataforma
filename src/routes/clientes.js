@@ -22,7 +22,17 @@ clientesRouter.get('/', async (req, res) => {
 
   if (busca) {
     params.push(`%${busca}%`);
-    condicoes.push(`(c.nome ILIKE $${params.length} OR c.cpf ILIKE $${params.length})`);
+    const iNome = params.length;
+    // CPF é salvo só com dígitos — normaliza a busca (REGEXP_REPLACE no lado da coluna
+    // também, por segurança) para casar mesmo digitando com pontos/traço. Segue o mesmo
+    // padrão já usado em processos.js.
+    let cpfCond = '';
+    const soDigitos = busca.replace(/\D/g, '');
+    if (soDigitos.length >= 6) {
+      params.push(`%${soDigitos}%`);
+      cpfCond = ` OR REGEXP_REPLACE(c.cpf,'[^0-9]','','g') ILIKE $${params.length}`;
+    }
+    condicoes.push(`(c.nome ILIKE $${iNome}${cpfCond})`);
   }
 
   params.push(Number(limite), offset);
