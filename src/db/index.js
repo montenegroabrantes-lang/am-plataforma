@@ -3,6 +3,11 @@ import pg from 'pg';
 
 const { Pool } = pg;
 
+// DATE (OID 1082) é dia de calendário, sem hora. O parser padrão devolve um Date à
+// meia-noite local do servidor (UTC no Railway), que serializado vira 'YYYY-MM-DDT00:00:00.000Z'
+// e no navegador do Brasil (UTC-3) exibe o dia ANTERIOR. Devolver a string crua resolve.
+pg.types.setTypeParser(1082, v => v);
+
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,

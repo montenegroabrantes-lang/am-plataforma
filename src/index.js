@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express            from 'express';
+import 'express-async-errors'; // patch: erros de rotas async vão para o error handler global (Express 4 não faz isso nativamente)
 import cors               from 'cors';
 import cookieParser       from 'cookie-parser';
 import rateLimit          from 'express-rate-limit';
@@ -281,6 +282,9 @@ async function iniciar() {
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS assinante_sugerido UUID REFERENCES usuarios(id)`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS tarefa_origem_id UUID REFERENCES tarefas(id) ON DELETE SET NULL`).catch(() => {});
     await db.query(`CREATE INDEX IF NOT EXISTS idx_tarefas_origem ON tarefas (tarefa_origem_id) WHERE tarefa_origem_id IS NOT NULL`).catch(() => {});
+
+    // Diligências de fórum (tipo='diligencia') — subtipo identifica o ato prático a executar
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS subtipo TEXT`).catch(() => {});
 
     // Cessão de crédito: cliente (cedente) cede o crédito do processo a um terceiro (cessionário)
     await db.query(`

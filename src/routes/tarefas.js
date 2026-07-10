@@ -7,7 +7,7 @@ export const tarefasRouter = Router();
 
 // GET /api/tarefas — lista tarefas do usuário (ou todas para Master)
 tarefasRouter.get('/', async (req, res) => {
-  const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, prazo_de, prazo_ate, tipo, processo_id, page = 1, limite = 100 } = req.query;
+  const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, prazo_de, prazo_ate, concluida_de, concluida_ate, tipo, processo_id, page = 1, limite = 100 } = req.query;
   const offset = (Number(page) - 1) * Number(limite);
 
   const params = [];
@@ -29,6 +29,9 @@ tarefasRouter.get('/', async (req, res) => {
   else if (!processo_id) condicoes.push(`t.publicacao_id IS NULL`); // prazos de publicação só aparecem na aba própria (tipo=prazo) ou no detalhe do processo
   if (prazo_de)  { params.push(prazo_de); condicoes.push(`t.prazo_data >= $${params.length}::date`); }
   if (prazo_ate) { params.push(prazo_ate); condicoes.push(`t.prazo_data <= $${params.length}::date`); }
+  // Triagem de concluídas por período (concluida_em é TIMESTAMPTZ; ::date trunca para dia de calendário)
+  if (concluida_de)  { params.push(concluida_de);  condicoes.push(`t.concluida_em::date >= $${params.length}::date`); }
+  if (concluida_ate) { params.push(concluida_ate); condicoes.push(`t.concluida_em::date <= $${params.length}::date`); }
   if (urgencia) {
     params.push(urgencia);
     condicoes.push(`(
@@ -114,18 +117,18 @@ tarefasRouter.get('/', async (req, res) => {
 
 // POST /api/tarefas — cria tarefa (Master atribui ao Junior)
 tarefasRouter.post('/', apenasMaster, async (req, res) => {
-  const { processo_id, tipo, descricao, instrucao, atribuido_a, urgencia, prazo_data, assinante_sugerido } = req.body;
+  const { processo_id, cliente_produto_id, tipo, subtipo, descricao, instrucao, atribuido_a, urgencia, prazo_data, assinante_sugerido } = req.body;
 
   if (!tipo || !descricao) {
     return res.status(400).json({ ok: false, erro: 'tipo e descricao são obrigatórios.' });
   }
 
   const [nova] = await db.query(
-    `INSERT INTO tarefas (processo_id, tipo, descricao, instrucao, atribuido_a, validado_por, urgencia, prazo_data, assinante_sugerido)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+    `INSERT INTO tarefas (processo_id, cliente_produto_id, tipo, subtipo, descricao, instrucao, atribuido_a, validado_por, urgencia, prazo_data, assinante_sugerido)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
      RETURNING *`,
     [
-      processo_id || null, tipo, descricao, instrucao || null,
+      processo_id || null, cliente_produto_id || null, tipo, subtipo || null, descricao, instrucao || null,
       atribuido_a || null, req.user.id,
       urgencia || 'MEDIO', prazo_data || null, assinante_sugerido || null,
     ]

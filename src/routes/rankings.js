@@ -17,6 +17,8 @@ rankingsRouter.get('/', async (req, res) => {
     distribuicaoAno,
     processosParados,
     valorPorEtapa,
+    protocolosPorMes,
+    protocolosPorResponsavel,
   ] = await Promise.all([
 
     // Ranking de demandas (por classe/ação)
@@ -124,6 +126,29 @@ rankingsRouter.get('/', async (req, res) => {
       GROUP BY tipo_requisicao
       ORDER BY valor_total DESC`, params),
 
+    // Protocolos concluídos por mês (últimos 12 meses)
+    db.query(`
+      SELECT
+        TO_CHAR(DATE_TRUNC('month', concluida_em), 'YYYY-MM') AS mes,
+        COUNT(*)                                                AS total
+      FROM tarefas
+      WHERE tipo = 'protocolar' AND status = 'concluida' AND concluida_em IS NOT NULL
+        AND concluida_em >= NOW() - INTERVAL '12 months'
+      GROUP BY 1
+      ORDER BY 1`),
+
+    // Protocolos concluídos por responsável (últimos 12 meses) — quem insere o número no "Concluir Protocolo"
+    db.query(`
+      SELECT
+        COALESCE(u.nome, 'Sem responsável') AS responsavel,
+        COUNT(*)                             AS total
+      FROM tarefas t
+      LEFT JOIN usuarios u ON u.id = t.atribuido_a
+      WHERE t.tipo = 'protocolar' AND t.status = 'concluida' AND t.concluida_em IS NOT NULL
+        AND t.concluida_em >= NOW() - INTERVAL '12 months'
+      GROUP BY u.nome
+      ORDER BY total DESC`),
+
   ]);
 
   res.json({
@@ -136,5 +161,7 @@ rankingsRouter.get('/', async (req, res) => {
     distribuicao_ano:      distribuicaoAno,
     processos_parados:     processosParados,
     valor_por_tipo:        valorPorEtapa,
+    protocolos_por_mes:         protocolosPorMes,
+    protocolos_por_responsavel: protocolosPorResponsavel,
   });
 });
