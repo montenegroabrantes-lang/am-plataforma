@@ -24,6 +24,7 @@ export const ETAPA_WHERE = {
   'Concluso para Sentença':  `p.situacao_atual = 'concluso_para_sentenca'`,
   'Concluso':                `p.situacao_atual = 'concluso'`,
   'Certidão NUMOPED':        `p.situacao_atual = 'certidao_numoped'`,
+  'Juntar Petição Justificando': `p.situacao_atual = 'juntada_peticao_justificativa'`,
   'Sem classificação':       `p.situacao_atual IS NULL`,
   'Citação':                 `p.situacao_atual = 'citacao'`,
   'Impugnada a Contestação': `p.situacao_atual = 'impugnada_contestacao'`,
@@ -53,6 +54,7 @@ export const ETAPA_CASE = `
     WHEN p.situacao_atual = 'concluso_para_sentenca' THEN 'Concluso para Sentença'
     WHEN p.situacao_atual = 'concluso' THEN 'Concluso'
     WHEN p.situacao_atual = 'certidao_numoped' THEN 'Certidão NUMOPED'
+    WHEN p.situacao_atual = 'juntada_peticao_justificativa' THEN 'Juntar Petição Justificando'
     WHEN p.situacao_atual = 'citacao' THEN 'Citação'
     WHEN p.situacao_atual = 'impugnada_contestacao' THEN 'Impugnada a Contestação'
     WHEN p.situacao_atual = 'embargos_declaracao' THEN 'Embargos de Declaração'
