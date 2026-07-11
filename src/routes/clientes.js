@@ -199,7 +199,8 @@ clientesRouter.patch('/:id/vinculos/:vid', async (req, res) => {
 
 // DELETE /api/clientes/:id/vinculos/:vid — remove vínculo funcional
 clientesRouter.delete('/:id/vinculos/:vid', async (req, res) => {
-  await db.execute(`DELETE FROM cliente_vinculos WHERE id=$1 AND cliente_id=$2`, [req.params.vid, req.params.id]);
+  const r = await db.execute(`DELETE FROM cliente_vinculos WHERE id=$1 AND cliente_id=$2`, [req.params.vid, req.params.id]);
+  if (r.rowCount === 0) return res.status(404).json({ ok: false, erro: 'Vínculo não encontrado.' });
   res.json({ ok: true });
 });
 
@@ -384,9 +385,10 @@ clientesRouter.post('/:id/documentos', upload.single('arquivo'), async (req, res
 
 // DELETE /api/clientes/:id/documentos/:docId
 clientesRouter.delete('/:id/documentos/:docId', async (req, res) => {
-  await db.execute(
+  const r = await db.execute(
     `UPDATE documentos SET deletado = true WHERE id = $1 AND cliente_id = $2`,
     [req.params.docId, req.params.id]
   );
+  if (r.rowCount === 0) return res.status(404).json({ ok: false, erro: 'Documento não encontrado.' });
   res.json({ ok: true });
 });

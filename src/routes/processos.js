@@ -67,11 +67,17 @@ processosRouter.get('/', async (req, res) => {
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
   if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
   if (etapa) {
-    params.push(etapa);
-    const etapaWhere = ETAPA_WHERE[etapa]
-      ? `(${ETAPA_WHERE[etapa]} OR p.etapa_atual = $${params.length})`
-      : `p.etapa_atual = $${params.length}`;
-    condicoes.push(`AND ${etapaWhere}`);
+    // etapa_atual é texto livre (gerado pela IA) e nunca é igual a um rótulo fixo de
+    // ETAPA_WHERE — o fallback abaixo só entra quando `etapa` é uma etapa customizada
+    // (salva via /api/processos/etapas-custom), que não tem entrada em ETAPA_WHERE.
+    // Só empurra o parâmetro quando o fallback de fato o usa, senão o bind do
+    // Postgres quebra por parâmetro sobrando sem placeholder correspondente.
+    if (ETAPA_WHERE[etapa]) {
+      condicoes.push(`AND ${ETAPA_WHERE[etapa]}`);
+    } else {
+      params.push(etapa);
+      condicoes.push(`AND p.etapa_atual = $${params.length}`);
+    }
   }
   if (movimentacao_pendente === 'true') condicoes.push(`AND p.requer_revisao = true`);
   const tempoNum = Number(tempo_parado_min);
@@ -184,11 +190,17 @@ function construirFiltrosExportar(query, user) {
   if (polo_passivo)          { params.push(`%${polo_passivo}%`);   condicoes.push(`AND p.polo_passivo ILIKE $${params.length}`); }
   if (produto_id)            { params.push(produto_id);            condicoes.push(`AND p.produto_id = $${params.length}`); }
   if (etapa) {
-    params.push(etapa);
-    const etapaWhere = ETAPA_WHERE[etapa]
-      ? `(${ETAPA_WHERE[etapa]} OR p.etapa_atual = $${params.length})`
-      : `p.etapa_atual = $${params.length}`;
-    condicoes.push(`AND ${etapaWhere}`);
+    // etapa_atual é texto livre (gerado pela IA) e nunca é igual a um rótulo fixo de
+    // ETAPA_WHERE — o fallback abaixo só entra quando `etapa` é uma etapa customizada
+    // (salva via /api/processos/etapas-custom), que não tem entrada em ETAPA_WHERE.
+    // Só empurra o parâmetro quando o fallback de fato o usa, senão o bind do
+    // Postgres quebra por parâmetro sobrando sem placeholder correspondente.
+    if (ETAPA_WHERE[etapa]) {
+      condicoes.push(`AND ${ETAPA_WHERE[etapa]}`);
+    } else {
+      params.push(etapa);
+      condicoes.push(`AND p.etapa_atual = $${params.length}`);
+    }
   }
   if (ano)                   { params.push(ano);                   condicoes.push(`AND EXTRACT(YEAR FROM p.data_distribuicao) = $${params.length}`); }
   if (funcao_cliente)        { params.push(`%${funcao_cliente}%`); condicoes.push(`AND c.cargo ILIKE $${params.length}`); }
