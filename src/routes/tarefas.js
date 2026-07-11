@@ -2,13 +2,20 @@ import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
+import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
 
 export const tarefasRouter = Router();
 
+// Rejeita :id malformado antes de bater no banco (evita 500 cru do Postgres)
+tarefasRouter.param('id', (req, res, next, id) => {
+  if (!uuidValido(id)) return res.status(400).json({ ok: false, erro: 'ID inválido.' });
+  next();
+});
+
 // GET /api/tarefas — lista tarefas do usuário (ou todas para Master)
 tarefasRouter.get('/', async (req, res) => {
-  const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, prazo_de, prazo_ate, concluida_de, concluida_ate, tipo, processo_id, page = 1, limite = 100 } = req.query;
-  const offset = (Number(page) - 1) * Number(limite);
+  const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, prazo_de, prazo_ate, concluida_de, concluida_ate, tipo, processo_id, page, limite } = req.query;
+  const { pagina: paginaSegura, limite: limiteSeguro, offset } = paginacaoSegura(page, limite || 100);
 
   const params = [];
   const condicoes = ["t.status NOT IN ('cancelada')"];
@@ -69,7 +76,7 @@ tarefasRouter.get('/', async (req, res) => {
     params
   );
 
-  params.push(Number(limite), offset);
+  params.push(limiteSeguro, offset);
 
   const rows = await db.query(
     `SELECT t.*, COALESCE(p.numero, pub.numero_processo) AS processo_numero, COALESCE(p.tribunal, pub.tribunal) AS tribunal,
@@ -112,7 +119,7 @@ tarefasRouter.get('/', async (req, res) => {
     params
   );
 
-  res.json({ ok: true, tarefas: rows, total: Number(total), page: Number(page), limite: Number(limite) });
+  res.json({ ok: true, tarefas: rows, total: Number(total), page: paginaSegura, limite: limiteSeguro });
 });
 
 // POST /api/tarefas — cria tarefa (Master atribui ao Junior)
@@ -285,6 +292,11 @@ tarefasRouter.patch('/:id/responsavel', apenasMaster, async (req, res) => {
 // PATCH /api/tarefas/:id/observacao — salva observação livre
 tarefasRouter.patch('/:id/observacao', async (req, res) => {
   const { observacao } = req.body;
+  const tarefa = await db.queryOne('SELECT atribuido_a, validado_por FROM tarefas WHERE id = $1', [req.params.id]);
+  if (!tarefa) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
+  if (req.user.perfil !== 'master' && tarefa.atribuido_a !== req.user.id && tarefa.validado_por !== req.user.id) {
+    return res.status(403).json({ ok: false, erro: 'Você não tem acesso a esta tarefa.' });
+  }
   await db.execute(
     `UPDATE tarefas SET observacao = $1 WHERE id = $2`,
     [observacao || null, req.params.id]
@@ -307,6 +319,10 @@ tarefasRouter.patch('/:id/status', async (req, res, next) => {
 
     if (req.user.perfil === 'junior' && ['concluida','devolvida','cancelada'].includes(status)) {
       return res.status(403).json({ ok: false, erro: 'Apenas o Master pode concluir, devolver ou cancelar tarefas.' });
+    }
+
+    if (req.user.perfil !== 'master' && tarefa.atribuido_a !== req.user.id) {
+      return res.status(403).json({ ok: false, erro: 'Você não tem acesso a esta tarefa.' });
     }
 
     if (status === 'cancelada' && !justificativa_cancelamento?.trim()) {
@@ -468,6 +484,9 @@ tarefasRouter.patch('/:id/encaminhar-assinatura', async (req, res) => {
     [req.params.id]
   );
   if (!tarefa) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
+  if (req.user.perfil !== 'master' && tarefa.atribuido_a !== req.user.id) {
+    return res.status(403).json({ ok: false, erro: 'Você não tem acesso a esta tarefa.' });
+  }
   if (tarefa.tipo !== 'demanda') return res.status(400).json({ ok: false, erro: 'Esta tarefa não é uma demanda.' });
   if (['concluida', 'cancelada'].includes(tarefa.status)) {
     return res.status(409).json({ ok: false, erro: 'Demanda já finalizada.' });

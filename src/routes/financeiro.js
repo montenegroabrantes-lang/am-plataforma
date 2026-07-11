@@ -12,7 +12,7 @@ financeiroRouter.get('/', async (req, res) => {
   const params = [];
   const condicoes = ['1=1'];
 
-  if (mes && /^\d{4}-\d{2}$/.test(mes)) {
+  if (mes && /^\d{4}-(0[1-9]|1[0-2])$/.test(mes)) {
     params.push(`${mes}-01`);
     condicoes.push(`date_trunc('month', COALESCE(h.data_recebimento, h.criado_em)) = date_trunc('month', $${params.length}::date)`);
   }

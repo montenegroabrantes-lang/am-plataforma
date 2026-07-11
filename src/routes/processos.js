@@ -4,8 +4,15 @@ import { registrarAuditoria } from '../middleware/auditoria.js';
 import { apenasMaster }       from '../middleware/auth.js';
 import { ETAPA_WHERE, ETAPA_CASE } from '../utils/etapas.js';
 import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
+import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
 
 export const processosRouter = Router();
+
+// Rejeita :id malformado antes de bater no banco (evita 500 cru do Postgres — ver auditoria de segurança)
+processosRouter.param('id', (req, res, next, id) => {
+  if (!uuidValido(id)) return res.status(400).json({ ok: false, erro: 'ID inválido.' });
+  next();
+});
 
 // Filtro de visibilidade: restritos só para pode_marcar_restrito
 function filtroVisibilidade(user) {
@@ -39,8 +46,7 @@ processosRouter.get('/', async (req, res) => {
     produto_id, etapa, tempo_parado_min, funcao_cliente, movimentacao_pendente,
     limite = 30,
   } = req.query;
-  const page   = Number(req.query.page || req.query.pagina || 1);
-  const offset = (page - 1) * Number(limite);
+  const { pagina: page, limite: limiteSeguro, offset } = paginacaoSegura(req.query.page || req.query.pagina, limite);
 
   const params    = [];
   const condicoes = ['1=1', filtroVisibilidade(req.user)];
@@ -104,7 +110,7 @@ processosRouter.get('/', async (req, res) => {
     params
   );
 
-  params.push(Number(limite), offset);
+  params.push(limiteSeguro, offset);
 
   // JOIN LATERAL evita 3 subqueries por linha — uma única busca da última movimentação.
   const rows = await db.query(
@@ -159,7 +165,7 @@ processosRouter.get('/', async (req, res) => {
   }
   const processosComClassif = rows.map(r => ({ ...r, classif_valores: classifMap[r.id] || {} }));
 
-  res.json({ ok: true, processos: processosComClassif, total: Number(total), page, limite: Number(limite) });
+  res.json({ ok: true, processos: processosComClassif, total: Number(total), page, limite: limiteSeguro });
 });
 
 // Monta as condições SQL compartilhadas pelos exports (WhatsApp e Excel)
@@ -188,7 +194,8 @@ function construirFiltrosExportar(query, user) {
   if (funcao_cliente)        { params.push(`%${funcao_cliente}%`); condicoes.push(`AND c.cargo ILIKE $${params.length}`); }
   const tempoNum = Number(tempo_parado_min);
   if (tempo_parado_min && !isNaN(tempoNum)) {
-    condicoes.push(`AND (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) < NOW() - INTERVAL '${tempoNum} minutes'`);
+    params.push(tempoNum);
+    condicoes.push(`AND EXTRACT(DAY FROM NOW() - (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id)) >= $${params.length}`);
   }
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
   if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
@@ -520,8 +527,12 @@ processosRouter.post('/', async (req, res) => {
 
 // PATCH /api/processos/:id
 processosRouter.patch('/:id', async (req, res) => {
-  const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado FROM processos WHERE id = $1', [req.params.id]);
+  const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, visibilidade FROM processos WHERE id = $1', [req.params.id]);
   if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+
+  if (dono.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
+    return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
+  }
 
   const campos      = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas', 'periodo_inicio', 'periodo_fim', 'classificacao'];
   const camposData  = new Set(['periodo_inicio', 'periodo_fim']);

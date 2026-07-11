@@ -1,8 +1,14 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
+import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
 
 export const pipelineRouter = Router();
+
+pipelineRouter.param('id', (req, res, next, id) => {
+  if (!uuidValido(id)) return res.status(400).json({ ok: false, erro: 'ID inválido.' });
+  next();
+});
 
 const ETAPAS_ORDEM = ['contato_feito','docs_solicitados','docs_recebidos','cadastro_pendente','convertido','perdido'];
 
@@ -31,15 +37,15 @@ pipelineRouter.get('/', async (req, res) => {
 
 // GET /api/pipeline/todos — inclui convertidos e perdidos (para relatório)
 pipelineRouter.get('/todos', async (req, res) => {
-  const { etapa, page = 1, limite = 50 } = req.query;
-  const offset = (Number(page) - 1) * Number(limite);
+  const { etapa, page, limite } = req.query;
+  const { limite: limiteSeguro, offset } = paginacaoSegura(page, limite);
 
   const params = [];
   const condicoes = ['1=1'];
 
   if (etapa) { params.push(etapa); condicoes.push(`l.etapa = $${params.length}`); }
 
-  params.push(Number(limite), offset);
+  params.push(limiteSeguro, offset);
 
   const rows = await db.query(
     `SELECT l.*, pr.nome AS produto_nome, u.nome AS atribuido_nome

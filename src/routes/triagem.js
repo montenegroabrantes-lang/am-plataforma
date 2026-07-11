@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { ETAPA_CASE } from '../utils/etapas.js';
+import { paginacaoSegura } from '../utils/validacao.js';
 
 export const triagemRouter = Router();
 
@@ -10,7 +11,7 @@ triagemRouter.get('/', async (req, res) => {
     busca, ano, tribunal, vara, produto_id,
     polo_passivo, etapa, tempo_parado_min, pagamento,
     funcao_cliente, movimentacao_pendente,
-    pagina = 1, por_pagina = 50,
+    pagina, por_pagina,
   } = req.query;
 
   // Filtro de visibilidade e master (igual ao processos.js)
@@ -89,12 +90,12 @@ triagemRouter.get('/', async (req, res) => {
     : '';
   const etapaParam = etapa && etapa !== 'Todos' ? etapa : null;
 
-  const offset   = (Number(pagina) - 1) * Number(por_pagina);
+  const { pagina: paginaSegura, limite: porPaginaSeguro, offset } = paginacaoSegura(pagina, por_pagina || 50);
   // params da lista: [filterParams..., etapa?, limit, offset]
   const listaParams = [
     ...filterParams,
     ...(etapaParam ? [etapaParam] : []),
-    Number(por_pagina),
+    porPaginaSeguro,
     offset,
   ];
   const limitIdx  = listaParams.length - 1;
@@ -166,8 +167,8 @@ triagemRouter.get('/', async (req, res) => {
     ok: true,
     processos: listaRows,
     total:     totalRow?.total || 0,
-    pagina:    Number(pagina),
-    por_pagina: Number(por_pagina),
+    pagina:    paginaSegura,
+    por_pagina: porPaginaSeguro,
     stats: {
       por_etapa:        stats.por_etapa        || [],
       por_vara:         stats.por_vara          || [],

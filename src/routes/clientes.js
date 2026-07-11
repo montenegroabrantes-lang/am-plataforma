@@ -8,15 +8,22 @@ import { criarPastaCliente, criarSubpasta, uploadPdf } from '../services/drive/i
 import { verificarElegibilidadeCliente } from '../services/elegibilidade.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { cpfValido } from '../utils/cpf.js';
+import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 export const clientesRouter = Router();
 
+// Rejeita :id malformado antes de bater no banco (evita 500 cru do Postgres)
+clientesRouter.param('id', (req, res, next, id) => {
+  if (!uuidValido(id)) return res.status(400).json({ ok: false, erro: 'ID inválido.' });
+  next();
+});
+
 // GET /api/clientes
 clientesRouter.get('/', async (req, res) => {
-  const { busca, page = 1, limite = 30 } = req.query;
-  const offset = (Number(page) - 1) * Number(limite);
+  const { busca, page, limite } = req.query;
+  const { limite: limiteSeguro, offset } = paginacaoSegura(page, limite);
   const params = [];
   const condicoes = ['c.ativo = true'];
 
@@ -35,7 +42,7 @@ clientesRouter.get('/', async (req, res) => {
     condicoes.push(`(c.nome ILIKE $${iNome}${cpfCond})`);
   }
 
-  params.push(Number(limite), offset);
+  params.push(limiteSeguro, offset);
 
   const rows = await db.query(
     `SELECT c.id, c.nome, c.cpf, c.whatsapp, c.email, c.cargo, c.orgao,

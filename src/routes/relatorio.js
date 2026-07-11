@@ -108,12 +108,15 @@ relatorioRouter.get('/financeiro', async (req, res) => {
   const params = [];
   const condicoes = ['1=1'];
 
-  if (de)  { params.push(de);  condicoes.push(`h.criado_em >= $${params.length}`); }
-  if (ate) { params.push(ate); condicoes.push(`h.criado_em <= $${params.length}`); }
+  // Agrupa por data efetiva de recebimento (com fallback pra criado_em), igual
+  // /api/financeiro — antes este endpoint agrupava só por criado_em e os dois
+  // relatórios divergiam quando o honorário era registrado num mês e recebido noutro.
+  if (de)  { params.push(de);  condicoes.push(`COALESCE(h.data_recebimento, h.criado_em) >= $${params.length}`); }
+  if (ate) { params.push(ate); condicoes.push(`COALESCE(h.data_recebimento, h.criado_em) <= $${params.length}`); }
 
   const rows = await db.query(
     `SELECT
-       DATE_TRUNC('month', h.criado_em) AS mes,
+       DATE_TRUNC('month', COALESCE(h.data_recebimento, h.criado_em)) AS mes,
        SUM(valor_honorario)              AS total_honorarios,
        SUM(valor_recebido)               AS total_recebido,
        COUNT(*)                          AS qtd_processos
@@ -128,7 +131,7 @@ relatorioRouter.get('/financeiro', async (req, res) => {
 
 // GET /api/relatorio/diligencias?dias=30 — processos sem movimentação há X dias, agrupados por vara
 relatorioRouter.get('/diligencias', async (req, res) => {
-  const dias = Math.min(Number(req.query.dias) || 30, 365);
+  const dias = Math.min(Math.max(Number(req.query.dias) || 30, 1), 365);
   const params  = [dias];
   const filtroM = '';
 

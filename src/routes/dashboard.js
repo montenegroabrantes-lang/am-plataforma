@@ -45,6 +45,7 @@ dashboardRouter.get('/', async (req, res) => {
         COUNT(*) FILTER (WHERE sync_status = 'ok')        AS sync_ok,
         COUNT(*) FILTER (WHERE sync_status = 'erro_sync') AS sync_erro,
         COUNT(*) FILTER (WHERE sync_status = 'pendente')  AS sync_pendente,
+        COUNT(*) FILTER (WHERE sync_status = 'aguardando_primeira_captura') AS sync_aguardando,
         MAX(atualizado_em)   FILTER (WHERE status IN ('ativo','suspenso'))                                    AS ultima_atualizacao,
         COUNT(*) FILTER (WHERE status IN ('ativo','suspenso') AND sync_fonte = 'datajud')                    AS via_datajud,
         COUNT(*) FILTER (WHERE status IN ('ativo','suspenso') AND sync_fonte IS NULL)                        AS sem_fonte,
@@ -185,6 +186,7 @@ dashboardRouter.get('/', async (req, res) => {
         ok:         Number(agg.sync_ok    || 0),
         erro_sync:  Number(agg.sync_erro  || 0),
         pendente:   Number(agg.sync_pendente || 0),
+        aguardando_primeira_captura: Number(agg.sync_aguardando || 0),
       },
       cobertura: {
         ultima_atualizacao:  agg.ultima_atualizacao,
