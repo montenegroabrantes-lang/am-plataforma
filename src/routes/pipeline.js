@@ -89,6 +89,12 @@ pipelineRouter.patch('/:id/etapa', async (req, res) => {
     return res.status(400).json({ ok: false, erro: `Etapa inválida. Válidas: ${ETAPAS_ORDEM.join(', ')}` });
   }
 
+  const [lead] = await db.query('SELECT atribuido_a FROM leads WHERE id = $1', [req.params.id]);
+  if (!lead) return res.status(404).json({ ok: false, erro: 'Lead não encontrado.' });
+  if (req.user.perfil !== 'master' && lead.atribuido_a !== req.user.id) {
+    return res.status(403).json({ ok: false, erro: 'Você não tem acesso a este lead.' });
+  }
+
   const updates = ['etapa = $1', 'atualizado_em = NOW()'];
   const params  = [etapa];
 
@@ -102,6 +108,12 @@ pipelineRouter.patch('/:id/etapa', async (req, res) => {
 
 // PATCH /api/pipeline/:id — atualiza dados do lead
 pipelineRouter.patch('/:id', async (req, res) => {
+  const [lead] = await db.query('SELECT atribuido_a FROM leads WHERE id = $1', [req.params.id]);
+  if (!lead) return res.status(404).json({ ok: false, erro: 'Lead não encontrado.' });
+  if (req.user.perfil !== 'master' && lead.atribuido_a !== req.user.id) {
+    return res.status(403).json({ ok: false, erro: 'Você não tem acesso a este lead.' });
+  }
+
   const campos = ['nome','whatsapp','cpf','produto_id','observacao','atribuido_a','cliente_id'];
   const updates = ['atualizado_em = NOW()'];
   const params  = [];
