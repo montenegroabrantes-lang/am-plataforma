@@ -42,6 +42,13 @@ clientesRouter.get('/', async (req, res) => {
     condicoes.push(`(c.nome ILIKE $${iNome}${cpfCond})`);
   }
 
+  // COUNT antes do LIMIT/OFFSET — sem isso a tela exibia o tamanho da página
+  // como se fosse o total e o contador travava em 30 por mais que se cadastrasse.
+  const [{ total }] = await db.query(
+    `SELECT COUNT(*) AS total FROM clientes c WHERE ${condicoes.join(' AND ')}`,
+    params
+  );
+
   params.push(limiteSeguro, offset);
 
   const rows = await db.query(
@@ -59,7 +66,7 @@ clientesRouter.get('/', async (req, res) => {
     params
   );
 
-  res.json({ ok: true, clientes: rows });
+  res.json({ ok: true, clientes: rows, total: Number(total), pagina: Number(page) || 1, limite: limiteSeguro });
 });
 
 // GET /api/clientes/:id
