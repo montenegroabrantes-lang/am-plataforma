@@ -31,6 +31,7 @@ import { classificacoesProcessoRouter } from './routes/classificacoesProcesso.js
 import { webhookRouter }       from './routes/webhook.js';
 import { publicacoesRouter, importarPublicacoesHandler } from './routes/publicacoes.js';
 import { estimativasRouter } from './routes/estimativas.js';
+import { pushTJRouter }      from './routes/pushTJ.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -125,6 +126,7 @@ app.use('/api/webhook',       webhookRouter);
 app.post('/api/publicacoes/importar', importLimiter, importarPublicacoesHandler);
 app.use('/api/publicacoes',   autenticar, publicacoesRouter);
 app.use('/api/estimativas',   autenticar, estimativasRouter);
+app.use('/api/push-tj',       autenticar, pushTJRouter);
 
 // Global error handler — captura erros não tratados nas rotas
 app.use((err, req, res, next) => {
@@ -303,6 +305,47 @@ async function iniciar() {
       )
     `).catch(() => {});
     await db.query(`CREATE INDEX IF NOT EXISTS idx_cessoes_processo ON cessoes_credito (processo_id)`).catch(() => {});
+
+    // ── Push do TJPB por e-mail (pje@tjpb.jus.br via Outlook/Microsoft Graph) ──
+    // Canal independente do DataJud: quando um cai, o outro segue. A divergência
+    // entre os dois é, por si só, sinal de que algo está errado em um deles.
+    await db.query(`ALTER TABLE movimentacoes ADD COLUMN IF NOT EXISTS origem TEXT`).catch(() => {});
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS push_tj_mensagens (
+        id              BIGSERIAL PRIMARY KEY,
+        mensagem_id     TEXT NOT NULL UNIQUE,       -- id da mensagem no Graph (dedup entre restarts)
+        remetente       TEXT,
+        assunto         TEXT,
+        recebido_em     TIMESTAMPTZ NOT NULL,
+        numero_processo TEXT,
+        processo_id     UUID REFERENCES processos(id) ON DELETE SET NULL,
+        status          TEXT NOT NULL,              -- prazo_criado | sem_prazo | processo_desconhecido | prazo_implausivel | duplicada | sem_numero | erro
+        motivo          TEXT,
+        corpo           TEXT,                       -- guardado para reprocessar quando o parser melhorar
+        resolvido       BOOLEAN NOT NULL DEFAULT false,
+        criado_em       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_push_tj_status ON push_tj_mensagens (status, recebido_em DESC)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_push_tj_recebido ON push_tj_mensagens (recebido_em DESC)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_push_tj_pendentes ON push_tj_mensagens (resolvido) WHERE resolvido = false`).catch(() => {});
+
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS push_execucoes (
+        id                      BIGSERIAL PRIMARY KEY,
+        iniciado_em             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        concluido_em            TIMESTAMPTZ,
+        lidas                   INTEGER NOT NULL DEFAULT 0,
+        prazos_criados          INTEGER NOT NULL DEFAULT 0,
+        processos_desconhecidos INTEGER NOT NULL DEFAULT 0,
+        sem_prazo               INTEGER NOT NULL DEFAULT 0,
+        duplicadas              INTEGER NOT NULL DEFAULT 0,
+        falhas                  INTEGER NOT NULL DEFAULT 0,
+        erro                    TEXT                -- mensagem real da falha; NULL aqui com falhas=0 é "rodou e não havia nada"
+      )
+    `).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_push_execucoes_inicio ON push_execucoes (iniciado_em DESC)`).catch(() => {});
 
     // ── Índices de performance para suportar 5000+ processos ──────────────────
     await db.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`).catch(() => {});

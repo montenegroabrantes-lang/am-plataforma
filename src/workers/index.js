@@ -5,11 +5,14 @@ import { criarBackupWorker }    from './backup.worker.js';
 import { criarAudienciaWorker }        from './audiencia.worker.js';
 import { criarSACWorker, agendarSACWorker } from './sac.worker.js';
 import { criarAlertasWorker }   from './alertas.worker.js';
+import { criarPushTJWorker }    from './pushTJ.worker.js';
+import { outlookConfigurado }   from '../services/outlook/auth.js';
 
 let syncQueue;
 let individualSyncQueue;
 let backupQueue;
 let alertasQueue;
+let pushTJQueue;
 
 export async function iniciarWorkers() {
   syncQueue           = new Queue('sync-tribunal', { connection: redis });
@@ -30,6 +33,27 @@ export async function iniciarWorkers() {
   criarAudienciaWorker();
   criarSACWorker();
   criarAlertasWorker();
+
+  // Push do TJPB por e-mail — só sobe se as credenciais do Outlook existirem,
+  // para não encher o log de erro em ambiente sem a integração configurada.
+  if (outlookConfigurado()) {
+    pushTJQueue = new Queue('push-tj', { connection: redis });
+    criarPushTJWorker();
+    await pushTJQueue.add(
+      'ler-push',
+      {},
+      {
+        repeat: { pattern: '*/5 * * * *' },   // a cada 5 min — prazo judicial não precisa de segundos
+        jobId:  'push-tj-recorrente',
+        removeOnComplete: 20,
+        removeOnFail:     10,
+      }
+    );
+    console.log('[Workers] Push do TJPB ativo (consulta a cada 5 min).');
+  } else {
+    console.log('[Workers] Push do TJPB inativo — defina OUTLOOK_CLIENT_ID/SECRET/REFRESH_TOKEN para ligar.');
+  }
+
   // Worker de publicações desativado — Comunica API bloqueia IPs de nuvem (CloudFront 403)
   // Sync feito via script local (~/sync-publicacoes.mjs) ou GitHub Actions com IP residencial
   // criarPublicacoesWorker();
