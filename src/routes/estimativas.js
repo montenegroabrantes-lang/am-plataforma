@@ -35,6 +35,20 @@ estimativasRouter.get('/', async (req, res) => {
   }
 });
 
+// GET /api/estimativas/leads?etapa=&origem=&busca= — precisa vir ANTES de GET /:id, senão
+// "/leads" seria capturado pelo parâmetro :id e a Camila receberia GET /api/estimativas/leads
+// (rota errada) em vez de GET /api/leads.
+estimativasRouter.get('/leads', async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+  try {
+    const { data } = await api.get('/api/leads', { params: req.query });
+    res.json(data);
+  } catch (err) {
+    res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
+  }
+});
+
 // GET /api/estimativas/:id — detalhe
 estimativasRouter.get('/:id', async (req, res) => {
   const api = camila();
@@ -71,6 +85,61 @@ estimativasRouter.post('/:id/recusar', apenasMaster, async (req, res) => {
       ...req.body,
       aprovado_por: req.user?.nome || req.user?.email || req.user?.id,
     });
+    res.json(data);
+  } catch (err) {
+    res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
+  }
+});
+
+// ── Aba "Leads" — funil consolidado de quem passou pela Camila até o fechamento ──
+// Mesmo padrão de proxy acima: a plataforma não guarda nada, só repassa pra Camila.
+// (GET /leads está mais acima, antes de GET /:id — ver comentário lá.)
+
+// POST /api/estimativas/leads/:contactId/desfecho — Master marca fechado ou perdido
+estimativasRouter.post('/leads/:contactId/desfecho', apenasMaster, async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+  try {
+    const { data } = await api.post(`/api/leads/${req.params.contactId}/desfecho`, {
+      ...req.body,
+      registradoPor: req.user?.nome || req.user?.email || req.user?.id,
+    });
+    res.json(data);
+  } catch (err) {
+    res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
+  }
+});
+
+// DELETE /api/estimativas/leads/:contactId/desfecho — desfazer um desfecho marcado por engano
+estimativasRouter.delete('/leads/:contactId/desfecho', apenasMaster, async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+  try {
+    const { data } = await api.delete(`/api/leads/${req.params.contactId}/desfecho`);
+    res.json(data);
+  } catch (err) {
+    res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
+  }
+});
+
+// POST /api/estimativas/leads/:contactId/reabordar — Master dispara retomada imediata
+estimativasRouter.post('/leads/:contactId/reabordar', apenasMaster, async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+  try {
+    const { data } = await api.post(`/api/leads/${req.params.contactId}/reabordar`, req.body);
+    res.json(data);
+  } catch (err) {
+    res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
+  }
+});
+
+// POST /api/estimativas/leads/:contactId/mensagem — Master manda mensagem livre pelo ticket
+estimativasRouter.post('/leads/:contactId/mensagem', apenasMaster, async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+  try {
+    const { data } = await api.post(`/api/leads/${req.params.contactId}/mensagem`, req.body);
     res.json(data);
   } catch (err) {
     res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
