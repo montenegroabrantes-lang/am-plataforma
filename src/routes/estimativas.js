@@ -134,6 +134,24 @@ estimativasRouter.post('/leads/:contactId/reabordar', apenasMaster, async (req, 
   }
 });
 
+// POST /api/estimativas/leads/:contactId/entrega-manual — Master envia a estimativa com o
+// próprio texto e o ticket passa ao atendente humano em silêncio (a Camila para de conduzir).
+// Alternativa manual à aprovação comum: aprovar manda a Camila entregar e seguir vendendo;
+// isto entrega o valor e sai de cena. Só Master, porque dispara mensagem real ao cliente.
+estimativasRouter.post('/leads/:contactId/entrega-manual', apenasMaster, async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+  try {
+    const { data } = await api.post(`/api/funil-leads/${req.params.contactId}/entrega-manual`, {
+      ...req.body,
+      registradoPor: req.user?.nome || req.user?.email || req.user?.id,
+    });
+    res.json(data);
+  } catch (err) {
+    res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
+  }
+});
+
 // POST /api/estimativas/leads/:contactId/mensagem — Master manda mensagem livre pelo ticket
 estimativasRouter.post('/leads/:contactId/mensagem', apenasMaster, async (req, res) => {
   const api = camila();
