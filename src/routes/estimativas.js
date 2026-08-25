@@ -152,6 +152,24 @@ estimativasRouter.post('/leads/:contactId/entrega-manual', apenasMaster, async (
   }
 });
 
+// POST /api/estimativas/leads/:contactId/passar-atendente — Master transfere o ticket em
+// silêncio, sem enviar mensagem nem revelar valor nenhum. Diferente de entrega-manual: aqui
+// é só a metade da transferência, pra quando o operador quer assumir a conversa sem que a
+// Camila (ou o painel) já tenha falado de estimativa.
+estimativasRouter.post('/leads/:contactId/passar-atendente', apenasMaster, async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+  try {
+    const { data } = await api.post(`/api/funil-leads/${req.params.contactId}/passar-atendente`, {
+      ...req.body,
+      registradoPor: req.user?.nome || req.user?.email || req.user?.id,
+    });
+    res.json(data);
+  } catch (err) {
+    res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
+  }
+});
+
 // POST /api/estimativas/leads/:contactId/mensagem — Master manda mensagem livre pelo ticket
 estimativasRouter.post('/leads/:contactId/mensagem', apenasMaster, async (req, res) => {
   const api = camila();
