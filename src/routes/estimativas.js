@@ -134,6 +134,19 @@ estimativasRouter.post('/:id/recusar', apenasMaster, async (req, res) => {
   }
 });
 
+// PATCH /api/estimativas/:id/dados — Master corrige nome/cargo/órgão/período que o lead
+// digitou no site. Não refaz a busca de candidato — só o texto exibido na revisão.
+estimativasRouter.patch('/:id/dados', apenasMaster, async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+  try {
+    const { data } = await api.patch(`/api/estimativas/${req.params.id}/dados`, req.body);
+    res.json(data);
+  } catch (err) {
+    res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
+  }
+});
+
 // ── Aba "Leads" — funil consolidado de quem passou pela Camila até o fechamento ──
 // Mesmo padrão de proxy acima: a plataforma não guarda nada, só repassa pra Camila.
 // (GET /leads está mais acima, antes de GET /:id — ver comentário lá.)
