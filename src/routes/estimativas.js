@@ -5,6 +5,7 @@
 import { Router } from 'express';
 import axios from 'axios';
 import { apenasMaster } from '../middleware/auth.js';
+import { db } from '../db/index.js';
 
 export const estimativasRouter = Router();
 
@@ -35,6 +36,38 @@ estimativasRouter.get('/', async (req, res) => {
   }
 });
 
+// Achado real de produção (26/08/2026): a calculadora do site não checa se quem preencheu
+// já é cliente antes de criar um lead novo — Beatriz Azevedo (cliente desde 07/08/2026, 1
+// processo ativo) simulou de novo e ficou 48h presa na fila de revisão como prospect frio.
+// Cadastro de cliente quase nunca tem WhatsApp gravado, então cruzar por telefone não
+// funciona — só dá pra comparar por nome. NUNCA bloqueia a submissão nem o lead (nome pode
+// colidir por coincidência com pessoa não relacionada) — só sinaliza pro humano decidir.
+function normalizarNome(s) {
+  return String(s || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // remove acentos
+    .toUpperCase()
+    .replace(/[^A-Z\s]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+// Todas as palavras do nome mais curto precisam aparecer no mais longo — "Beatriz Azevedo"
+// ⊆ "BEATRIZ AZEVEDO ALVES" bate; um nome de 1 palavra só (genérico demais, ou os achados
+// antigos "NOME_PENDENTE"/"valor") nunca compara, pra não gerar falso positivo em massa.
+function encontrarClienteExistente(nomeLead, clientes) {
+  const palavrasLead = normalizarNome(nomeLead);
+  if (palavrasLead.length < 2) return null;
+  for (const c of clientes) {
+    const palavrasCliente = normalizarNome(c.nome);
+    if (palavrasCliente.length < 2) continue;
+    const [menor, maior] = palavrasLead.length <= palavrasCliente.length
+      ? [palavrasLead, palavrasCliente] : [palavrasCliente, palavrasLead];
+    if (menor.every(p => maior.includes(p))) return c;
+  }
+  return null;
+}
+
 // GET /api/estimativas/leads?etapa=&origem=&busca= — precisa vir ANTES de GET /:id, senão
 // "/leads" seria capturado pelo parâmetro :id. Repassa para /api/funil-leads na Camila —
 // não /api/leads: esse nome já existe lá (métricas de fase de conversa) e ficaria sombreado.
@@ -43,6 +76,16 @@ estimativasRouter.get('/leads', async (req, res) => {
   if (!api) return semConfig(res);
   try {
     const { data } = await api.get('/api/funil-leads', { params: req.query });
+    if (data?.ok && Array.isArray(data.leads) && data.leads.length) {
+      // Uma consulta só, comparação inteira em JS — mais barato que 1 query fuzzy por lead,
+      // e a tabela de clientes é pequena o bastante (centenas de linhas) pra isso ser rápido.
+      const clientes = await db.query(`SELECT nome, criado_em FROM clientes WHERE nome IS NOT NULL`).catch(() => []);
+      for (const lead of data.leads) {
+        const encontrado = lead.nome ? encontrarClienteExistente(lead.nome, clientes) : null;
+        lead.ja_e_cliente = !!encontrado;
+        lead.cliente_encontrado = encontrado ? { nome: encontrado.nome, criado_em: encontrado.criado_em } : null;
+      }
+    }
     res.json(data);
   } catch (err) {
     res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
