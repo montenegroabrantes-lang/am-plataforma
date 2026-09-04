@@ -28,6 +28,7 @@ const semConfig = res => res.status(503).json({
 for(const [method,local,remote] of [
   ['get','/dashboard','/api/dashboard-leads'],
   ['get','/dashboard/detalhes','/api/dashboard-leads/detalhes'],
+  ['get','/reabordagens/status','/api/reabordagens/status'],
   ['get','/aprendizado-automatico','/api/aprendizado-automatico'],
   ['post','/aprendizado-automatico/configuracao','/api/aprendizado-automatico/configuracao'],
   ['post','/aprendizado-automatico/:codigo/desativar','/api/aprendizado-automatico/:codigo/desativar'],
