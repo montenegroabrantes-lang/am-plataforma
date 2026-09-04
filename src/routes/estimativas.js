@@ -24,6 +24,29 @@ const semConfig = res => res.status(503).json({
   ok: false, erro: 'Integração com a Camila não configurada (CAMILA_API_URL / CAMILA_API_KEY).',
 });
 
+// Controles comerciais: leitura autenticada, alterações reservadas ao perfil master.
+for(const [method,local,remote] of [
+  ['get','/leads/:contactId/continuidade','/api/funil-leads/:contactId/continuidade'],
+  ['patch','/leads/:contactId/continuidade','/api/funil-leads/:contactId/continuidade'],
+  ['patch','/leads/:contactId/documentos/:messageId','/api/funil-leads/:contactId/documentos/:messageId'],
+  ['post','/leads/:contactId/liberar-reenvio','/api/funil-leads/:contactId/liberar-reenvio'],
+  ['post','/leads/:contactId/confirmar-envio','/api/funil-leads/:contactId/confirmar-envio'],
+  ['post','/leads/:contactId/fase-contrato','/api/funil-leads/:contactId/fase-contrato'],
+  ['get','/sinteses-aprendizado','/api/sinteses-aprendizado'],
+  ['post','/sinteses-aprendizado/:id/decidir','/api/sinteses-aprendizado/:id/decidir'],
+  ['get','/continuidade-metricas','/api/continuidade-metricas'],
+]) {
+  const handler=async(req,res)=>{
+    const api=camila();if(!api)return semConfig(res);
+    const url=remote.replace(/:([a-zA-Z]+)/g,(_,key)=>encodeURIComponent(req.params[key]));
+    try {
+      const body={...req.body,registradoPor:req.user?.nome||req.user?.email||String(req.user?.id||''),atualizado_por:req.user?.nome||req.user?.email};
+      const {data}=await api.request({method,url,...(method==='get'?{params:req.query}:{data:body})});res.json(data);
+    }catch(e){res.status(e.response?.status||502).json({ok:false,erro:e.response?.data?.erro||'Não foi possível consultar a Camila.'});}
+  };
+  estimativasRouter[method](local,...(method==='get'?[]:[apenasMaster]),handler);
+}
+
 // GET /api/estimativas — lista (status=pendente|aprovada_entregue|recusada_entregue...)
 estimativasRouter.get('/', async (req, res) => {
   const api = camila();
