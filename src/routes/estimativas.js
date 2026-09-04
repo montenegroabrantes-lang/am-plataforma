@@ -163,6 +163,20 @@ estimativasRouter.post('/:id/recusar', apenasMaster, async (req, res) => {
   }
 });
 
+// POST /api/estimativas/:id/restaurar-descarte — volta à revisão com a automação pausada
+estimativasRouter.post('/:id/restaurar-descarte', apenasMaster, async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+  try {
+    const { data } = await api.post(`/api/estimativas/${req.params.id}/restaurar-descarte`, {
+      registrado_por: req.user?.nome || req.user?.email || req.user?.id,
+    });
+    res.json(data);
+  } catch (err) {
+    res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
+  }
+});
+
 // PATCH /api/estimativas/:id/dados — Master corrige nome/cargo/órgão/período que o lead
 // digitou no site. Não refaz a busca de candidato — só o texto exibido na revisão.
 estimativasRouter.patch('/:id/dados', apenasMaster, async (req, res) => {
