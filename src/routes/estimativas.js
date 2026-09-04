@@ -26,6 +26,8 @@ const semConfig = res => res.status(503).json({
 
 // Controles comerciais: leitura autenticada, alterações reservadas ao perfil master.
 for(const [method,local,remote] of [
+  ['get','/dashboard','/api/dashboard-leads'],
+  ['get','/dashboard/detalhes','/api/dashboard-leads/detalhes'],
   ['get','/leads/:contactId/continuidade','/api/funil-leads/:contactId/continuidade'],
   ['patch','/leads/:contactId/continuidade','/api/funil-leads/:contactId/continuidade'],
   ['patch','/leads/:contactId/documentos/:messageId','/api/funil-leads/:contactId/documentos/:messageId'],
