@@ -10,7 +10,7 @@ triagemRouter.get('/', async (req, res) => {
   const {
     busca, ano, tribunal, vara, produto_id,
     polo_passivo, etapa, tempo_parado_min, pagamento,
-    funcao_cliente, movimentacao_pendente,
+    funcao_cliente, movimentacao_pendente, cessao,
     pagina, por_pagina,
   } = req.query;
 
@@ -48,6 +48,7 @@ triagemRouter.get('/', async (req, res) => {
   }
   if (funcao_cliente)         filterWheres.push(`c.cargo ILIKE ${fp('%' + funcao_cliente + '%')}`);
   if (movimentacao_pendente === 'true') filterWheres.push(`p.requer_revisao = true`);
+  if (cessao === 'true') filterWheres.push(`EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id)`);
 
   const WHERE = `WHERE ${filterWheres.join(' AND ')}`;
 
@@ -64,6 +65,7 @@ triagemRouter.get('/', async (req, res) => {
         COALESCE(c.nome, p.polo_ativo) AS cliente_nome,
         NULLIF(TRIM(c.cargo), '') AS funcao,
         p.requer_revisao AS movimentacao_pendente,
+        EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id) AS tem_cessao,
         pr.id   AS produto_id,
         pr.nome AS produto,
         EXTRACT(DAY FROM NOW() - ult.data_movimentacao)::int AS dias_parado,
@@ -136,6 +138,7 @@ triagemRouter.get('/', async (req, res) => {
            FROM base GROUP BY funcao ORDER BY total DESC LIMIT 30
          ) r) AS por_funcao,
          (SELECT COUNT(*)::int FROM base WHERE movimentacao_pendente = true) AS movimentacao_pendente,
+         (SELECT COUNT(*)::int FROM base WHERE tem_cessao = true) AS cessoes_credito,
          (SELECT json_agg(r ORDER BY r.min_dias) FROM (
            SELECT
              CASE
@@ -177,6 +180,7 @@ triagemRouter.get('/', async (req, res) => {
       por_funcao:       stats.por_funcao        || [],
       por_tempo:        stats.por_tempo         || [],
       movimentacao_pendente: Number(stats.movimentacao_pendente || 0),
+      cessoes_credito: Number(stats.cessoes_credito || 0),
     },
   });
 });

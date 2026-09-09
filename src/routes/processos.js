@@ -43,7 +43,7 @@ processosRouter.get('/', async (req, res) => {
   const {
     status, tribunal, vara, polo_passivo, ano, busca, situacao_atual, urgente,
     localizacao_processual, tipo_requisicao, periodo,
-    produto_id, etapa, tempo_parado_min, funcao_cliente, movimentacao_pendente,
+    produto_id, etapa, tempo_parado_min, funcao_cliente, movimentacao_pendente, cessao,
     limite = 30,
   } = req.query;
   const { pagina: page, limite: limiteSeguro, offset } = paginacaoSegura(req.query.page || req.query.pagina, limite);
@@ -80,6 +80,7 @@ processosRouter.get('/', async (req, res) => {
     }
   }
   if (movimentacao_pendente === 'true') condicoes.push(`AND p.requer_revisao = true`);
+  if (cessao === 'true') condicoes.push(`AND EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id)`);
   const tempoNum = Number(tempo_parado_min);
   if (tempo_parado_min && !isNaN(tempoNum)) {
     params.push(tempoNum);
@@ -177,7 +178,7 @@ processosRouter.get('/', async (req, res) => {
 // Monta as condições SQL compartilhadas pelos exports (WhatsApp e Excel)
 function construirFiltrosExportar(query, user) {
   const { status, situacao_atual, urgente, tribunal, busca, localizacao_processual, tipo_requisicao, periodo,
-          vara, polo_passivo, produto_id, etapa, tempo_parado_min, funcao_cliente, ano, movimentacao_pendente } = query;
+          vara, polo_passivo, produto_id, etapa, tempo_parado_min, funcao_cliente, ano, movimentacao_pendente, cessao } = query;
   const params    = [];
   const condicoes = ['1=1', filtroVisibilidade(user)];
 
@@ -212,6 +213,7 @@ function construirFiltrosExportar(query, user) {
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
   if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
   if (movimentacao_pendente === 'true') condicoes.push(`AND p.requer_revisao = true`);
+  if (cessao === 'true') condicoes.push(`AND EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id)`);
   if (busca) {
     const t2 = `%${busca}%`;
     params.push(t2); const iNum2   = params.length;
@@ -242,6 +244,7 @@ processosRouter.get('/exportar', async (req, res) => {
 
   const rows = await db.query(
     `SELECT p.numero, c.nome AS cliente_nome, p.situacao_atual, p.vara,
+            EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id) AS tem_cessao,
             (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) AS ultima_movimentacao
      FROM processos p
      LEFT JOIN clientes c ON c.id = p.cliente_id
@@ -251,7 +254,7 @@ processosRouter.get('/exportar', async (req, res) => {
     params
   );
 
-  const linhas = rows.map(r => `${r.numero} | ${r.cliente_nome || '—'} | ${r.vara || 'Vara não informada'} | ${formatarSituacao(r.situacao_atual)}`);
+  const linhas = rows.map(r => `${r.numero} | ${r.cliente_nome || '—'} | ${r.vara || 'Vara não informada'} | ${formatarSituacao(r.situacao_atual)}${r.tem_cessao ? ' | CESSÃO DE CRÉDITO' : ''}`);
 
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.send(linhas.join('\n'));
@@ -264,6 +267,7 @@ processosRouter.get('/exportar-excel', async (req, res) => {
   const rows = await db.query(
     `SELECT p.numero, c.nome AS cliente_nome, c.cpf AS cliente_cpf, p.situacao_atual, p.tribunal, p.vara,
             p.polo_passivo, p.urgente, p.data_distribuicao,
+            EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id) AS tem_cessao,
             (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) AS ultima_movimentacao
      FROM processos p
      LEFT JOIN clientes c ON c.id = p.cliente_id
@@ -273,11 +277,11 @@ processosRouter.get('/exportar-excel', async (req, res) => {
     params
   );
 
-  const colunas = ['Número', 'Cliente', 'CPF', 'Situação', 'Tribunal', 'Vara', 'Polo Passivo', 'Urgente', 'Distribuição', 'Última Movimentação'];
+  const colunas = ['Número', 'Cliente', 'CPF', 'Situação', 'Tribunal', 'Vara', 'Polo Passivo', 'Urgente', 'Cessão de Crédito', 'Distribuição', 'Última Movimentação'];
   const escapar = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const linhas = rows.map(r => [
     r.numero, r.cliente_nome, r.cliente_cpf, formatarSituacao(r.situacao_atual), r.tribunal, r.vara,
-    r.polo_passivo, r.urgente ? 'Sim' : 'Não',
+    r.polo_passivo, r.urgente ? 'Sim' : 'Não', r.tem_cessao ? 'Sim' : 'Não',
     r.data_distribuicao ? new Date(r.data_distribuicao).toLocaleDateString('pt-BR') : '',
     r.ultima_movimentacao ? new Date(r.ultima_movimentacao).toLocaleDateString('pt-BR') : '',
   ].map(escapar).join(';'));
