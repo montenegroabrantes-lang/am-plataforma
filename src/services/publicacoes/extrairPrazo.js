@@ -95,6 +95,29 @@ function adicionarDias(data, dias) {
   return proximoDiaUtil(d);
 }
 
+// DATE é dia civil, não instante. `new Date('YYYY-MM-DD')` interpreta UTC e pode
+// voltar ao dia anterior no Brasil; montar pelos componentes preserva o calendário.
+function normalizarDataCivil(valor) {
+  if (typeof valor === 'string') {
+    const m = valor.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 8, 0, 0);
+  }
+  const data = valor instanceof Date ? new Date(valor) : new Date(valor);
+  return data;
+}
+
+/**
+ * Impede que uma data solta e histórica do corpo da publicação vire prazo.
+ * Prazos automáticos fora da janela ficam na triagem para confirmação humana.
+ */
+export function prazoPlausivel(dataEvento, dataReferencia, limiteDias = 180) {
+  if (!(dataEvento instanceof Date) || Number.isNaN(dataEvento.getTime())) return false;
+  const referencia = normalizarDataCivil(dataReferencia);
+  if (Number.isNaN(referencia.getTime())) return false;
+  const dias = Math.round((dataEvento - referencia) / 86_400_000);
+  return dias >= 0 && dias <= limiteDias;
+}
+
 function parseDateBR(str) {
   // DD/MM/YYYY ou DD/MM/YY
   const m = str.match(/(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
@@ -260,7 +283,7 @@ export function extrairPrazoPublicacao(texto, dataDisponibilizacao, processo) {
   if (prazoDias) {
     // CPC art. 224 — exclui o dia da publicação/disponibilização; a contagem começa
     // no primeiro dia útil seguinte.
-    let base = new Date(dataDisponibilizacao);
+    let base = normalizarDataCivil(dataDisponibilizacao);
     base.setHours(8, 0, 0, 0);
     base.setDate(base.getDate() + 1);
     base = proximoDiaUtil(base);

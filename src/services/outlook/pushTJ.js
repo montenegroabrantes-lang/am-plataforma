@@ -7,8 +7,10 @@
 // evita que uma mudança de template do tribunal derrube a integração inteira.
 
 import { db } from '../../db/index.js';
-import { extrairPrazoPublicacao } from '../publicacoes/extrairPrazo.js';
+import { extrairPrazoPublicacao, prazoPlausivel } from '../publicacoes/extrairPrazo.js';
 import { criarEventoCalendar } from '../calendar/index.js';
+
+export { prazoPlausivel } from '../publicacoes/extrairPrazo.js';
 
 // Aceita com máscara (0812345-67.2024.8.15.2001) ou 20 dígitos seguidos.
 const CNJ_MASCARA = /\b(\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4})\b/g;
@@ -31,13 +33,6 @@ export function extrairNumerosCNJ(texto = '') {
  * positivos afogam os prazos reais no topo da lista. Melhor recusar e mandar
  * para conferência do que criar uma tarefa que mente.
  */
-export function prazoPlausivel(dataEvento, dataReferencia) {
-  if (!(dataEvento instanceof Date) || Number.isNaN(dataEvento.getTime())) return false;
-  const ref = dataReferencia instanceof Date ? dataReferencia : new Date(dataReferencia);
-  const dias = Math.round((dataEvento - ref) / 86_400_000);
-  return dias >= 0 && dias <= 180;
-}
-
 /**
  * Processa uma mensagem já lida do Graph.
  * Não lança: qualquer falha é devolvida no resultado para o worker registrar.

@@ -263,11 +263,20 @@ async function iniciar() {
         lido                  BOOLEAN NOT NULL DEFAULT false,
         lido_em               TIMESTAMPTZ,
         lido_por              UUID REFERENCES usuarios(id),
+        triagem_status        TEXT NOT NULL DEFAULT 'pendente',
+        triado_em             TIMESTAMPTZ,
+        triado_por            UUID REFERENCES usuarios(id),
         criado_em             TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `).catch(() => {});
+    await db.query(`ALTER TABLE publicacoes ADD COLUMN IF NOT EXISTS triagem_status TEXT NOT NULL DEFAULT 'pendente'`).catch(() => {});
+    await db.query(`ALTER TABLE publicacoes ADD COLUMN IF NOT EXISTS triado_em TIMESTAMPTZ`).catch(() => {});
+    await db.query(`ALTER TABLE publicacoes ADD COLUMN IF NOT EXISTS triado_por UUID REFERENCES usuarios(id)`).catch(() => {});
+    await db.query(`ALTER TABLE publicacoes DROP CONSTRAINT IF EXISTS publicacoes_triagem_status_check`).catch(() => {});
+    await db.query(`ALTER TABLE publicacoes ADD CONSTRAINT publicacoes_triagem_status_check CHECK (triagem_status IN ('pendente','sem_prazo','irrelevante'))`).catch(() => {});
     await db.query(`CREATE INDEX IF NOT EXISTS idx_publicacoes_lido ON publicacoes (lido, data_disponibilizacao DESC)`).catch(() => {});
     await db.query(`CREATE INDEX IF NOT EXISTS idx_publicacoes_processo ON publicacoes (processo_id)`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_publicacoes_triagem ON publicacoes (triagem_status, data_disponibilizacao DESC) WHERE cancelada = false`).catch(() => {});
 
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS publicacao_id BIGINT REFERENCES publicacoes(id) ON DELETE SET NULL`).catch(() => {});
     // Uma tarefa de prazo por publicação — dá alvo real ao ON CONFLICT DO NOTHING das rotas de publicações
@@ -275,6 +284,42 @@ async function iniciar() {
       .catch(e => console.warn('[Migration] uq_tarefas_publicacao (há duplicatas existentes?):', e.message));
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS calendar_event_id TEXT`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS observacao TEXT`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tarefas_prazo_publicacao ON tarefas (status, prazo_data) WHERE publicacao_id IS NOT NULL`).catch(() => {});
+
+    // Prazos de publicação precisam de dono para aparecerem no fluxo da equipe.
+    await db.query(`
+      UPDATE tarefas t
+         SET atribuido_a = p.master_responsavel_id
+        FROM processos p
+       WHERE t.processo_id = p.id
+         AND t.publicacao_id IS NOT NULL
+         AND t.atribuido_a IS NULL
+         AND p.master_responsavel_id IS NOT NULL
+         AND t.status NOT IN ('concluida','cancelada')
+    `).catch(e => console.warn('[Migration] Responsáveis dos prazos de publicação:', e.message));
+
+    // Remove da fila operacional falsos positivos automáticos anteriores à publicação
+    // ou mais de 180 dias depois dela. A publicação volta para a triagem manual.
+    const prazosImplausiveis = await db.query(`
+      UPDATE tarefas t
+         SET status = 'cancelada',
+             justificativa_cancelamento = COALESCE(t.justificativa_cancelamento, 'Prazo automático implausível — revisar publicação')
+        FROM publicacoes p
+       WHERE t.publicacao_id = p.id
+         AND t.validado_por IS NULL
+         AND t.status NOT IN ('concluida','cancelada')
+         AND (t.prazo_data < p.data_disponibilizacao OR t.prazo_data > p.data_disponibilizacao + 180)
+      RETURNING t.calendar_event_id
+    `).catch(e => {
+      console.warn('[Migration] Limpeza de prazos implausíveis:', e.message);
+      return [];
+    });
+    if (prazosImplausiveis.some(p => p.calendar_event_id)) {
+      const { deletarEventoCalendar } = await import('./services/calendar/index.js');
+      await Promise.allSettled(
+        prazosImplausiveis.filter(p => p.calendar_event_id).map(p => deletarEventoCalendar(p.calendar_event_id))
+      );
+    }
 
     // Fluxo de assinatura de peças (A prepara/junta no PJe → B confere e assina)
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS assinado_por UUID REFERENCES usuarios(id)`).catch(() => {});
