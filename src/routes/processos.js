@@ -681,7 +681,7 @@ processosRouter.patch('/:id/situacao', async (req, res, next) => {
 
   const campos  = ['situacao_atual','etapa_atual','localizacao_processual','tipo_requisicao',
                    'status_rpv','status_precatorio','status_alvara','valor_homologado','urgente',
-                   'data_conclusao_bloqueio','data_limite_pagamento'];
+                   'data_conclusao_bloqueio','data_limite_pagamento','classificacao'];
   // Colunas DATE/NUMERIC não aceitam string vazia — o frontend manda '' para "campo limpo".
   const camposVazioViraNull = new Set(['valor_homologado', 'data_conclusao_bloqueio', 'data_limite_pagamento']);
   const updates = [];
