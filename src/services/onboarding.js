@@ -1,18 +1,9 @@
 import { db } from '../db/index.js';
 import { cpfValido } from '../utils/cpf.js';
 import { uuidValido } from '../utils/validacao.js';
-import { somarDiasUteis } from '../utils/diasUteis.js';
+import { somarDiasUteis, dataCalendarioValida } from '../utils/diasUteis.js';
 import { criarPastaCliente, criarSubpasta } from './drive/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
-
-const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function dataCalendarioValida(valor) {
-  if (!DATA_RE.test(String(valor || ''))) return false;
-  const [ano, mes, dia] = String(valor).split('-').map(Number);
-  const data = new Date(Date.UTC(ano, mes - 1, dia));
-  return data.getUTCFullYear() === ano && data.getUTCMonth() === mes - 1 && data.getUTCDate() === dia;
-}
 
 function numeroPercentual(valor, padrao = 20) {
   const n = Number(valor);

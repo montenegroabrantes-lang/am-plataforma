@@ -4,6 +4,7 @@ import { apenasMaster } from '../middleware/auth.js';
 import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
 import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
+import { dataCalendarioValida } from '../utils/diasUteis.js';
 
 export const tarefasRouter = Router();
 
@@ -212,7 +213,7 @@ tarefasRouter.post('/', apenasMaster, async (req, res) => {
   if (atribuido_a && !uuidValido(atribuido_a)) {
     return res.status(400).json({ ok: false, erro: 'Responsável inválido.' });
   }
-  if (prazo_data && !/^\d{4}-\d{2}-\d{2}$/.test(prazo_data)) {
+  if (prazo_data && !dataCalendarioValida(prazo_data)) {
     return res.status(400).json({ ok: false, erro: 'Prazo inválido.' });
   }
   for (const [valor, rotulo] of [[processo_id,'Processo'],[cliente_id,'Cliente'],[cliente_produto_id,'Produto do cliente'],[assinante_sugerido,'Assinante']]) {
@@ -268,7 +269,7 @@ tarefasRouter.patch('/lote', apenasMaster, async (req, res) => {
   if (atribuido_a && !uuidValido(atribuido_a)) {
     return res.status(400).json({ ok: false, erro: 'Responsável inválido.' });
   }
-  if (prazo_data && !/^\d{4}-\d{2}-\d{2}$/.test(prazo_data)) {
+  if (prazo_data && !dataCalendarioValida(prazo_data)) {
     return res.status(400).json({ ok: false, erro: 'Prazo inválido.' });
   }
   if (atribuido_a) {
@@ -328,6 +329,7 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
   if (tarefa.status === 'concluida') return res.status(409).json({ ok: false, erro: 'Tarefa já concluída.' });
   if (tarefa.tipo !== 'protocolar') return res.status(400).json({ ok: false, erro: 'Esta tarefa não é do tipo protocolar.' });
   if (tarefa.status === 'bloqueada') return res.status(409).json({ ok: false, erro: 'Conclua primeiro o cadastro do cliente.' });
+  if (tarefa.precisa_triagem) return res.status(409).json({ ok: false, erro: 'Confirme a contratação, o responsável e o prazo antes de protocolar.' });
   if (req.user.perfil !== 'master' && tarefa.atribuido_a !== req.user.id) {
     return res.status(403).json({ ok: false, erro: 'Você não é o responsável por esta tarefa.' });
   }
@@ -421,10 +423,21 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
 // PATCH /api/tarefas/:id/responsavel — troca responsável e prazo (Master)
 tarefasRouter.patch('/:id/responsavel', apenasMaster, async (req, res) => {
   const { atribuido_a, prazo_data } = req.body;
+  if (atribuido_a && !uuidValido(atribuido_a)) return res.status(400).json({ ok: false, erro: 'Responsável inválido.' });
+  if (prazo_data && !dataCalendarioValida(prazo_data)) return res.status(400).json({ ok: false, erro: 'Prazo inválido.' });
+  if (atribuido_a) {
+    const responsavelAtivo = await db.queryOne(`SELECT id FROM usuarios WHERE id=$1 AND ativo=true`, [atribuido_a]);
+    if (!responsavelAtivo) return res.status(400).json({ ok: false, erro: 'O responsável selecionado não está ativo.' });
+  }
   const antes = await db.queryOne(`SELECT atribuido_a,prazo_data FROM tarefas WHERE id=$1`, [req.params.id]);
   if (!antes) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
   const [tarefa] = await db.query(
-    `UPDATE tarefas SET atribuido_a = $1, prazo_data = COALESCE($2::date, prazo_data) WHERE id = $3 RETURNING *`,
+    `UPDATE tarefas SET atribuido_a = $1, prazo_data = COALESCE($2::date, prazo_data),
+       precisa_triagem = CASE
+         WHEN $1::uuid IS NOT NULL AND COALESCE($2::date, prazo_data) IS NOT NULL THEN false
+         ELSE precisa_triagem
+       END
+     WHERE id = $3 RETURNING *`,
     [atribuido_a || null, prazo_data || null, req.params.id]
   );
 
