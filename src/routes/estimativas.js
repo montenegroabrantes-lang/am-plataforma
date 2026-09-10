@@ -24,6 +24,8 @@ const semConfig = res => res.status(503).json({
   ok: false, erro: 'Integração com a Camila não configurada (CAMILA_API_URL / CAMILA_API_KEY).',
 });
 
+const TIMEOUT_CALCULADORA_MANUAL_MS = 90_000;
+
 // Controles comerciais: leitura autenticada, alterações reservadas ao perfil master.
 for(const [method,local,remote] of [
   ['get','/dashboard','/api/dashboard-leads'],
@@ -62,6 +64,47 @@ estimativasRouter.get('/', async (req, res) => {
     res.json(data);
   } catch (err) {
     res.status(502).json({ ok: false, erro: `Camila indisponível: ${err.response?.status || err.message}` });
+  }
+});
+
+// POST /api/estimativas/manual — Master cadastra uma simulação interna para revisão.
+// A busca de candidatos na Camila consulta fontes externas e pode levar mais que o timeout
+// padrão do proxy. Este endpoint apenas cria a pendência; o envio continua dependendo da
+// aprovação na tela de Estimativas.
+estimativasRouter.post('/manual', apenasMaster, async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+
+  const { nome, telefone, cargo, orgao, inicio, fim, autorizacao_contato } = req.body || {};
+  const criadoPor = req.user?.nome || req.user?.email || req.user?.id;
+
+  try {
+    const resposta = await api.post('/api/estimativas/manual', {
+      nome,
+      telefone,
+      cargo,
+      orgao,
+      inicio,
+      fim,
+      autorizacao_contato,
+      criado_por: criadoPor,
+    }, { timeout: TIMEOUT_CALCULADORA_MANUAL_MS });
+
+    res.status(resposta.status).json(resposta.data);
+  } catch (err) {
+    if (err.response) {
+      return res.status(err.response.status).json(
+        err.response.data || { ok: false, erro: 'A Camila recusou a criação da estimativa.' }
+      );
+    }
+
+    const expirou = err.code === 'ECONNABORTED' || err.code === 'ETIMEDOUT';
+    res.status(expirou ? 504 : 502).json({
+      ok: false,
+      erro: expirou
+        ? 'A busca de candidatos excedeu o tempo limite. Tente novamente.'
+        : 'Não foi possível criar a estimativa na Camila.',
+    });
   }
 });
 
@@ -145,6 +188,27 @@ estimativasRouter.post('/:id/aprovar', apenasMaster, async (req, res) => {
     res.json(data);
   } catch (err) {
     res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
+  }
+});
+
+// POST /api/estimativas/:id/retomar-entrega — Master devolve à fila uma entrega interrompida.
+estimativasRouter.post('/:id/retomar-entrega', apenasMaster, async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+
+  try {
+    const resposta = await api.post(`/api/estimativas/${encodeURIComponent(req.params.id)}/retomar-entrega`, {
+      ...req.body,
+      registradoPor: req.user?.nome || req.user?.email || req.user?.id,
+    });
+    res.status(resposta.status).json(resposta.data);
+  } catch (err) {
+    if (err.response) {
+      return res.status(err.response.status).json(
+        err.response.data || { ok: false, erro: 'A Camila recusou a retomada da entrega.' }
+      );
+    }
+    res.status(502).json({ ok: false, erro: 'Não foi possível retomar a entrega na Camila.' });
   }
 });
 
