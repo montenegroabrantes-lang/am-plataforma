@@ -3,6 +3,7 @@ import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
 import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
+import { registrarAuditoria } from '../middleware/auditoria.js';
 
 export const tarefasRouter = Router();
 
@@ -14,11 +15,49 @@ tarefasRouter.param('id', (req, res, next, id) => {
 
 // GET /api/tarefas — lista tarefas do usuário (ou todas para Master)
 tarefasRouter.get('/', async (req, res) => {
-  const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, prazo_de, prazo_ate, concluida_de, concluida_ate, tipo, processo_id, page, limite } = req.query;
+  const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, prazo_de, prazo_ate,
+          concluida_de, concluida_ate, tipo, processo_id, fila, busca, page, limite } = req.query;
   const { pagina: paginaSegura, limite: limiteSeguro, offset } = paginacaoSegura(page, limite || 100);
 
   const params = [];
   const condicoes = ["t.status NOT IN ('cancelada')"];
+
+  const filas = {
+    minha: () => {
+      params.push(req.user.id);
+      condicoes.push(`t.atribuido_a=$${params.length}`);
+      condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`);
+      condicoes.push(`t.precisa_triagem=false`);
+    },
+    equipe: () => {
+      condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`);
+      condicoes.push(`t.precisa_triagem=false`);
+    },
+    onboarding: () => {
+      condicoes.push(`t.onboarding_id IS NOT NULL`);
+      condicoes.push(`t.status NOT IN ('concluida','cancelada')`);
+    },
+    protocolos: () => {
+      condicoes.push(`t.tipo='protocolar'`);
+      condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`);
+      condicoes.push(`t.precisa_triagem=false`);
+    },
+    validacao: () => {
+      condicoes.push(`(t.status='aguardando_validacao' OR t.tipo='assinatura')`);
+      condicoes.push(`t.status NOT IN ('concluida','cancelada')`);
+    },
+    triagem: () => {
+      condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`);
+      condicoes.push(`(t.precisa_triagem=true OR t.atribuido_a IS NULL OR t.prazo_data IS NULL)`);
+    },
+    prazos: () => {
+      condicoes.push(`t.tipo IN ('prazo','prazo_pagamento')`);
+      condicoes.push(`t.status NOT IN ('concluida','cancelada')`);
+    },
+    concluida: () => condicoes.push(`t.status='concluida'`),
+  };
+  if (fila && filas[fila]) filas[fila]();
+  else if (fila) return res.status(400).json({ ok: false, erro: 'Fila de tarefas inválida.' });
 
   if (prazo_dias !== undefined) {
     const dias = Number(prazo_dias);
@@ -28,12 +67,14 @@ tarefasRouter.get('/', async (req, res) => {
       condicoes.push(`t.prazo_data BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '${dias} days'`);
     }
     condicoes.push(`t.status NOT IN ('concluida','cancelada')`);
-  } else if (status) {
+  } else if (status && status !== 'abertas') {
     params.push(status); condicoes.push(`t.status = $${params.length}`);
+  } else if (status === 'abertas' && !fila) {
+    condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`);
   }
   if (processo_id) { params.push(processo_id); condicoes.push(`t.processo_id = $${params.length}`); }
   if (tipo)      { params.push(tipo);     condicoes.push(`t.tipo = $${params.length}`); }
-  else if (!processo_id) condicoes.push(`t.publicacao_id IS NULL`); // prazos de publicação só aparecem na aba própria (tipo=prazo) ou no detalhe do processo
+  else if (!processo_id && !fila) condicoes.push(`t.publicacao_id IS NULL`); // compatibilidade com a tela antiga
   if (prazo_de)  { params.push(prazo_de); condicoes.push(`t.prazo_data >= $${params.length}::date`); }
   if (prazo_ate) { params.push(prazo_ate); condicoes.push(`t.prazo_data <= $${params.length}::date`); }
   // Triagem de concluídas por período (concluida_em é TIMESTAMPTZ; ::date trunca para dia de calendário)
@@ -51,27 +92,46 @@ tarefasRouter.get('/', async (req, res) => {
       END
     ) = $${params.length}`);
   }
-  if (cliente_id)  { params.push(cliente_id);  condicoes.push(`cl.id = $${params.length}`); }
-  if (produto_id)  { params.push(produto_id);  condicoes.push(`pr.id = $${params.length}`); }
+  if (cliente_id)  { params.push(cliente_id);  condicoes.push(`COALESCE(cl.id,tc.id,oc.id,pc.id) = $${params.length}`); }
+  if (produto_id)  { params.push(produto_id);  condicoes.push(`COALESCE(pr.id,opr.id) = $${params.length}`); }
   if (atribuido_a) { params.push(atribuido_a); condicoes.push(`t.atribuido_a = $${params.length}`); }
+  if (busca?.trim()) {
+    params.push(`%${busca.trim()}%`);
+    condicoes.push(`(t.descricao ILIKE $${params.length} OR t.instrucao ILIKE $${params.length}
+      OR COALESCE(cl.nome,tc.nome,oc.nome,pc.nome) ILIKE $${params.length}
+      OR COALESCE(p.numero,pub.numero_processo,'') ILIKE $${params.length})`);
+  }
 
   // Não-master só vê as próprias tarefas
   // Master vê tudo, inclusive tarefas de prazo sem atribuição (geradas por publicações)
-  if (req.user.perfil !== 'master') {
+  if (req.user.perfil !== 'master' && fila !== 'minha') {
     params.push(req.user.id);
     condicoes.push(`(t.atribuido_a = $${params.length} OR t.validado_por = $${params.length})`);
   }
+
+  const joins = `
+     LEFT JOIN processos p ON p.id=t.processo_id
+     LEFT JOIN clientes pc ON pc.id=p.cliente_id
+     LEFT JOIN publicacoes pub ON pub.id=t.publicacao_id
+     LEFT JOIN usuarios u ON u.id=t.atribuido_a
+     LEFT JOIN usuarios m ON m.id=t.validado_por
+     LEFT JOIN usuarios ass ON ass.id=t.assinado_por
+     LEFT JOIN usuarios sug ON sug.id=t.assinante_sugerido
+     LEFT JOIN tarefas origem ON origem.id=t.tarefa_origem_id
+     LEFT JOIN cliente_produtos cp ON cp.id=t.cliente_produto_id
+     LEFT JOIN clientes cl ON cl.id=cp.cliente_id
+     LEFT JOIN produtos pr ON pr.id=cp.produto_id
+     LEFT JOIN clientes tc ON tc.id=t.cliente_id
+     LEFT JOIN onboardings_contrato ob ON ob.id=t.onboarding_id
+     LEFT JOIN clientes oc ON oc.id=ob.cliente_id
+     LEFT JOIN onboarding_produtos op ON op.id=t.onboarding_produto_id
+     LEFT JOIN produtos opr ON opr.id=op.produto_id`;
 
   // COUNT antes de adicionar LIMIT/OFFSET
   const [{ total }] = await db.query(
     `SELECT COUNT(*) AS total
      FROM tarefas t
-     LEFT JOIN processos p  ON p.id = t.processo_id
-     LEFT JOIN usuarios u   ON u.id = t.atribuido_a
-     LEFT JOIN usuarios m   ON m.id = t.validado_por
-     LEFT JOIN cliente_produtos cp ON cp.id = t.cliente_produto_id
-     LEFT JOIN clientes cl  ON cl.id = cp.cliente_id
-     LEFT JOIN produtos pr  ON pr.id = cp.produto_id
+     ${joins}
      WHERE ${condicoes.join(' AND ')}`,
     params
   );
@@ -82,8 +142,11 @@ tarefasRouter.get('/', async (req, res) => {
     `SELECT t.*, COALESCE(p.numero, pub.numero_processo) AS processo_numero, COALESCE(p.tribunal, pub.tribunal) AS tribunal,
             u.nome AS atribuido_nome, m.nome AS validador_nome, ass.nome AS assinado_nome,
             sug.nome AS assinante_sugerido_nome, origem.descricao AS origem_descricao,
-            cl.id AS cliente_id, cl.nome AS cliente_nome, cl.cpf AS cliente_cpf,
-            pr.id AS produto_id, pr.nome AS produto_nome,
+            COALESCE(cl.id,tc.id,oc.id,pc.id) AS cliente_id,
+            COALESCE(cl.nome,tc.nome,oc.nome,pc.nome,ob.nome) AS cliente_nome,
+            COALESCE(cl.cpf,tc.cpf,oc.cpf,pc.cpf) AS cliente_cpf,
+            COALESCE(pr.id,opr.id) AS produto_id, COALESCE(pr.nome,opr.nome) AS produto_nome,
+            ob.status AS onboarding_status,
             -- Urgência recalculada pela proximidade real do prazo (não fica congelada no valor da criação)
             CASE
               WHEN t.prazo_data IS NULL THEN t.urgencia
@@ -94,18 +157,11 @@ tarefasRouter.get('/', async (req, res) => {
               ELSE 'BAIXO'
             END AS urgencia_efetiva
      FROM tarefas t
-     LEFT JOIN processos p    ON p.id = t.processo_id
-     LEFT JOIN publicacoes pub ON pub.id = t.publicacao_id
-     LEFT JOIN usuarios u   ON u.id = t.atribuido_a
-     LEFT JOIN usuarios m   ON m.id = t.validado_por
-     LEFT JOIN usuarios ass ON ass.id = t.assinado_por
-     LEFT JOIN usuarios sug ON sug.id = t.assinante_sugerido
-     LEFT JOIN tarefas origem ON origem.id = t.tarefa_origem_id
-     LEFT JOIN cliente_produtos cp ON cp.id = t.cliente_produto_id
-     LEFT JOIN clientes cl  ON cl.id = cp.cliente_id
-     LEFT JOIN produtos pr  ON pr.id = cp.produto_id
+     ${joins}
      WHERE ${condicoes.join(' AND ')}
      ORDER BY
+       CASE WHEN t.precisa_triagem THEN 1 ELSE 0 END,
+       CASE WHEN t.prazo_data < CURRENT_DATE AND t.status NOT IN ('concluida','cancelada') THEN 0 ELSE 1 END,
        CASE
          WHEN t.prazo_data IS NULL OR t.status IN ('concluida','cancelada') THEN
            CASE t.urgencia WHEN 'CRITICO' THEN 1 WHEN 'ALTO' THEN 2 WHEN 'MEDIO' THEN 3 ELSE 4 END
@@ -114,7 +170,8 @@ tarefasRouter.get('/', async (req, res) => {
          WHEN t.prazo_data - CURRENT_DATE <= 10 THEN 3
          ELSE 4
        END,
-       t.prazo_data ASC NULLS LAST
+       t.prazo_data ASC NULLS LAST,
+       t.criado_em DESC
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );
@@ -122,20 +179,56 @@ tarefasRouter.get('/', async (req, res) => {
   res.json({ ok: true, tarefas: rows, total: Number(total), page: paginaSegura, limite: limiteSeguro });
 });
 
+// GET /api/tarefas/resumo — números pequenos para o cockpit, sempre respeitando o perfil.
+tarefasRouter.get('/resumo', async (req, res) => {
+  const params = [];
+  let escopo = '';
+  if (req.user.perfil !== 'master') {
+    params.push(req.user.id);
+    escopo = `AND (atribuido_a=$1 OR validado_por=$1)`;
+  }
+  const resumo = await db.queryOne(
+    `SELECT
+       COUNT(*) FILTER (WHERE status NOT IN ('concluida','cancelada','bloqueada') AND precisa_triagem=false)::int AS abertas,
+       COUNT(*) FILTER (WHERE status NOT IN ('concluida','cancelada','bloqueada') AND precisa_triagem=false AND atribuido_a=$${params.length + 1})::int AS minhas,
+       COUNT(*) FILTER (WHERE status NOT IN ('concluida','cancelada','bloqueada') AND prazo_data<CURRENT_DATE)::int AS atrasadas,
+       COUNT(*) FILTER (WHERE status NOT IN ('concluida','cancelada','bloqueada') AND prazo_data=CURRENT_DATE)::int AS hoje,
+       COUNT(*) FILTER (WHERE status NOT IN ('concluida','cancelada','bloqueada') AND (precisa_triagem OR atribuido_a IS NULL OR prazo_data IS NULL))::int AS triagem,
+       COUNT(*) FILTER (WHERE status NOT IN ('concluida','cancelada') AND onboarding_id IS NOT NULL)::int AS onboarding,
+       COUNT(*) FILTER (WHERE status='aguardando_validacao' OR (tipo='assinatura' AND status NOT IN ('concluida','cancelada')))::int AS validacao
+     FROM tarefas WHERE 1=1 ${escopo}`,
+    [...params, req.user.id]
+  );
+  res.json({ ok: true, resumo });
+});
+
 // POST /api/tarefas — cria tarefa (Master atribui ao Junior)
 tarefasRouter.post('/', apenasMaster, async (req, res) => {
-  const { processo_id, cliente_produto_id, tipo, subtipo, descricao, instrucao, atribuido_a, urgencia, prazo_data, assinante_sugerido } = req.body;
+  const { processo_id, cliente_id, cliente_produto_id, tipo, subtipo, descricao, instrucao, atribuido_a, urgencia, prazo_data, assinante_sugerido } = req.body;
 
   if (!tipo || !descricao) {
     return res.status(400).json({ ok: false, erro: 'tipo e descricao são obrigatórios.' });
   }
+  if (atribuido_a && !uuidValido(atribuido_a)) {
+    return res.status(400).json({ ok: false, erro: 'Responsável inválido.' });
+  }
+  if (prazo_data && !/^\d{4}-\d{2}-\d{2}$/.test(prazo_data)) {
+    return res.status(400).json({ ok: false, erro: 'Prazo inválido.' });
+  }
+  for (const [valor, rotulo] of [[processo_id,'Processo'],[cliente_id,'Cliente'],[cliente_produto_id,'Produto do cliente'],[assinante_sugerido,'Assinante']]) {
+    if (valor && !uuidValido(valor)) return res.status(400).json({ ok: false, erro: `${rotulo} inválido.` });
+  }
+  if (atribuido_a) {
+    const responsavelAtivo = await db.queryOne(`SELECT id FROM usuarios WHERE id=$1 AND ativo=true`, [atribuido_a]);
+    if (!responsavelAtivo) return res.status(400).json({ ok: false, erro: 'O responsável selecionado não está ativo.' });
+  }
 
   const [nova] = await db.query(
-    `INSERT INTO tarefas (processo_id, cliente_produto_id, tipo, subtipo, descricao, instrucao, atribuido_a, validado_por, urgencia, prazo_data, assinante_sugerido)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    `INSERT INTO tarefas (processo_id, cliente_id, cliente_produto_id, tipo, subtipo, descricao, instrucao, atribuido_a, validado_por, urgencia, prazo_data, assinante_sugerido)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
      RETURNING *`,
     [
-      processo_id || null, cliente_produto_id || null, tipo, subtipo || null, descricao, instrucao || null,
+      processo_id || null, cliente_id || null, cliente_produto_id || null, tipo, subtipo || null, descricao, instrucao || null,
       atribuido_a || null, req.user.id,
       urgencia || 'MEDIO', prazo_data || null, assinante_sugerido || null,
     ]
@@ -158,6 +251,56 @@ tarefasRouter.post('/', apenasMaster, async (req, res) => {
   }
 
   res.status(201).json({ ok: true, tarefa: nova });
+});
+
+// PATCH /api/tarefas/lote — organiza a triagem sem apagar histórico.
+tarefasRouter.patch('/lote', apenasMaster, async (req, res) => {
+  const { ids, atribuido_a, prazo_data, precisa_triagem, status, justificativa } = req.body || {};
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 200 || ids.some(id => !uuidValido(id))) {
+    return res.status(400).json({ ok: false, erro: 'Selecione de 1 a 200 tarefas válidas.' });
+  }
+  if (status && !['pendente','cancelada'].includes(status)) {
+    return res.status(400).json({ ok: false, erro: 'Ação em lote inválida.' });
+  }
+  if (status === 'cancelada' && !justificativa?.trim()) {
+    return res.status(400).json({ ok: false, erro: 'Informe a justificativa do cancelamento.' });
+  }
+  if (atribuido_a && !uuidValido(atribuido_a)) {
+    return res.status(400).json({ ok: false, erro: 'Responsável inválido.' });
+  }
+  if (prazo_data && !/^\d{4}-\d{2}-\d{2}$/.test(prazo_data)) {
+    return res.status(400).json({ ok: false, erro: 'Prazo inválido.' });
+  }
+  if (atribuido_a) {
+    const responsavelAtivo = await db.queryOne(`SELECT id FROM usuarios WHERE id=$1 AND ativo=true`, [atribuido_a]);
+    if (!responsavelAtivo) return res.status(400).json({ ok: false, erro: 'O responsável selecionado não está ativo.' });
+  }
+
+  const updates = [];
+  const params = [];
+  if (atribuido_a !== undefined) { params.push(atribuido_a || null); updates.push(`atribuido_a=$${params.length}`); }
+  if (prazo_data !== undefined) { params.push(prazo_data || null); updates.push(`prazo_data=$${params.length}::date`); }
+  if (precisa_triagem !== undefined) { params.push(Boolean(precisa_triagem)); updates.push(`precisa_triagem=$${params.length}`); }
+  if (status) { params.push(status); updates.push(`status=$${params.length}`); }
+  if (status === 'cancelada') {
+    params.push(justificativa.trim());
+    updates.push(`justificativa_cancelamento=$${params.length}`);
+  }
+  if (!updates.length) return res.status(400).json({ ok: false, erro: 'Nenhuma alteração informada.' });
+
+  params.push(ids);
+  const result = await db.query(
+    `UPDATE tarefas SET ${updates.join(', ')}
+      WHERE id=ANY($${params.length}::uuid[]) AND status NOT IN ('concluida','cancelada','bloqueada')
+      RETURNING id`,
+    params
+  );
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'editar_lote', entidade: 'tarefa',
+    valorDepois: { ids: result.map(r => r.id), atribuido_a, prazo_data, precisa_triagem, status, justificativa },
+    ip: req._ip,
+  });
+  res.json({ ok: true, atualizadas: result.length });
 });
 
 // PATCH /api/tarefas/:id/concluir-com-numero — conclui tarefa de protocolo inserindo número CNJ
@@ -184,6 +327,10 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
   if (!tarefa) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
   if (tarefa.status === 'concluida') return res.status(409).json({ ok: false, erro: 'Tarefa já concluída.' });
   if (tarefa.tipo !== 'protocolar') return res.status(400).json({ ok: false, erro: 'Esta tarefa não é do tipo protocolar.' });
+  if (tarefa.status === 'bloqueada') return res.status(409).json({ ok: false, erro: 'Conclua primeiro o cadastro do cliente.' });
+  if (req.user.perfil !== 'master' && tarefa.atribuido_a !== req.user.id) {
+    return res.status(403).json({ ok: false, erro: 'Você não é o responsável por esta tarefa.' });
+  }
 
   // Se vinculo_id fornecido, usa polo_passivo daquele vínculo
   if (vinculo_id) {
@@ -232,6 +379,21 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
       [numeroLimpo, processoId, req.params.id]
     );
 
+    if (tarefa.onboarding_id) {
+      const restantes = await pgClient.query(
+        `SELECT COUNT(*)::int total FROM tarefas
+          WHERE onboarding_id=$1 AND tipo='protocolar' AND id<>$2
+            AND status NOT IN ('concluida','cancelada')`,
+        [tarefa.onboarding_id, req.params.id]
+      );
+      if (restantes.rows[0].total === 0) {
+        await pgClient.query(
+          `UPDATE onboardings_contrato SET status='concluido', atualizado_em=NOW() WHERE id=$1`,
+          [tarefa.onboarding_id]
+        );
+      }
+    }
+
     await pgClient.query('COMMIT');
   } catch (e) {
     await pgClient.query('ROLLBACK');
@@ -259,6 +421,8 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
 // PATCH /api/tarefas/:id/responsavel — troca responsável e prazo (Master)
 tarefasRouter.patch('/:id/responsavel', apenasMaster, async (req, res) => {
   const { atribuido_a, prazo_data } = req.body;
+  const antes = await db.queryOne(`SELECT atribuido_a,prazo_data FROM tarefas WHERE id=$1`, [req.params.id]);
+  if (!antes) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
   const [tarefa] = await db.query(
     `UPDATE tarefas SET atribuido_a = $1, prazo_data = COALESCE($2::date, prazo_data) WHERE id = $3 RETURNING *`,
     [atribuido_a || null, prazo_data || null, req.params.id]
@@ -286,6 +450,11 @@ tarefasRouter.patch('/:id/responsavel', apenasMaster, async (req, res) => {
     }
   }
 
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'atribuir', entidade: 'tarefa', entidadeId: req.params.id,
+    valorAntes: antes, valorDepois: { atribuido_a: tarefa.atribuido_a, prazo_data: tarefa.prazo_data }, ip: req._ip,
+  });
+
   res.json({ ok: true });
 });
 
@@ -301,6 +470,10 @@ tarefasRouter.patch('/:id/observacao', async (req, res) => {
     `UPDATE tarefas SET observacao = $1 WHERE id = $2`,
     [observacao || null, req.params.id]
   );
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'editar_observacao', entidade: 'tarefa', entidadeId: req.params.id,
+    valorDepois: { observacao: observacao || null }, ip: req._ip,
+  });
   res.json({ ok: true });
 });
 
@@ -323,6 +496,23 @@ tarefasRouter.patch('/:id/status', async (req, res, next) => {
 
     if (req.user.perfil !== 'master' && tarefa.atribuido_a !== req.user.id) {
       return res.status(403).json({ ok: false, erro: 'Você não tem acesso a esta tarefa.' });
+    }
+    if (status === 'concluida' && tarefa.tipo === 'protocolar') {
+      return res.status(409).json({ ok: false, erro: 'Conclua o protocolo informando o número CNJ.' });
+    }
+    if (status === 'concluida' && tarefa.tipo === 'cadastro_cliente') {
+      return res.status(409).json({ ok: false, erro: 'Conclua o cadastro pelo formulário do novo contrato.' });
+    }
+
+    const transicoes = {
+      pendente: ['em_execucao','aguardando_validacao','concluida','cancelada'],
+      em_execucao: ['aguardando_validacao','concluida','cancelada'],
+      aguardando_validacao: ['concluida','devolvida','cancelada'],
+      devolvida: ['pendente','em_execucao','concluida','cancelada'],
+      bloqueada: ['pendente','cancelada'],
+    };
+    if (!transicoes[tarefa.status]?.includes(status)) {
+      return res.status(409).json({ ok: false, erro: `A transição de ${tarefa.status} para ${status} não é permitida.` });
     }
 
     if (status === 'cancelada' && !justificativa_cancelamento?.trim()) {
@@ -352,6 +542,12 @@ tarefasRouter.patch('/:id/status', async (req, res, next) => {
         [observacao_devolucao ? `Assinatura devolvida: ${observacao_devolucao}` : 'Assinatura devolvida — revisar.', tarefa.tarefa_origem_id]
       ).catch(err => console.warn('[Tarefas] Falha ao reabrir demanda de origem:', err.message));
     }
+
+    await registrarAuditoria({
+      usuarioId: req.user.id, acao: 'alterar_status', entidade: 'tarefa', entidadeId: req.params.id,
+      valorAntes: { status: tarefa.status },
+      valorDepois: { status, observacao_devolucao, justificativa_cancelamento }, ip: req._ip,
+    });
 
     res.json({ ok: true });
   } catch (err) { next(err); }
@@ -410,6 +606,9 @@ tarefasRouter.patch('/:id/assinar', apenasMaster, async (req, res) => {
   if (tarefa.validado_por === req.user.id) {
     return res.status(403).json({ ok: false, erro: 'Quem enviou a peça não pode assiná-la. Outro usuário deve conferir e assinar.' });
   }
+  if (tarefa.atribuido_a && tarefa.atribuido_a !== req.user.id && !req.user.pode_marcar_restrito) {
+    return res.status(403).json({ ok: false, erro: 'A tarefa foi atribuída a outro assinante.' });
+  }
 
   await db.execute(
     `UPDATE tarefas SET status = 'concluida', assinado_por = $1, assinado_em = NOW(), concluida_em = NOW()
@@ -434,6 +633,11 @@ tarefasRouter.patch('/:id/assinar', apenasMaster, async (req, res) => {
       }
     }
   }
+
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'assinar', entidade: 'tarefa', entidadeId: req.params.id,
+    valorAntes: { status: tarefa.status }, valorDepois: { status: 'concluida', assinado_por: req.user.id }, ip: req._ip,
+  });
 
   res.json({ ok: true });
 });

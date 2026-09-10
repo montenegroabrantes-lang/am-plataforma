@@ -32,6 +32,7 @@ import { webhookRouter }       from './routes/webhook.js';
 import { publicacoesRouter, importarPublicacoesHandler } from './routes/publicacoes.js';
 import { estimativasRouter } from './routes/estimativas.js';
 import { pushTJRouter }      from './routes/pushTJ.js';
+import { onboardingsRouter } from './routes/onboardings.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -127,6 +128,7 @@ app.post('/api/publicacoes/importar', importLimiter, importarPublicacoesHandler)
 app.use('/api/publicacoes',   autenticar, publicacoesRouter);
 app.use('/api/estimativas',   autenticar, estimativasRouter);
 app.use('/api/push-tj',       autenticar, pushTJRouter);
+app.use('/api/onboardings',   autenticar, onboardingsRouter);
 
 // Global error handler — captura erros não tratados nas rotas
 app.use((err, req, res, next) => {
@@ -156,14 +158,13 @@ async function iniciar() {
 
   try {
     await db.query('SELECT 1');
-    dbOk = true;
     dbJaConectouUmaVez = true;
     console.log('[DB] PostgreSQL conectado.');
     await db.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS senha_temporaria BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS data_conclusao_bloqueio DATE`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS justificativa_cancelamento TEXT`).catch(() => {});
-    await db.query(`ALTER TABLE tarefas DROP CONSTRAINT IF EXISTS tarefas_status_check`).catch(() => {});
-    await db.query(`ALTER TABLE tarefas ADD CONSTRAINT tarefas_status_check CHECK (status IN ('pendente','em_execucao','aguardando_validacao','concluida','devolvida','cancelada','nao_verificada'))`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas DROP CONSTRAINT IF EXISTS tarefas_status_check`);
+    await db.query(`ALTER TABLE tarefas ADD CONSTRAINT tarefas_status_check CHECK (status IN ('pendente','em_execucao','aguardando_validacao','concluida','devolvida','cancelada','nao_verificada','bloqueada'))`);
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS periodo_inicio DATE`).catch(() => {});
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS periodo_fim DATE`).catch(() => {});
     await db.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS vinculo_inicio DATE`).catch(() => {});
@@ -333,6 +334,72 @@ async function iniciar() {
     // Diligências de fórum (tipo='diligencia') — subtipo identifica o ato prático a executar
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS subtipo TEXT`).catch(() => {});
 
+    // Onboarding operacional: o fechamento comercial vira um fluxo local, idempotente e
+    // auditável antes de existir CPF/cliente. Protocolo nasce bloqueado e só é liberado
+    // depois do cadastro e da confirmação dos produtos efetivamente contratados.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS onboardings_contrato (
+        id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        camila_contact_id        TEXT NOT NULL UNIQUE,
+        estimativa_id            TEXT,
+        cliente_id               UUID REFERENCES clientes(id) ON DELETE SET NULL,
+        nome                     TEXT,
+        whatsapp                 TEXT,
+        cargo                    TEXT,
+        orgao                    TEXT,
+        valor_fechado            NUMERIC(14,2),
+        contrato_assinado        BOOLEAN NOT NULL DEFAULT false,
+        contrato_data            DATE,
+        status                   TEXT NOT NULL DEFAULT 'cadastro_pendente',
+        responsavel_cadastro_id  UUID REFERENCES usuarios(id),
+        responsavel_protocolo_id UUID REFERENCES usuarios(id),
+        prazo_cadastro           DATE,
+        prazo_protocolo          DATE,
+        registrado_por           UUID REFERENCES usuarios(id),
+        fechado_em               TIMESTAMPTZ,
+        camila_sync_status       TEXT NOT NULL DEFAULT 'pendente',
+        camila_sync_erro         TEXT,
+        drive_sync_status        TEXT NOT NULL DEFAULT 'pendente',
+        drive_sync_erro          TEXT,
+        criado_em                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        atualizado_em            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT onboardings_status_check
+          CHECK (status IN ('cadastro_pendente','protocolo_pendente','concluido','cancelado'))
+      )
+    `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS onboarding_produtos (
+        id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        onboarding_id      UUID NOT NULL REFERENCES onboardings_contrato(id) ON DELETE CASCADE,
+        produto_id         UUID NOT NULL REFERENCES produtos(id),
+        honorarios_pct     NUMERIC(5,2) NOT NULL,
+        cliente_produto_id UUID REFERENCES cliente_produtos(id) ON DELETE SET NULL,
+        criado_em          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (onboarding_id, produto_id)
+      )
+    `);
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS cliente_id UUID REFERENCES clientes(id) ON DELETE SET NULL`);
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS onboarding_id UUID REFERENCES onboardings_contrato(id) ON DELETE SET NULL`);
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS onboarding_produto_id UUID REFERENCES onboarding_produtos(id) ON DELETE SET NULL`);
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS precisa_triagem BOOLEAN NOT NULL DEFAULT false`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tarefas_cliente ON tarefas (cliente_id) WHERE cliente_id IS NOT NULL`);
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tarefas_onboarding ON tarefas (onboarding_id) WHERE onboarding_id IS NOT NULL`);
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_tarefa_cadastro_onboarding ON tarefas (onboarding_id, tipo) WHERE onboarding_id IS NOT NULL AND tipo='cadastro_cliente' AND status NOT IN ('cancelada')`);
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_tarefa_protocolo_onboarding ON tarefas (onboarding_produto_id, tipo) WHERE onboarding_produto_id IS NOT NULL AND tipo='protocolar' AND status NOT IN ('cancelada')`);
+
+    // O acervo legado nasceu da antiga equivalência "elegível = contratado". Ele permanece
+    // íntegro, mas sai da fila operacional até conferência humana; nada é apagado.
+    await db.query(`
+      UPDATE tarefas t SET precisa_triagem=true
+       FROM cliente_produtos cp
+      WHERE t.cliente_produto_id=cp.id AND t.tipo='protocolar'
+        AND t.onboarding_id IS NULL AND t.status NOT IN ('concluida','cancelada')
+        AND (cp.honorarios_pct=0 OR EXISTS (
+          SELECT 1 FROM processos p
+           WHERE p.cliente_id=cp.cliente_id AND p.produto_id=cp.produto_id AND p.status<>'arquivado'
+        ))
+    `).catch(e => console.warn('[Migration] Triagem dos protocolos legados:', e.message));
+
     // Cessão de crédito: cliente (cedente) cede o crédito do processo a um terceiro (cessionário)
     await db.query(`
       CREATE TABLE IF NOT EXISTS cessoes_credito (
@@ -451,6 +518,8 @@ async function iniciar() {
 
     const { recarregarAiConfig } = await import('./config/ai.js');
     await recarregarAiConfig(db);
+    // Só libera as rotas quando o esquema obrigatório estiver inteiramente pronto.
+    dbOk = true;
   } catch (err) {
     console.error('[FATAL] PostgreSQL falhou:', err.stack || err);
     process.exit(1);

@@ -31,7 +31,8 @@ async function enviarLembretesDiarios() {
     const tarefas = await db.query(
       `SELECT t.urgencia, COUNT(*) AS total
        FROM tarefas t
-       WHERE t.status NOT IN ('concluida','cancelada')
+       WHERE t.status NOT IN ('concluida','cancelada','bloqueada')
+         AND COALESCE(t.precisa_triagem,false)=false
          AND t.validado_por = $1
        GROUP BY t.urgencia
        ORDER BY CASE t.urgencia WHEN 'CRITICO' THEN 1 WHEN 'ALTO' THEN 2 WHEN 'MEDIO' THEN 3 ELSE 4 END`,
@@ -72,7 +73,8 @@ async function enviarEscalonamentoVespera() {
      FROM tarefas t
      JOIN usuarios ua ON ua.id = t.atribuido_a
      LEFT JOIN usuarios um ON um.id = t.validado_por
-     WHERE t.status NOT IN ('concluida', 'cancelada', 'devolvida')
+     WHERE t.status NOT IN ('concluida', 'cancelada', 'devolvida', 'bloqueada')
+       AND COALESCE(t.precisa_triagem,false)=false
        AND t.prazo_data IS NOT NULL
        AND (t.prazo_data::date - CURRENT_DATE) IN (0, 1)`
   );

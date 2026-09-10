@@ -43,7 +43,8 @@ relatorioRouter.get('/', async (req, res) => {
     db.query(`
       SELECT urgencia, COUNT(*) AS total
       FROM tarefas
-      WHERE status NOT IN ('concluida') ${fT}
+      WHERE status NOT IN ('concluida','cancelada','bloqueada')
+        AND COALESCE(precisa_triagem,false)=false ${fT}
       GROUP BY urgencia`, params),
 
     // Próximas audiências (30 dias)

@@ -9,6 +9,7 @@ import { verificarElegibilidadeCliente } from '../services/elegibilidade.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { cpfValido } from '../utils/cpf.js';
 import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
+import { somarDiasUteis } from '../utils/diasUteis.js';
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
@@ -120,6 +121,9 @@ clientesRouter.get('/:id', async (req, res) => {
 // POST /api/clientes/:id/criar-tarefas-protocolo
 clientesRouter.post('/:id/criar-tarefas-protocolo', apenasMaster, async (req, res) => {
   const clienteId = req.params.id;
+  const { atribuido_a, prazo_data } = req.body || {};
+  const responsavel = atribuido_a || req.user.id;
+  const prazo = prazo_data || somarDiasUteis(new Date(), 3);
 
   const cliente = await db.queryOne('SELECT id, nome FROM clientes WHERE id = $1', [clienteId]);
   if (!cliente) return res.status(404).json({ ok: false, erro: 'Cliente não encontrado.' });
@@ -155,13 +159,16 @@ clientesRouter.post('/:id/criar-tarefas-protocolo', apenasMaster, async (req, re
       continue;
     }
     const [nova] = await db.query(
-      `INSERT INTO tarefas (cliente_produto_id, tipo, descricao, urgencia, validado_por, status)
-       VALUES ($1, 'protocolar', $2, 'MEDIO', $3, 'pendente')
+      `INSERT INTO tarefas (cliente_id, cliente_produto_id, tipo, descricao, urgencia, validado_por, atribuido_a, prazo_data, status, precisa_triagem)
+       VALUES ($1, $2, 'protocolar', $3, 'ALTO', $4, $5, $6, 'pendente', false)
        RETURNING id`,
       [
+        clienteId,
         tese.cliente_produto_id,
         `Protocolar processo — ${tese.produto_nome} — ${cliente.nome}`,
         req.user.id,
+        responsavel,
+        prazo,
       ]
     );
     criadas.push({ id: nova.id, produto: tese.produto_nome });
@@ -276,14 +283,13 @@ clientesRouter.post('/', async (req, res) => {
       entidadeId: novo.id, valorDepois: novo, ip: req._ip,
     });
 
-    // Verificar elegibilidade e criar tarefas automaticamente em background
-    verificarElegibilidadeCliente(novo.id, req.user.id)
-      .then(({ vinculados, tarefas }) => {
-        if (tarefas > 0) console.log(`[Elegibilidade] ${novo.nome}: ${vinculados} teses vinculadas, ${tarefas} tarefas criadas.`);
-      })
-      .catch(err => console.warn('[Elegibilidade] Erro:', err.message));
-
-    res.status(201).json({ ok: true, cliente: novo });
+    // Compatibilidade é apresentada ao humano como sugestão; nunca vira contratação sozinha.
+    const { sugestoes } = await verificarElegibilidadeCliente(novo.id)
+      .catch(err => {
+        console.warn('[Elegibilidade] Não foi possível gerar sugestões:', err.message);
+        return { sugestoes: [] };
+      });
+    res.status(201).json({ ok: true, cliente: novo, sugestoes });
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ ok: false, erro: 'CPF já cadastrado.' });
     throw e;

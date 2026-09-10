@@ -112,6 +112,47 @@ CREATE TABLE cliente_produtos (
   UNIQUE (cliente_id, produto_id)
 );
 
+-- Fechamento comercial confirmado e seus produtos contratados. O registro existe
+-- antes do CPF/cliente para que cadastro e protocolo possam ser acompanhados sem
+-- transformar uma mera elegibilidade em contratação.
+CREATE TABLE onboardings_contrato (
+  id                       UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  camila_contact_id        TEXT NOT NULL UNIQUE,
+  estimativa_id            TEXT,
+  cliente_id               UUID REFERENCES clientes(id) ON DELETE SET NULL,
+  nome                     TEXT,
+  whatsapp                 TEXT,
+  cargo                    TEXT,
+  orgao                    TEXT,
+  valor_fechado            NUMERIC(14,2),
+  contrato_assinado        BOOLEAN NOT NULL DEFAULT false,
+  contrato_data            DATE,
+  status                   TEXT NOT NULL DEFAULT 'cadastro_pendente'
+                           CHECK (status IN ('cadastro_pendente','protocolo_pendente','concluido','cancelado')),
+  responsavel_cadastro_id  UUID REFERENCES usuarios(id),
+  responsavel_protocolo_id UUID REFERENCES usuarios(id),
+  prazo_cadastro           DATE,
+  prazo_protocolo          DATE,
+  registrado_por           UUID REFERENCES usuarios(id),
+  fechado_em               TIMESTAMPTZ,
+  camila_sync_status       TEXT NOT NULL DEFAULT 'pendente',
+  camila_sync_erro         TEXT,
+  drive_sync_status        TEXT NOT NULL DEFAULT 'pendente',
+  drive_sync_erro          TEXT,
+  criado_em                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  atualizado_em            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE onboarding_produtos (
+  id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  onboarding_id      UUID NOT NULL REFERENCES onboardings_contrato(id) ON DELETE CASCADE,
+  produto_id         UUID NOT NULL REFERENCES produtos(id),
+  honorarios_pct     NUMERIC(5,2) NOT NULL,
+  cliente_produto_id UUID REFERENCES cliente_produtos(id) ON DELETE SET NULL,
+  criado_em          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (onboarding_id, produto_id)
+);
+
 -- ─────────────────────────────────────────────
 --  CREDENCIAIS PJe / eProc (por usuário Master)
 -- ─────────────────────────────────────────────
@@ -193,19 +234,25 @@ CREATE TABLE tarefas (
   id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   processo_id     UUID REFERENCES processos(id),
   movimentacao_id UUID REFERENCES movimentacoes(id),
+  cliente_id      UUID REFERENCES clientes(id) ON DELETE SET NULL,
+  cliente_produto_id UUID REFERENCES cliente_produtos(id) ON DELETE SET NULL,
+  onboarding_id   UUID REFERENCES onboardings_contrato(id) ON DELETE SET NULL,
+  onboarding_produto_id UUID REFERENCES onboarding_produtos(id) ON DELETE SET NULL,
   tipo            TEXT NOT NULL,         -- 'protocolar' | 'ciente' | 'ligar_cliente' | 'audiencia' | 'peticao'
   descricao       TEXT NOT NULL,
   instrucao       TEXT,                  -- instrução ao Junior
   atribuido_a     UUID REFERENCES usuarios(id),    -- Junior
   validado_por    UUID REFERENCES usuarios(id),    -- Master
   status          TEXT NOT NULL DEFAULT 'pendente'
-                  CHECK (status IN ('pendente','em_execucao','aguardando_validacao','concluida','devolvida','nao_verificada')),
+                  CHECK (status IN ('pendente','em_execucao','aguardando_validacao','concluida','devolvida','cancelada','nao_verificada','bloqueada')),
   urgencia        TEXT CHECK (urgencia IN ('CRITICO','ALTO','MEDIO','BAIXO')),
   prazo_data      DATE,
   concluida_em    TIMESTAMPTZ,
   verificada_pje  BOOLEAN,               -- resultado da verificação soberana
   verificada_em   TIMESTAMPTZ,
   observacao_devolucao TEXT,
+  justificativa_cancelamento TEXT,
+  precisa_triagem BOOLEAN NOT NULL DEFAULT false,
   criado_em       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -399,6 +446,12 @@ CREATE INDEX ON movimentacoes (processo_id, data_movimentacao DESC);
 CREATE INDEX ON movimentacoes (diagnostico_urgencia);
 CREATE INDEX ON tarefas (atribuido_a, status);
 CREATE INDEX ON tarefas (prazo_data);
+CREATE INDEX ON tarefas (cliente_id) WHERE cliente_id IS NOT NULL;
+CREATE INDEX ON tarefas (onboarding_id) WHERE onboarding_id IS NOT NULL;
+CREATE UNIQUE INDEX uq_tarefa_cadastro_onboarding ON tarefas (onboarding_id, tipo)
+  WHERE onboarding_id IS NOT NULL AND tipo='cadastro_cliente' AND status NOT IN ('cancelada');
+CREATE UNIQUE INDEX uq_tarefa_protocolo_onboarding ON tarefas (onboarding_produto_id, tipo)
+  WHERE onboarding_produto_id IS NOT NULL AND tipo='protocolar' AND status NOT IN ('cancelada');
 CREATE INDEX ON prazos (data_prazo);
 CREATE INDEX ON leads (etapa);
 CREATE INDEX ON leads (master_responsavel_id);

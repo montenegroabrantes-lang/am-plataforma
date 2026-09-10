@@ -1,10 +1,8 @@
 /**
- * Verifica elegibilidade de clientes para produtos/teses jurídicas
- * e cria automaticamente vínculos + tarefas de protocolo.
+ * Verifica elegibilidade de clientes para produtos/teses jurídicas.
  *
- * Chamado em dois contextos:
- *  1. Após cadastrar/editar um CLIENTE — verifica todos os produtos
- *  2. Após cadastrar/editar um PRODUTO com critérios — verifica todos os clientes
+ * Regra importante: elegibilidade é apenas sugestão. Vínculo contratual e tarefa de
+ * protocolo só podem nascer de confirmação humana, com honorários e responsável.
  */
 import { db } from '../db/index.js';
 
@@ -20,26 +18,26 @@ function corresponde(valor, lista) {
 
 /**
  * Verifica um cliente contra todos os produtos elegíveis.
- * Cria vínculo cliente_produto e tarefa de protocolo se ainda não existirem.
  * @param {string} clienteId
- * @param {string} userId — quem disparou (para validado_por na tarefa)
- * @returns {{ vinculados: number, tarefas: number }}
+ * @returns {{ sugestoes: Array, vinculados: number, tarefas: number }}
  */
-export async function verificarElegibilidadeCliente(clienteId, userId) {
+export async function verificarElegibilidadeCliente(clienteId) {
   const cliente = await db.queryOne(
     'SELECT id, nome, cargo, orgao, vinculo_inicio FROM clientes WHERE id = $1',
     [clienteId]
   );
-  if (!cliente) return { vinculados: 0, tarefas: 0 };
+  if (!cliente) return { sugestoes: [], vinculados: 0, tarefas: 0 };
 
   const produtos = await db.query(
     'SELECT id, nome, cargos_elegiveis, orgaos_elegiveis, intervalo_meses FROM produtos WHERE ativo = true'
   );
 
-  let vinculados = 0;
-  let tarefas = 0;
+  const sugestoes = [];
 
   for (const prod of produtos) {
+    // Produto sem nenhum critério é catálogo manual, não sugestão universal.
+    if ((!prod.cargos_elegiveis || prod.cargos_elegiveis.length === 0) &&
+        (!prod.orgaos_elegiveis || prod.orgaos_elegiveis.length === 0)) continue;
     if (!corresponde(cliente.cargo, prod.cargos_elegiveis)) continue;
     if (!corresponde(cliente.orgao, prod.orgaos_elegiveis)) continue;
 
@@ -50,53 +48,20 @@ export async function verificarElegibilidadeCliente(clienteId, userId) {
        AND p.status NOT IN ('arquivado') LIMIT 1`,
       [clienteId, prod.id]
     );
-    if (processoExistente) continue; // já tem processo — não criar tarefa
-
-    // Criar ou recuperar vínculo cliente_produto
-    let vinculo = await db.queryOne(
-      'SELECT id FROM cliente_produtos WHERE cliente_id = $1 AND produto_id = $2',
-      [clienteId, prod.id]
-    );
-
-    if (!vinculo) {
-      const [novo] = await db.query(
-        `INSERT INTO cliente_produtos (cliente_id, produto_id, honorarios_pct)
-         VALUES ($1, $2, 0) RETURNING id`,
-        [clienteId, prod.id]
-      );
-      vinculo = novo;
-      vinculados++;
-    }
-
-    // Criar tarefa se não houver pendente
-    const tarefaExistente = await db.queryOne(
-      `SELECT id FROM tarefas
-       WHERE cliente_produto_id = $1 AND tipo = 'protocolar'
-       AND status NOT IN ('concluida','cancelada')`,
-      [vinculo.id]
-    );
-    if (tarefaExistente) continue;
-
-    const descricao = gerarDescricaoTarefa(prod, cliente.nome, cliente.vinculo_inicio);
-    await db.execute(
-      `INSERT INTO tarefas (cliente_produto_id, tipo, descricao, urgencia, validado_por, status)
-       VALUES ($1, 'protocolar', $2, 'MEDIO', $3, 'pendente')`,
-      [vinculo.id, descricao, userId]
-    );
-    tarefas++;
+    if (processoExistente) continue;
+    sugestoes.push(prod);
   }
 
-  return { vinculados, tarefas };
+  return { sugestoes, vinculados: 0, tarefas: 0 };
 }
 
 /**
  * Verifica todos os clientes elegíveis para um produto específico.
  * Chamado após criar/editar um produto com critérios de elegibilidade.
  * @param {string} produtoId
- * @param {string} userId
- * @returns {{ vinculados: number, tarefas: number }}
+ * Retorna apenas a quantidade de clientes compatíveis para apoiar configuração.
  */
-export async function verificarElegibilidadeProduto(produtoId, userId) {
+export async function verificarElegibilidadeProduto(produtoId) {
   const prod = await db.queryOne(
     'SELECT id, nome, cargos_elegiveis, orgaos_elegiveis, intervalo_meses FROM produtos WHERE id = $1 AND ativo = true',
     [produtoId]
@@ -113,8 +78,7 @@ export async function verificarElegibilidadeProduto(produtoId, userId) {
     'SELECT id, nome, cargo, orgao, vinculo_inicio FROM clientes WHERE ativo IS NOT FALSE AND vinculo_ativo = true'
   );
 
-  let vinculados = 0;
-  let tarefas = 0;
+  let elegiveis = 0;
 
   for (const cliente of clientes) {
     if (!corresponde(cliente.cargo, prod.cargos_elegiveis)) continue;
@@ -127,48 +91,8 @@ export async function verificarElegibilidadeProduto(produtoId, userId) {
     );
     if (processoExistente) continue;
 
-    let vinculo = await db.queryOne(
-      'SELECT id FROM cliente_produtos WHERE cliente_id = $1 AND produto_id = $2',
-      [cliente.id, prod.id]
-    );
-
-    if (!vinculo) {
-      const [novo] = await db.query(
-        `INSERT INTO cliente_produtos (cliente_id, produto_id, honorarios_pct)
-         VALUES ($1, $2, 0) RETURNING id`,
-        [cliente.id, prod.id]
-      );
-      vinculo = novo;
-      vinculados++;
-    }
-
-    const tarefaExistente = await db.queryOne(
-      `SELECT id FROM tarefas
-       WHERE cliente_produto_id = $1 AND tipo = 'protocolar'
-       AND status NOT IN ('concluida','cancelada')`,
-      [vinculo.id]
-    );
-    if (tarefaExistente) continue;
-
-    const descricao = gerarDescricaoTarefa(prod, cliente.nome, cliente.vinculo_inicio);
-    await db.execute(
-      `INSERT INTO tarefas (cliente_produto_id, tipo, descricao, urgencia, validado_por, status)
-       VALUES ($1, 'protocolar', $2, 'MEDIO', $3, 'pendente')`,
-      [vinculo.id, descricao, userId]
-    );
-    tarefas++;
+    elegiveis++;
   }
 
-  return { vinculados, tarefas };
-}
-
-function gerarDescricaoTarefa(prod, clienteNome, vinculoInicio) {
-  if (prod.intervalo_meses && vinculoInicio) {
-    const inicio = new Date(vinculoInicio);
-    const fim = new Date(vinculoInicio);
-    fim.setMonth(fim.getMonth() + prod.intervalo_meses - 1);
-    const fmt = d => d.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' });
-    return `Protocolar processo — ${prod.nome} — ${clienteNome} | Período a solicitar: ${fmt(inicio)} a ${fmt(fim)}`;
-  }
-  return `Protocolar processo — ${prod.nome} — ${clienteNome}`;
+  return { elegiveis, vinculados: 0, tarefas: 0 };
 }

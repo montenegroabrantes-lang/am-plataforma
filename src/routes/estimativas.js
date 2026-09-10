@@ -6,6 +6,12 @@ import { Router } from 'express';
 import axios from 'axios';
 import { apenasMaster } from '../middleware/auth.js';
 import { db } from '../db/index.js';
+import {
+  criarOnboardingContrato,
+  marcarSincronizacaoCamila,
+  buscarOnboardingPorContato,
+  cancelarOnboardingPendente,
+} from '../services/onboarding.js';
 
 export const estimativasRouter = Router();
 
@@ -151,11 +157,22 @@ estimativasRouter.get('/leads', async (req, res) => {
     if (data?.ok && Array.isArray(data.leads) && data.leads.length) {
       // Uma consulta só, comparação inteira em JS — mais barato que 1 query fuzzy por lead,
       // e a tabela de clientes é pequena o bastante (centenas de linhas) pra isso ser rápido.
-      const clientes = await db.query(`SELECT nome, criado_em FROM clientes WHERE nome IS NOT NULL`).catch(() => []);
+      const clientes = await db.query(`SELECT id, nome, criado_em FROM clientes WHERE nome IS NOT NULL AND ativo=true`).catch(() => []);
+      const contactIds = data.leads.map(l => String(l.contact_id || '')).filter(Boolean);
+      const onboardings = contactIds.length
+        ? await db.query(
+            `SELECT id, camila_contact_id, cliente_id, status, prazo_cadastro, prazo_protocolo,
+                    camila_sync_status, drive_sync_status
+               FROM onboardings_contrato WHERE camila_contact_id = ANY($1::text[])`,
+            [contactIds]
+          ).catch(() => [])
+        : [];
+      const onboardingPorContato = new Map(onboardings.map(o => [o.camila_contact_id, o]));
       for (const lead of data.leads) {
         const encontrado = lead.nome ? encontrarClienteExistente(lead.nome, clientes) : null;
         lead.ja_e_cliente = !!encontrado;
-        lead.cliente_encontrado = encontrado ? { nome: encontrado.nome, criado_em: encontrado.criado_em } : null;
+        lead.cliente_encontrado = encontrado ? { id: encontrado.id, nome: encontrado.nome, criado_em: encontrado.criado_em } : null;
+        lead.onboarding = onboardingPorContato.get(String(lead.contact_id)) || null;
       }
     }
     res.json(data);
@@ -262,9 +279,53 @@ estimativasRouter.patch('/:id/dados', apenasMaster, async (req, res) => {
 estimativasRouter.post('/leads/:contactId/desfecho', apenasMaster, async (req, res) => {
   const api = camila();
   if (!api) return semConfig(res);
+
+  const { onboarding, ...desfecho } = req.body || {};
+
+  // Fechamento é o gatilho do trabalho jurídico. Primeiro registramos localmente de forma
+  // idempotente; a Camila é sincronizada em seguida. Assim uma indisponibilidade externa
+  // não faz o escritório perder o onboarding já confirmado.
+  if (desfecho.desfecho === 'fechado') {
+    let registro;
+    try {
+      registro = await criarOnboardingContrato({
+        contactId: req.params.contactId,
+        lead: {
+          estimativa_id: onboarding?.estimativa_id,
+          nome: onboarding?.nome,
+          telefone: onboarding?.telefone,
+          cargo: onboarding?.cargo,
+          orgao: onboarding?.orgao,
+          valor: desfecho.valorFechado,
+        },
+        onboarding,
+        usuarioId: req.user.id,
+        ip: req._ip,
+      });
+    } catch (err) {
+      return res.status(err.status || 500).json({ ok: false, erro: err.message, detalhes: err.detalhes });
+    }
+
+    try {
+      const { data } = await api.post(`/api/funil-leads/${req.params.contactId}/desfecho`, {
+        ...desfecho,
+        registradoPor: req.user?.nome || req.user?.email || req.user?.id,
+      });
+      await marcarSincronizacaoCamila(registro.id, true);
+      return res.json({ ...data, onboarding: { ...registro, camila_sync_status: 'sincronizado' } });
+    } catch (err) {
+      await marcarSincronizacaoCamila(registro.id, false, err.response?.data?.erro || err.message);
+      return res.status(202).json({
+        ok: true,
+        aviso: 'Onboarding criado. A Camila está indisponível e a sincronização ficou pendente.',
+        onboarding: { ...registro, camila_sync_status: 'erro' },
+      });
+    }
+  }
+
   try {
     const { data } = await api.post(`/api/funil-leads/${req.params.contactId}/desfecho`, {
-      ...req.body,
+      ...desfecho,
       registradoPor: req.user?.nome || req.user?.email || req.user?.id,
     });
     res.json(data);
@@ -278,7 +339,15 @@ estimativasRouter.delete('/leads/:contactId/desfecho', apenasMaster, async (req,
   const api = camila();
   if (!api) return semConfig(res);
   try {
+    const onboarding = await buscarOnboardingPorContato(req.params.contactId);
+    if (onboarding && (onboarding.status !== 'cadastro_pendente' || onboarding.cliente_id)) {
+      return res.status(409).json({
+        ok: false,
+        erro: 'O onboarding já avançou. Revise as tarefas e os vínculos antes de desfazer o fechamento.',
+      });
+    }
     const { data } = await api.delete(`/api/funil-leads/${req.params.contactId}/desfecho`);
+    if (onboarding) await cancelarOnboardingPendente(req.params.contactId, req.user.id, req._ip);
     res.json(data);
   } catch (err) {
     res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });

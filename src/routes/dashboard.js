@@ -118,7 +118,8 @@ dashboardRouter.get('/', async (req, res) => {
     db.query(`
       SELECT t.urgencia, COUNT(*) AS total
       FROM tarefas t
-      WHERE t.status NOT IN ('concluida','nao_verificada') ${filtroT}
+      WHERE t.status NOT IN ('concluida','cancelada','nao_verificada','bloqueada')
+        AND COALESCE(t.precisa_triagem,false)=false ${filtroT}
       GROUP BY t.urgencia
       ORDER BY CASE t.urgencia
         WHEN 'CRITICO' THEN 1 WHEN 'ALTO' THEN 2 WHEN 'MEDIO' THEN 3 ELSE 4 END`),
