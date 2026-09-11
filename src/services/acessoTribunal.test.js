@@ -12,6 +12,15 @@ test('TJPE abre o PJe Cloud no grau correto', () => {
   assert.equal(obterAcessoTribunal({ tribunal: 'TJPE', grau: '2' }).url, 'https://pje.cloud.tjpe.jus.br/2g/');
 });
 
+test('TRF1 abre a instância PJe correspondente ao grau', () => {
+  assert.equal(obterAcessoTribunal({ tribunal: 'TRF1', grau: '1' }).url, 'https://pje1g.trf1.jus.br/pje/');
+  assert.equal(obterAcessoTribunal({ tribunal: 'TRF1', grau: '2' }).url, 'https://pje2g.trf1.jus.br/pje/');
+
+  const direto = obterAcessoTribunal({ tribunal: 'TRF1', grau: '2', pje_id_processo: '987654' });
+  assert.equal(direto.url, 'https://pje2g.trf1.jus.br/pje/Processo/ConsultaProcesso/Detalhe/listAutosDigitais.seam?idProcesso=987654');
+  assert.equal(direto.direto_aos_autos, true);
+});
+
 test('demais tribunais usam portal oficial e nunca URL vinda do banco', () => {
   const trf5 = obterAcessoTribunal({ tribunal: 'TRF5', grau: '2', url: 'https://malicioso.invalid' });
   assert.equal(trf5.url, 'https://www.trf5.jus.br/');
@@ -45,6 +54,21 @@ test('recusa URL de outro domínio ou grau', () => {
   );
   assert.throws(
     () => extrairIdProcessoPje('https://pjesg.tjpb.jus.br/pje2g/Processo/ConsultaProcesso/Detalhe/listAutosDigitais.seam?idProcesso=1', { tribunal: 'TJPB', grau: '1' }),
+    /não pertence/
+  );
+});
+
+test('extrai ID de URL oficial do TRF1 e valida o grau', () => {
+  const id = extrairIdProcessoPje(
+    'https://pje1g.trf1.jus.br/pje/Processo/ConsultaProcesso/Detalhe/listAutosDigitais.seam?idProcesso=456789',
+    { tribunal: 'TRF1', grau: '1' }
+  );
+  assert.equal(id, '456789');
+  assert.throws(
+    () => extrairIdProcessoPje(
+      'https://pje2g.trf1.jus.br/pje/Processo/ConsultaProcesso/Detalhe/listAutosDigitais.seam?idProcesso=456789',
+      { tribunal: 'TRF1', grau: '1' }
+    ),
     /não pertence/
   );
 });

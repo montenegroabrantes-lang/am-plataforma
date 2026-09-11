@@ -10,6 +10,10 @@ const PJE_POR_TRIBUNAL = {
     '1': 'https://pje.cloud.tjpe.jus.br/1g/',
     '2': 'https://pje.cloud.tjpe.jus.br/2g/',
   },
+  TRF1: {
+    '1': 'https://pje1g.trf1.jus.br/pje/',
+    '2': 'https://pje2g.trf1.jus.br/pje/',
+  },
 };
 
 const ID_PROCESSO_PJE = /^[1-9]\d{0,19}$/;
@@ -53,7 +57,6 @@ const PORTAIS_OFICIAIS = {
   TJMA: 'https://www.tjma.jus.br/',
   TJPI: 'https://www.tjpi.jus.br/',
   TJSE: 'https://www.tjse.jus.br/',
-  TRF1: 'https://portal.trf1.jus.br/',
   TRF3: 'https://www.trf3.jus.br/',
   TRF4: 'https://www.trf4.jus.br/',
   TRF5: 'https://www.trf5.jus.br/',
