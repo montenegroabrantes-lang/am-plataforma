@@ -5,6 +5,7 @@ import { apenasMaster }       from '../middleware/auth.js';
 import { ETAPA_WHERE, ETAPA_CASE } from '../utils/etapas.js';
 import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
 import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
+import { obterAcessoTribunal } from '../services/acessoTribunal.js';
 
 export const processosRouter = Router();
 
@@ -407,7 +408,11 @@ processosRouter.get('/:id', async (req, res) => {
     [req.params.id]
   ).catch(() => []);
 
-  res.json({ ok: true, processo: { ...p, tem_cessao: cessoes.length > 0 }, cessoes });
+  res.json({
+    ok: true,
+    processo: { ...p, tem_cessao: cessoes.length > 0, acesso_tribunal: obterAcessoTribunal(p) },
+    cessoes,
+  });
 });
 
 // POST /api/processos/:id/cessao — registra cessão de crédito e gera tarefa de habilitação

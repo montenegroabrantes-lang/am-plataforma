@@ -17,6 +17,7 @@ import {
   buscarReferenciaEstadual,
   ReferenciaEstadualError,
 } from '../services/remuneracaoEstadual.js';
+import { obterAcessoTribunal } from '../services/acessoTribunal.js';
 
 export const estimativasRouter = Router();
 
@@ -180,11 +181,40 @@ estimativasRouter.get('/leads', async (req, res) => {
           ).catch(() => [])
         : [];
       const onboardingPorContato = new Map(onboardings.map(o => [o.camila_contact_id, o]));
+      const clientesConfirmados = [...new Set(onboardings.map(o => o.cliente_id).filter(Boolean))];
+      let processosDisponiveis = true;
+      const processos = clientesConfirmados.length
+        ? await db.query(
+            `SELECT p.id, p.cliente_id, p.numero, p.tribunal, p.sistema, p.grau,
+                    p.vara, p.status, p.visibilidade
+               FROM processos p
+              WHERE p.cliente_id = ANY($1::uuid[])
+                ${req.user?.pode_marcar_restrito ? '' : `AND p.visibilidade = 'normal'`}
+              ORDER BY CASE p.status WHEN 'ativo' THEN 0 WHEN 'suspenso' THEN 1 ELSE 2 END,
+                       p.atualizado_em DESC`,
+            [clientesConfirmados]
+          ).catch(() => { processosDisponiveis = false; return []; })
+        : [];
+      const processosPorCliente = new Map();
+      for (const processo of processos) {
+        const item = { ...processo, acesso_tribunal: obterAcessoTribunal(processo) };
+        if (!processosPorCliente.has(processo.cliente_id)) processosPorCliente.set(processo.cliente_id, []);
+        processosPorCliente.get(processo.cliente_id).push(item);
+      }
       for (const lead of data.leads) {
         const encontrado = lead.nome ? encontrarClienteExistente(lead.nome, clientes) : null;
+        const onboarding = onboardingPorContato.get(String(lead.contact_id)) || null;
         lead.ja_e_cliente = !!encontrado;
         lead.cliente_encontrado = encontrado ? { id: encontrado.id, nome: encontrado.nome, criado_em: encontrado.criado_em } : null;
-        lead.onboarding = onboardingPorContato.get(String(lead.contact_id)) || null;
+        lead.onboarding = onboarding;
+        // Processo é informação jurídica sensível: só anexamos quando existe cliente_id
+        // confirmado pelo onboarding. O cruzamento aproximado por nome continua apenas como
+        // alerta e nunca é usado para abrir autos de outra pessoa por coincidência nominal.
+        lead.vinculo_cliente_status = onboarding?.cliente_id ? 'confirmado' : encontrado ? 'sugerido' : 'ausente';
+        lead.processos = onboarding?.cliente_id
+          ? (processosPorCliente.get(onboarding.cliente_id) || [])
+          : [];
+        lead.processos_status = processosDisponiveis ? 'ok' : 'indisponivel';
       }
     }
     res.json(data);
