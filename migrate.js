@@ -197,6 +197,9 @@ try {
   await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS jusbrasil_monitorado BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
   await db.execute(`CREATE INDEX IF NOT EXISTS idx_processos_jusbrasil ON processos(jusbrasil_monitorado) WHERE jusbrasil_monitorado = false`).catch(() => {});
 
+  // 19. ID interno do PJe — permite abrir diretamente os autos sem persistir o token `ca`
+  await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS pje_id_processo TEXT`).catch(() => {});
+
   console.log('[migrate] ✅ Migração concluída');
 } catch (err) {
   console.error('[migrate] ❌ Erro (não fatal):', err.message);

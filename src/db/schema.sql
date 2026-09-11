@@ -201,6 +201,7 @@ CREATE TABLE processos (
   valor_causa     NUMERIC(14,2),
   valor_rpv       NUMERIC(14,2),
   importado_pje   BOOLEAN DEFAULT false,
+  pje_id_processo TEXT,                  -- ID interno estável usado no link direto dos autos
   criado_em       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   atualizado_em   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

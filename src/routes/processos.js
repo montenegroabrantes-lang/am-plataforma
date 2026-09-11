@@ -5,7 +5,7 @@ import { apenasMaster }       from '../middleware/auth.js';
 import { ETAPA_WHERE, ETAPA_CASE } from '../utils/etapas.js';
 import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
 import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
-import { obterAcessoTribunal } from '../services/acessoTribunal.js';
+import { extrairIdProcessoPje, obterAcessoTribunal } from '../services/acessoTribunal.js';
 
 export const processosRouter = Router();
 
@@ -548,7 +548,7 @@ processosRouter.post('/', async (req, res) => {
 
 // PATCH /api/processos/:id
 processosRouter.patch('/:id', async (req, res) => {
-  const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, visibilidade FROM processos WHERE id = $1', [req.params.id]);
+  const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, visibilidade, tribunal, grau FROM processos WHERE id = $1', [req.params.id]);
   if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
 
   if (dono.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
@@ -566,6 +566,17 @@ processosRouter.patch('/:id', async (req, res) => {
       params.push(valor);
       updates.push(`${campo} = $${params.length}`);
     }
+  }
+
+  if (req.body.pje_id_processo !== undefined) {
+    let idProcesso;
+    try {
+      idProcesso = extrairIdProcessoPje(req.body.pje_id_processo, dono);
+    } catch (err) {
+      return res.status(400).json({ ok: false, erro: err.message });
+    }
+    params.push(idProcesso);
+    updates.push(`pje_id_processo = $${params.length}`);
   }
 
   // Visibilidade: só Master 01 pode marcar restrito

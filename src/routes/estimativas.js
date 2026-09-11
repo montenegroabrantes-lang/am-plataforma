@@ -185,7 +185,7 @@ estimativasRouter.get('/leads', async (req, res) => {
       let processosDisponiveis = true;
       const processos = clientesConfirmados.length
         ? await db.query(
-            `SELECT p.id, p.cliente_id, p.numero, p.tribunal, p.sistema, p.grau,
+            `SELECT p.id, p.cliente_id, p.numero, p.tribunal, p.sistema, p.grau, p.pje_id_processo,
                     p.vara, p.status, p.visibilidade
                FROM processos p
               WHERE p.cliente_id = ANY($1::uuid[])

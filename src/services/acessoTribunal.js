@@ -12,6 +12,39 @@ const PJE_POR_TRIBUNAL = {
   },
 };
 
+const ID_PROCESSO_PJE = /^[1-9]\d{0,19}$/;
+
+function configuracaoPje(processo = {}) {
+  const tribunal = String(processo.tribunal || '').trim().toUpperCase();
+  const grau = String(processo.grau || '1') === '2' ? '2' : '1';
+  return { tribunal, grau, raiz: PJE_POR_TRIBUNAL[tribunal]?.[grau] || null };
+}
+
+// Aceita o ID puro ou uma URL copiada da tela de autos. Somente o identificador
+// numérico é persistido: tokens efêmeros de sessão como `ca` são descartados.
+export function extrairIdProcessoPje(valor, processo = {}) {
+  const entrada = String(valor ?? '').trim();
+  if (!entrada) return null;
+
+  const { raiz } = configuracaoPje(processo);
+  if (!raiz) throw new Error('Este tribunal ainda não possui acesso PJe direto configurado.');
+  if (ID_PROCESSO_PJE.test(entrada)) return entrada;
+
+  let url;
+  try { url = new URL(entrada); } catch { throw new Error('Informe o ID numérico ou copie a URL dos autos no PJe.'); }
+  const raizUrl = new URL(raiz);
+  if (url.protocol !== 'https:' || url.origin !== raizUrl.origin || !url.pathname.startsWith(raizUrl.pathname)) {
+    throw new Error('A URL não pertence ao PJe oficial deste tribunal e grau.');
+  }
+
+  const telaValida = /\/(?:listAutosDigitais|listProcessoCompletoAdvogado)\.seam$/i.test(url.pathname);
+  const id = url.searchParams.get('idProcesso') || url.searchParams.get('id');
+  if (!telaValida || !ID_PROCESSO_PJE.test(id || '')) {
+    throw new Error('Abra os autos do processo no PJe e copie a URL completa da barra do navegador.');
+  }
+  return id;
+}
+
 const PORTAIS_OFICIAIS = {
   TJRN: 'https://www.tjrn.jus.br/',
   TJAL: 'https://www.tjal.jus.br/',
@@ -28,19 +61,25 @@ const PORTAIS_OFICIAIS = {
 };
 
 export function obterAcessoTribunal(processo = {}) {
-  const tribunal = String(processo.tribunal || '').trim().toUpperCase();
-  const grau = String(processo.grau || '1') === '2' ? '2' : '1';
-  const urlPje = PJE_POR_TRIBUNAL[tribunal]?.[grau];
+  const { tribunal, grau, raiz: urlPje } = configuracaoPje(processo);
 
   if (urlPje) {
+    const idProcesso = ID_PROCESSO_PJE.test(String(processo.pje_id_processo || ''))
+      ? String(processo.pje_id_processo)
+      : null;
+    const url = idProcesso
+      ? `${urlPje}Processo/ConsultaProcesso/Detalhe/listAutosDigitais.seam?idProcesso=${encodeURIComponent(idProcesso)}`
+      : urlPje;
     return {
       disponivel: true,
-      url: urlPje,
-      rotulo: `Abrir no PJe · ${grau}º grau`,
+      url,
+      rotulo: idProcesso ? `Abrir autos no PJe · ${grau}º grau` : `Ir ao PJe e pesquisar · ${grau}º grau`,
       destino: 'pje',
-      direto_aos_autos: false,
+      direto_aos_autos: Boolean(idProcesso),
       copiar_numero: true,
-      aviso: 'O número será copiado. Se a sessão não localizar os autos automaticamente, cole-o na pesquisa do PJe.',
+      aviso: idProcesso
+        ? 'Abre diretamente os autos usando o identificador interno do PJe. A autenticação continua no tribunal.'
+        : 'O vínculo direto ainda não foi configurado. O número será copiado para a pesquisa do PJe.',
     };
   }
 
