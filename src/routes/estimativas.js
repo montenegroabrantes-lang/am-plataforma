@@ -4,6 +4,7 @@
 // e CAMILA_API_KEY (mesmo valor da env AM_API_KEY configurada na Camila).
 import { Router } from 'express';
 import axios from 'axios';
+import rateLimit from 'express-rate-limit';
 import { apenasMaster } from '../middleware/auth.js';
 import { db } from '../db/index.js';
 import {
@@ -12,6 +13,10 @@ import {
   buscarOnboardingPorContato,
   cancelarOnboardingPendente,
 } from '../services/onboarding.js';
+import {
+  buscarReferenciaEstadual,
+  ReferenciaEstadualError,
+} from '../services/remuneracaoEstadual.js';
 
 export const estimativasRouter = Router();
 
@@ -31,6 +36,13 @@ const semConfig = res => res.status(503).json({
 });
 
 const TIMEOUT_CALCULADORA_MANUAL_MS = 90_000;
+const referenciaEstadualLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false, erro: 'Limite de consultas oficiais atingido. Aguarde alguns minutos.' },
+});
 
 // Controles comerciais: leitura autenticada, alterações reservadas ao perfil master.
 for(const [method,local,remote] of [
@@ -178,6 +190,41 @@ estimativasRouter.get('/leads', async (req, res) => {
     res.json(data);
   } catch (err) {
     res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
+  }
+});
+
+// GET /api/estimativas/:id/referencia-estadual — consulta, sob demanda, a folha oficial
+// da Paraíba ou de Pernambuco nos últimos cinco anos. O navegador não envia nome/órgão
+// na URL: buscamos o detalhe atualizado na Camila, reduzindo exposição de dados e evitando
+// divergência entre o card e a consulta. O resultado é somente uma referência; esta rota
+// nunca aprova a estimativa nem grava o valor na Camila.
+estimativasRouter.get('/:id/referencia-estadual', apenasMaster, referenciaEstadualLimiter, async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+
+  try {
+    const { data: detalhe } = await api.get(`/api/estimativas/${encodeURIComponent(req.params.id)}`);
+    const estimativa = detalhe?.estimativa || detalhe;
+    const dados = estimativa?.dados || estimativa?.dados_extraidos || {};
+    const resultado = await buscarReferenciaEstadual({
+      nome: dados.nome,
+      cargo: dados.cargo,
+      orgao: dados.orgao,
+      inicio: dados.periodoInicio || dados.inicio,
+      fim: dados.periodoFim || dados.fim,
+      forcar: req.query.atualizar === '1',
+    });
+    res.json(resultado);
+  } catch (err) {
+    if (err instanceof ReferenciaEstadualError) {
+      return res.status(err.status).json({ ok: false, codigo: err.codigo, erro: err.message });
+    }
+    if (err.response) {
+      return res.status(err.response.status).json(
+        err.response.data || { ok: false, erro: 'Não foi possível obter os dados da estimativa.' }
+      );
+    }
+    res.status(502).json({ ok: false, erro: 'Não foi possível consultar a fonte oficial agora.' });
   }
 });
 
