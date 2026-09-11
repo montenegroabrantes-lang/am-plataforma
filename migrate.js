@@ -30,19 +30,33 @@ try {
     console.log('[migrate] ⚠️  MASTER_EMAIL ou MASTER_SENHA não configurados');
   } else {
     const hash = await bcrypt.hash(senha, 12);
-    const master = await db.queryOne(`SELECT id FROM usuarios WHERE perfil = 'master'`);
+    // Em produção pode haver mais de um Master. Primeiro localizamos o titular do
+    // e-mail configurado; escolher um Master arbitrário e trocar seu e-mail causava
+    // conflito na constraint única e interrompia todas as migrações seguintes.
+    const emailNormalizado = email.toLowerCase().trim();
+    const masterPorEmail = await db.queryOne(
+      `SELECT id FROM usuarios WHERE LOWER(email) = $1 AND perfil = 'master'`,
+      [emailNormalizado]
+    );
+    const master = masterPorEmail || await db.queryOne(
+      `SELECT id FROM usuarios WHERE perfil = 'master' ORDER BY criado_em ASC LIMIT 1`
+    );
 
     if (master) {
-      await db.execute(
-        `UPDATE usuarios SET senha_hash = $1, email = $2 WHERE id = $3`,
-        [hash, email.toLowerCase().trim(), master.id]
-      );
+      if (masterPorEmail) {
+        await db.execute(`UPDATE usuarios SET senha_hash = $1 WHERE id = $2`, [hash, master.id]);
+      } else {
+        await db.execute(
+          `UPDATE usuarios SET senha_hash = $1, email = $2 WHERE id = $3`,
+          [hash, emailNormalizado, master.id]
+        );
+      }
       console.log(`[migrate] ✅ Senha e email do master atualizados: ${email}`);
     } else {
       await db.execute(
         `INSERT INTO usuarios (nome, email, senha_hash, perfil, pode_marcar_restrito)
          VALUES ($1, $2, $3, 'master', true)`,
-        [nome, email.toLowerCase().trim(), hash]
+        [nome, emailNormalizado, hash]
       );
       console.log(`[migrate] ✅ Usuário master criado: ${email}`);
     }
