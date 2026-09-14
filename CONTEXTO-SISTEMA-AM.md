@@ -229,3 +229,37 @@ integrações ou produção. Não registrar segredos neste documento.
   leads, Digisac e acesso aos tribunais.
 - Suíte atual do backend executada após a conferência: **49/49 testes passando**.
 - Nenhum segredo foi registrado.
+
+### 14/09/2026 — Reconhecimento de clientes pela Camila
+
+- Um atendimento real mostrou que a Camila podia reiniciar a qualificação comercial de um
+  cliente já cadastrado quando não existia `status_processual` local e o campo WhatsApp do
+  cliente estava vazio no AM. A frase “tenho processo aí” também podia ser interpretada pelo
+  modelo como processo com outro representante.
+- O backend passou a expor `GET /api/integracoes/camila/cliente`, protegido pela chave
+  compartilhada entre os serviços. A resposta contém somente nome, situação ativa do cadastro e
+  do vínculo e quantidade/existência de processos; não expõe CPF, número de processo, anotações,
+  IDs ou dados jurídicos.
+- A identificação aceita telefone brasileiro com ou sem país e nono dígito. Quando o telefone
+  não está cadastrado, compara o nome do contato do Digisac após remover o complemento operacional
+  e partículas como “da/de/do”. Em caso de homônimos, não escolhe nenhum cadastro.
+- A Camila consulta esse resumo nas entradas processuais e nas opções 1 e 2 do menu. Cliente com
+  processo reconhecido segue para consulta processual, inclusive sem status publicado localmente;
+  nesse caso solicita atualização à equipe em vez de abrir uma nova venda. Frases que indicam
+  processo no próprio escritório são decididas antes da IA e não acionam a regra de conflito com
+  advogado ou sindicato externo.
+- A qualificação comercial agora presume o vínculo ativo e pergunta cargo e data de início. Data
+  final só é solicitada quando a própria pessoa informa aposentadoria, desligamento, exoneração ou
+  encerramento da atividade.
+- Avisos do WhatsApp que chegam como `ciphertext` são concluídos silenciosamente, sem resposta e
+  sem chamada à IA. Outras mídias inacessíveis recebem apenas um pedido institucional de reenvio,
+  sem a antiga frase sobre conseguir ler somente mensagens escritas.
+- Validação: backend **54/54 testes**; Camila `test:safe`, **166/166 testes de continuidade** e
+  teste ponta a ponta do caso de cliente reconhecido. Em produção, a integração reconheceu o
+  cadastro correto com dois processos e devolveu apenas os cinco campos permitidos; sem chave a
+  rota respondeu `401`. Os health checks dos dois serviços responderam normalmente.
+- Commits: backend `7f10bd0`; Camila `53e9707` e `5c3d1f2`.
+- Deploys Railway `SUCCESS`: backend `06014146-237e-49f0-b02f-bb6f01b6a60a`; Camila
+  `665bcfd9-3438-4897-af9e-e0f7e23d37b9`.
+- Nenhuma mensagem de teste foi enviada a cliente e os atendimentos reais já assumidos pela equipe
+  não foram reprocessados.
