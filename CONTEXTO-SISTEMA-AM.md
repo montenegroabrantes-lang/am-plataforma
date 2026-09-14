@@ -1,6 +1,6 @@
 # Contexto permanente — Sistema AM
 
-**Última atualização:** 11/09/2026  
+**Última atualização:** 14/09/2026
 **Finalidade:** continuidade segura do desenvolvimento em outros chats e sessões.
 
 Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
@@ -29,7 +29,7 @@ integrações ou produção. Não registrar segredos neste documento.
 - Stack: Next.js 14, App Router
 - Desenvolvimento: `npm run dev`, normalmente porta `3000`; já foi usado `3050`
 - Produção: `https://am-plataforma-web-production.up.railway.app`
-- Último commit funcional verificado em 11/09/2026: `b26e9d0`
+- Último commit funcional verificado em 14/09/2026: `0da02a1`
 
 ### Camila
 
@@ -263,3 +263,20 @@ integrações ou produção. Não registrar segredos neste documento.
   `665bcfd9-3438-4897-af9e-e0f7e23d37b9`.
 - Nenhuma mensagem de teste foi enviada a cliente e os atendimentos reais já assumidos pela equipe
   não foram reprocessados.
+
+### 14/09/2026 — Fechamento completo de leads pelo quadro
+
+- Corrigida a impossibilidade de mover um lead da coluna `Documentos` para `Fechado` no quadro.
+  O quadro ainda excluía `Fechado` das colunas que aceitavam soltura e mantinha um formulário
+  antigo que enviava somente valor e observação, incompatível com o onboarding obrigatório.
+- A coluna `Fechado` agora aceita o card e abre o mesmo formulário completo usado na Lista:
+  confirmação da assinatura, data, valor, cliente existente ou novo cadastro, produtos e
+  honorários, responsáveis e prazos de cadastro/protocolo.
+- A interface apenas alerta quando encontra possível cliente pelo nome; não seleciona
+  automaticamente, evitando vínculo indevido por homônimo. Soltar um card na própria coluna não
+  executa ação.
+- Em caso de validação ou erro da API, o formulário permanece aberto e nenhum fechamento aparente
+  é mostrado. Somente a confirmação bem-sucedida fecha o modal e inicia o onboarding.
+- Validação: build completo do Next.js 14 em cópia isolada, com as 19 rotas compiladas. O `.next`
+  do repositório principal não foi usado no build.
+- Commit do frontend: `0da02a1`.
