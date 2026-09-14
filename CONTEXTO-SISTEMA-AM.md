@@ -279,4 +279,8 @@ integrações ou produção. Não registrar segredos neste documento.
   é mostrado. Somente a confirmação bem-sucedida fecha o modal e inicia o onboarding.
 - Validação: build completo do Next.js 14 em cópia isolada, com as 19 rotas compiladas. O `.next`
   do repositório principal não foi usado no build.
+- Produção verificada em navegador com um lead real da coluna `Documentos`: a soltura em
+  `Fechado` abriu o formulário completo, com produtos, responsáveis, prazos e confirmação de
+  assinatura. A verificação foi cancelada antes do envio e não alterou o lead.
 - Commit do frontend: `0da02a1`.
+- Deploy Railway `SUCCESS`: `96d1ed8e-297c-449a-acfa-a51ed37660e7`.
