@@ -33,6 +33,7 @@ import { publicacoesRouter, importarPublicacoesHandler } from './routes/publicac
 import { estimativasRouter } from './routes/estimativas.js';
 import { pushTJRouter }      from './routes/pushTJ.js';
 import { onboardingsRouter } from './routes/onboardings.js';
+import { integracaoCamilaRouter, autenticarIntegracaoCamila } from './routes/integracaoCamila.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -100,6 +101,10 @@ app.use('/api/auth/refresh',      authLimiter);
 app.use('/api/auth/trocar-senha', authLimiter);
 app.use('/api/auth/2fa',          authLimiter);
 app.use('/api/auth', authRouter);
+
+// Consulta interna mínima usada pela Camila para reconhecer quem já é cliente do escritório.
+// Usa a chave compartilhada entre os dois serviços e não devolve dados processuais sensíveis.
+app.use('/api/integracoes/camila', autenticarIntegracaoCamila, integracaoCamilaRouter);
 
 // Rotas protegidas
 app.use('/api/usuarios',      autenticar, usuariosRouter);
