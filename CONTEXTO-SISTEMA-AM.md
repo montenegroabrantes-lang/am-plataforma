@@ -325,3 +325,35 @@ integrações ou produção. Não registrar segredos neste documento.
   momento havia zero leads em `Assinado · ativar`, portanto nenhuma operação real foi submetida.
 - Commits do frontend: `96a12e9`, `68aa870`, `a315f72`, `6abaa5d` e `7e9c76a`.
 - Deploy Railway final `SUCCESS`: `e317a49d-a6cd-496c-a7a3-4080ac71dc48`.
+
+### 15/09/2026 — Fila de pendências processuais recorrentes
+
+- Criado um fluxo determinístico para clientes que voltam a pedir atualização processual quando
+  a Camila ainda não possui `status_processual` publicado. A primeira solicitação recebe uma única
+  confirmação e vai para `CAMILA - PENDÊNCIAS PROCESSUAIS`; a segunda cobrança ganha prioridade
+  alta; a terceira, espera de 48 horas, frustração ou pedido direto de advogado ganha prioridade
+  crítica e segue uma única vez ao `JURÍDICO`.
+- Saudações, agradecimentos e despedidas não aumentam a contagem. A confirmação de acompanhamento
+  tem intervalo mínimo de 24 horas. Resposta humana muda o caso para `em_atendimento`, mas a
+  pendência só termina quando a equipe registra um novo status ou usa `Resolver` no AM.
+- O Digisac recebeu o departamento `CAMILA - PENDÊNCIAS PROCESSUAIS`, ID
+  `f29ccc99-fb07-47b2-988a-47ce8f94013c`. O robô `CAMILA INTEGRADA` foi republicado na versão
+  `22c657f0-2136-4b7d-9d6b-f21bb8d145d6` com a nova fila incluída na condição que suprime o menu
+  automático dentro das filas da Camila.
+- A Plataforma AM ganhou a aba `Estimativas > Processual`, com contadores, filtros, prioridade,
+  número de cobranças, tempo de espera, busca por nome/telefone/UUID, conversa integrada do
+  Digisac e ações Master de priorizar, resolver e reabrir.
+- A migração inicial identificou silenciosamente cinco contatos recorrentes dos últimos 14 dias,
+  todos críticos: quatro com atendimento humano posterior e um aguardando a equipe. Ela não envia
+  mensagens nem transfere chamados históricos.
+- O contato `51e0ff3f-3c29-4672-9cc5-2ba0aa7a1efb` foi encontrado em prioridade crítica, com
+  quatro cobranças e estado `em_atendimento`; o chamado atual está no `JURÍDICO` com responsável
+  humano, portanto a Camila fica bloqueada e não interfere.
+- Validação: Camila **201/201 testes de continuidade**, `test:safe` integral e cinco testes
+  específicos; backend AM **54/54**; frontend Next.js com 19 rotas compiladas em cópia isolada.
+  Produção confirmou API `200`, os cinco contadores, busca pelo UUID e abertura da conversa.
+- Commits: Camila `351b73d`, `9498ffe` e `2951145`; backend AM `99e9f3b`; frontend AM `973dd6c`.
+  Deploys Railway `SUCCESS`: Camila `20db23f2-d23a-48cb-aad9-907c64c0b47f`, backend
+  `97c1f928-859b-4ad8-9e32-3707d146945b` e frontend
+  `00bdb820-61ee-4025-84c2-10acb4657034`.
+- Nenhuma mensagem foi enviada a clientes durante diagnóstico, migração, testes ou validação.
