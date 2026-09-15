@@ -293,7 +293,9 @@ integrações ou produção. Não registrar segredos neste documento.
   protocolo.
 - A nova coluna `Assinado · ativar` possui a ação `Ativar contrato`. A confirmação reaproveita o
   formulário completo de fechamento e já reconhece a assinatura, mas exige conferência da data,
-  produtos, honorários, responsáveis, prazos e vínculo do cliente antes de gravar.
+  produtos, honorários, responsáveis, prazos e vínculo do cliente antes de gravar. Para manter o
+  quadro compacto, a coluna só é exibida quando existe ao menos um contrato aguardando ativação;
+  a etapa e todas as proteções continuam ativas quando a coluna está oculta.
 - O caminho pela Lista também ficou contínuo: ao escolher `Assinatura confirmada` em `Fase da
   contratação`, o botão passa a dizer `Confirmar assinatura e ativar`; depois que a fase é salva,
   o formulário de ativação abre imediatamente. Se o operador interromper o procedimento, o lead
@@ -321,5 +323,5 @@ integrações ou produção. Não registrar segredos neste documento.
   os onboardings ativos na coluna `Fechado`. Também foram conferidos o comando `Confirmar
   assinatura e ativar` e a exibição `CPF final`; as seleções foram revertidas sem salvar. No
   momento havia zero leads em `Assinado · ativar`, portanto nenhuma operação real foi submetida.
-- Commits do frontend: `96a12e9`, `68aa870`, `a315f72` e `6abaa5d`.
-- Deploy Railway final `SUCCESS`: `e221aa6c-52cd-4d29-aa41-4606091ba61b`.
+- Commits do frontend: `96a12e9`, `68aa870`, `a315f72`, `6abaa5d` e `7e9c76a`.
+- Deploy Railway final `SUCCESS`: `e317a49d-a6cd-496c-a7a3-4080ac71dc48`.
