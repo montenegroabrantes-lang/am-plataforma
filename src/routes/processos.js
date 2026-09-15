@@ -399,19 +399,33 @@ processosRouter.get('/:id', async (req, res) => {
     return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
   }
 
-  const cessoes = await db.query(
-    `SELECT cc.*, u.nome AS criado_por_nome
-     FROM cessoes_credito cc
-     LEFT JOIN usuarios u ON u.id = cc.criado_por
-     WHERE cc.processo_id = $1
-     ORDER BY cc.criado_em DESC`,
-    [req.params.id]
-  ).catch(() => []);
+  const [cessoes, tesesCliente] = await Promise.all([
+    db.query(
+      `SELECT cc.*, u.nome AS criado_por_nome
+       FROM cessoes_credito cc
+       LEFT JOIN usuarios u ON u.id = cc.criado_por
+       WHERE cc.processo_id = $1
+       ORDER BY cc.criado_em DESC`,
+      [req.params.id]
+    ).catch(() => []),
+    p.cliente_id
+      ? db.query(
+          `SELECT cp.id AS cliente_produto_id, cp.produto_id, cp.honorarios_pct,
+                  pr.nome AS produto_nome
+           FROM cliente_produtos cp
+           JOIN produtos pr ON pr.id = cp.produto_id
+           WHERE cp.cliente_id = $1 AND pr.ativo = true
+           ORDER BY pr.nome`,
+          [p.cliente_id]
+        )
+      : Promise.resolve([]),
+  ]);
 
   res.json({
     ok: true,
     processo: { ...p, tem_cessao: cessoes.length > 0, acesso_tribunal: obterAcessoTribunal(p) },
     cessoes,
+    teses_cliente: tesesCliente,
   });
 });
 
@@ -690,11 +704,15 @@ processosRouter.patch('/:id/situacao', async (req, res, next) => {
  try {
   const dono = await db.queryOne(
     `SELECT master_responsavel_id, compartilhado, situacao_atual, etapa_atual, numero, tribunal, vara,
-            data_limite_pagamento, status_rpv, status_precatorio, valor_homologado, cliente_id, produto_id
+            data_limite_pagamento, status_rpv, status_precatorio, valor_homologado, cliente_id, produto_id,
+            visibilidade, (SELECT nome FROM produtos WHERE id = processos.produto_id) AS produto_nome
      FROM processos WHERE id = $1`,
     [req.params.id]
   );
   if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  if (dono.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
+    return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
+  }
 
   const campos  = ['situacao_atual','etapa_atual','localizacao_processual','tipo_requisicao',
                    'status_rpv','status_precatorio','status_alvara','valor_homologado','urgente',
@@ -703,12 +721,57 @@ processosRouter.patch('/:id/situacao', async (req, res, next) => {
   const camposVazioViraNull = new Set(['valor_homologado', 'data_conclusao_bloqueio', 'data_limite_pagamento']);
   const updates = [];
   const params  = [];
+  let produtoAlterado = false;
+  let produtoNovo = null;
 
   for (const campo of campos) {
     if (req.body[campo] !== undefined) {
       const valor = camposVazioViraNull.has(campo) && req.body[campo] === '' ? null : req.body[campo];
       params.push(valor);
       updates.push(`${campo} = $${params.length}`);
+    }
+  }
+
+  // A tese jurídica é o produto efetivamente contratado pelo cliente. Alterá-la
+  // impacta protocolo e honorários, portanto exige Master e vínculo contratual.
+  if (req.body.produto_id !== undefined) {
+    if (req.user.perfil !== 'master') {
+      return res.status(403).json({ ok: false, erro: 'Apenas Masters podem alterar a tese jurídica do processo.' });
+    }
+
+    const produtoId = req.body.produto_id || null;
+    if (produtoId && !uuidValido(produtoId)) {
+      return res.status(400).json({ ok: false, erro: 'Tese jurídica inválida.' });
+    }
+
+    if (produtoId !== dono.produto_id) {
+      if (produtoId) {
+        produtoNovo = await db.queryOne(
+          `SELECT id, nome FROM produtos WHERE id = $1 AND ativo = true`,
+          [produtoId]
+        );
+        if (!produtoNovo) {
+          return res.status(400).json({ ok: false, erro: 'Tese jurídica inexistente ou inativa.' });
+        }
+        if (!dono.cliente_id) {
+          return res.status(409).json({ ok: false, erro: 'Vincule um cliente ao processo antes de definir a tese jurídica.' });
+        }
+
+        const vinculo = await db.queryOne(
+          `SELECT id FROM cliente_produtos WHERE cliente_id = $1 AND produto_id = $2`,
+          [dono.cliente_id, produtoId]
+        );
+        if (!vinculo) {
+          return res.status(409).json({ ok: false, erro: 'Esta tese ainda não está contratada por este cliente. Vincule-a ao contrato antes de aplicá-la ao processo.' });
+        }
+      }
+
+      params.push(produtoId);
+      updates.push(`produto_id = $${params.length}`);
+      // Mantém o campo legado coerente enquanto relatórios antigos ainda o utilizam.
+      params.push(produtoNovo?.nome || null);
+      updates.push(`classificacao = $${params.length}`);
+      produtoAlterado = true;
     }
   }
 
@@ -728,6 +791,18 @@ processosRouter.patch('/:id/situacao', async (req, res, next) => {
   params.push(req.params.id);
 
   await db.execute(`UPDATE processos SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
+
+  if (produtoAlterado) {
+    await registrarAuditoria({
+      usuarioId: req.user.id,
+      acao: 'alterar_tese_processo',
+      entidade: 'processo',
+      entidadeId: req.params.id,
+      valorAntes: { produto_id: dono.produto_id, produto_nome: dono.produto_nome },
+      valorDepois: { produto_id: produtoNovo?.id || null, produto_nome: produtoNovo?.nome || null },
+      ip: req._ip,
+    });
+  }
 
   // Registra histórico se mudou situação
   if (req.body.situacao_atual && req.body.situacao_atual !== dono.situacao_atual) {
@@ -786,7 +861,9 @@ processosRouter.patch('/:id/situacao', async (req, res, next) => {
   const precatorioVirouPago = req.body.status_precatorio === 'pagamento_disponibilizado' && dono.status_precatorio !== 'pagamento_disponibilizado';
   const valorHomologado     = req.body.valor_homologado !== undefined ? req.body.valor_homologado : dono.valor_homologado;
 
-  if ((rpvVirouPaga || precatorioVirouPago) && valorHomologado && dono.cliente_id && dono.produto_id) {
+  const produtoIdEfetivo = req.body.produto_id !== undefined ? (req.body.produto_id || null) : dono.produto_id;
+
+  if ((rpvVirouPaga || precatorioVirouPago) && valorHomologado && dono.cliente_id && produtoIdEfetivo) {
     const tipoHonorario = rpvVirouPaga ? 'rpv' : 'precatorio';
     const jaExiste = await db.queryOne(
       `SELECT id FROM honorarios WHERE processo_id = $1 AND tipo = $2`,
@@ -796,7 +873,7 @@ processosRouter.patch('/:id/situacao', async (req, res, next) => {
     if (!jaExiste) {
       const vinculo = await db.queryOne(
         `SELECT honorarios_pct FROM cliente_produtos WHERE cliente_id = $1 AND produto_id = $2`,
-        [dono.cliente_id, dono.produto_id]
+        [dono.cliente_id, produtoIdEfetivo]
       ).catch(() => null);
 
       if (vinculo?.honorarios_pct) {

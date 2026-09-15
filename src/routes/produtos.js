@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
+import { uuidValido } from '../utils/validacao.js';
 
 export const produtosRouter = Router();
 
@@ -82,10 +83,25 @@ produtosRouter.post('/clientes/:clienteId', apenasMaster, async (req, res) => {
     return res.status(400).json({ ok: false, erro: 'produto_id é obrigatório.' });
   }
 
+  if (!uuidValido(req.params.clienteId) || !uuidValido(produto_id)) {
+    return res.status(400).json({ ok: false, erro: 'Cliente ou tese jurídica inválidos.' });
+  }
+
+  const [cliente, produto] = await Promise.all([
+    db.queryOne(`SELECT id FROM clientes WHERE id = $1 AND ativo = true`, [req.params.clienteId]),
+    db.queryOne(`SELECT id, nome, honorarios_padrao FROM produtos WHERE id = $1 AND ativo = true`, [produto_id]),
+  ]);
+  if (!cliente) return res.status(404).json({ ok: false, erro: 'Cliente não encontrado ou inativo.' });
+  if (!produto) return res.status(404).json({ ok: false, erro: 'Tese jurídica não encontrada ou inativa.' });
+
   // Se não informou honorarios_pct, busca o padrão do produto
   if (honorarios_pct === undefined || honorarios_pct === null || honorarios_pct === '') {
-    const prod = await db.queryOne(`SELECT honorarios_padrao FROM produtos WHERE id = $1`, [produto_id]);
-    honorarios_pct = prod?.honorarios_padrao ?? 0;
+    honorarios_pct = produto.honorarios_padrao ?? 0;
+  }
+
+  const percentual = Number(honorarios_pct);
+  if (!Number.isFinite(percentual) || percentual < 0 || percentual > 100) {
+    return res.status(400).json({ ok: false, erro: 'Honorários devem ser um percentual entre 0 e 100.' });
   }
 
   try {
@@ -93,9 +109,9 @@ produtosRouter.post('/clientes/:clienteId', apenasMaster, async (req, res) => {
       `INSERT INTO cliente_produtos (cliente_id, produto_id, honorarios_pct)
        VALUES ($1,$2,$3)
        RETURNING *`,
-      [req.params.clienteId, produto_id, Number(honorarios_pct)]
+      [req.params.clienteId, produto_id, percentual]
     );
-    res.status(201).json({ ok: true, vinculo: novo });
+    res.status(201).json({ ok: true, vinculo: { ...novo, produto_nome: produto.nome } });
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ ok: false, erro: 'Produto já vinculado a este cliente.' });
     throw e;
