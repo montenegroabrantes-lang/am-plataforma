@@ -415,3 +415,22 @@ integrações ou produção. Não registrar segredos neste documento.
 - Commits: backend `16b7e8f`; frontend `b61d258`. Deploys Railway `SUCCESS`: backend
   `2c68851c-ae69-42f1-8483-39caf21843ec`; frontend
   `944a9237-61aa-4ebd-b8c4-d19d7f557334`.
+
+### 15/09/2026 — Tese visível nas tarefas e triagem por pendência
+
+- A API de tarefas passou a resolver a tese efetiva nesta ordem: vínculo específico da tarefa,
+  produto do onboarding e produto já vinculado ao processo. A pesquisa e o filtro por tese usam
+  a mesma regra, corrigindo tarefas de prazo que apareciam sem tese apesar de o processo estar
+  classificado.
+- Os cartões exibem a tese como informação operacional destacada logo abaixo do título. Quando
+  um processo não tem tese, mostram `TESE NÃO DEFINIDA`; o botão abre diretamente a aba
+  `Classificação` da ficha para correção.
+- A fila `Triagem` ganhou filtros por motivo: sem responsável, sem prazo, sem tese e sinalizadas.
+  Cada cartão apresenta todos os motivos aplicáveis. Ausência de prazo só gera triagem para tipos
+  que realmente exigem data (`prazo`, `prazo_pagamento`, `protocolar`, `demanda` e `assinatura`),
+  evitando misturar tarefas administrativas sem data.
+- O CPF deixou de aparecer integralmente nos cartões e agora é mascarado, reduzindo exposição de
+  dado pessoal e ruído visual.
+- Validação local: backend **54/54 testes**, `node --check`, `git diff --check`; frontend com build
+  completo do Next.js em cópia isolada, com as 19 rotas compiladas. O comando `next build` não foi
+  executado no diretório usado pelo servidor de desenvolvimento.

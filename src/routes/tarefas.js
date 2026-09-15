@@ -17,7 +17,7 @@ tarefasRouter.param('id', (req, res, next, id) => {
 // GET /api/tarefas — lista tarefas do usuário (ou todas para Master)
 tarefasRouter.get('/', async (req, res) => {
   const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, prazo_de, prazo_ate,
-          concluida_de, concluida_ate, tipo, processo_id, fila, busca, page, limite } = req.query;
+          concluida_de, concluida_ate, tipo, processo_id, fila, triagem_motivo, busca, page, limite } = req.query;
   const { pagina: paginaSegura, limite: limiteSeguro, offset } = paginacaoSegura(page, limite || 100);
 
   const params = [];
@@ -49,7 +49,12 @@ tarefasRouter.get('/', async (req, res) => {
     },
     triagem: () => {
       condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`);
-      condicoes.push(`(t.precisa_triagem=true OR t.atribuido_a IS NULL OR t.prazo_data IS NULL)`);
+      condicoes.push(`(
+        t.precisa_triagem=true
+        OR t.atribuido_a IS NULL
+        OR (t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura'))
+        OR (t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL)
+      )`);
     },
     prazos: () => {
       condicoes.push(`t.tipo IN ('prazo','prazo_pagamento')`);
@@ -59,6 +64,19 @@ tarefasRouter.get('/', async (req, res) => {
   };
   if (fila && filas[fila]) filas[fila]();
   else if (fila) return res.status(400).json({ ok: false, erro: 'Fila de tarefas inválida.' });
+
+  if (triagem_motivo) {
+    const motivos = {
+      sinalizada: `t.precisa_triagem=true`,
+      sem_responsavel: `t.atribuido_a IS NULL`,
+      sem_prazo: `t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura')`,
+      sem_tese: `t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL`,
+    };
+    if (fila !== 'triagem' || !motivos[triagem_motivo]) {
+      return res.status(400).json({ ok: false, erro: 'Motivo de triagem inválido.' });
+    }
+    condicoes.push(`(${motivos[triagem_motivo]})`);
+  }
 
   if (prazo_dias !== undefined) {
     const dias = Number(prazo_dias);
@@ -94,13 +112,14 @@ tarefasRouter.get('/', async (req, res) => {
     ) = $${params.length}`);
   }
   if (cliente_id)  { params.push(cliente_id);  condicoes.push(`COALESCE(cl.id,tc.id,oc.id,pc.id) = $${params.length}`); }
-  if (produto_id)  { params.push(produto_id);  condicoes.push(`COALESCE(pr.id,opr.id) = $${params.length}`); }
+  if (produto_id)  { params.push(produto_id);  condicoes.push(`COALESCE(pr.id,opr.id,ppr.id) = $${params.length}`); }
   if (atribuido_a) { params.push(atribuido_a); condicoes.push(`t.atribuido_a = $${params.length}`); }
   if (busca?.trim()) {
     params.push(`%${busca.trim()}%`);
     condicoes.push(`(t.descricao ILIKE $${params.length} OR t.instrucao ILIKE $${params.length}
       OR COALESCE(cl.nome,tc.nome,oc.nome,pc.nome) ILIKE $${params.length}
-      OR COALESCE(p.numero,pub.numero_processo,'') ILIKE $${params.length})`);
+      OR COALESCE(p.numero,pub.numero_processo,'') ILIKE $${params.length}
+      OR COALESCE(pr.nome,opr.nome,ppr.nome,'') ILIKE $${params.length})`);
   }
 
   // Não-master só vê as próprias tarefas
@@ -112,6 +131,7 @@ tarefasRouter.get('/', async (req, res) => {
 
   const joins = `
      LEFT JOIN processos p ON p.id=t.processo_id
+     LEFT JOIN produtos ppr ON ppr.id=p.produto_id
      LEFT JOIN clientes pc ON pc.id=p.cliente_id
      LEFT JOIN publicacoes pub ON pub.id=t.publicacao_id
      LEFT JOIN usuarios u ON u.id=t.atribuido_a
@@ -146,7 +166,15 @@ tarefasRouter.get('/', async (req, res) => {
             COALESCE(cl.id,tc.id,oc.id,pc.id) AS cliente_id,
             COALESCE(cl.nome,tc.nome,oc.nome,pc.nome,ob.nome) AS cliente_nome,
             COALESCE(cl.cpf,tc.cpf,oc.cpf,pc.cpf) AS cliente_cpf,
-            COALESCE(pr.id,opr.id) AS produto_id, COALESCE(pr.nome,opr.nome) AS produto_nome,
+            COALESCE(pr.id,opr.id,ppr.id) AS produto_id,
+            COALESCE(pr.nome,opr.nome,ppr.nome) AS produto_nome,
+            CASE WHEN pr.id IS NOT NULL THEN 'tarefa' WHEN opr.id IS NOT NULL THEN 'contrato' WHEN ppr.id IS NOT NULL THEN 'processo' END AS produto_origem,
+            ARRAY_REMOVE(ARRAY[
+              CASE WHEN t.precisa_triagem THEN 'sinalizada'::text END,
+              CASE WHEN t.atribuido_a IS NULL THEN 'sem_responsavel'::text END,
+              CASE WHEN t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura') THEN 'sem_prazo'::text END,
+              CASE WHEN t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL THEN 'sem_tese'::text END
+            ], NULL) AS motivos_triagem,
             ob.status AS onboarding_status,
             -- Urgência recalculada pela proximidade real do prazo (não fica congelada no valor da criação)
             CASE
@@ -186,18 +214,29 @@ tarefasRouter.get('/resumo', async (req, res) => {
   let escopo = '';
   if (req.user.perfil !== 'master') {
     params.push(req.user.id);
-    escopo = `AND (atribuido_a=$1 OR validado_por=$1)`;
+    escopo = `AND (t.atribuido_a=$1 OR t.validado_por=$1)`;
   }
   const resumo = await db.queryOne(
     `SELECT
-       COUNT(*) FILTER (WHERE status NOT IN ('concluida','cancelada','bloqueada') AND precisa_triagem=false)::int AS abertas,
-       COUNT(*) FILTER (WHERE status NOT IN ('concluida','cancelada','bloqueada') AND precisa_triagem=false AND atribuido_a=$${params.length + 1})::int AS minhas,
-       COUNT(*) FILTER (WHERE status NOT IN ('concluida','cancelada','bloqueada') AND prazo_data<CURRENT_DATE)::int AS atrasadas,
-       COUNT(*) FILTER (WHERE status NOT IN ('concluida','cancelada','bloqueada') AND prazo_data=CURRENT_DATE)::int AS hoje,
-       COUNT(*) FILTER (WHERE status NOT IN ('concluida','cancelada','bloqueada') AND (precisa_triagem OR atribuido_a IS NULL OR prazo_data IS NULL))::int AS triagem,
-       COUNT(*) FILTER (WHERE status NOT IN ('concluida','cancelada') AND onboarding_id IS NOT NULL)::int AS onboarding,
-       COUNT(*) FILTER (WHERE status='aguardando_validacao' OR (tipo='assinatura' AND status NOT IN ('concluida','cancelada')))::int AS validacao
-     FROM tarefas WHERE 1=1 ${escopo}`,
+       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND t.precisa_triagem=false)::int AS abertas,
+       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND t.precisa_triagem=false AND t.atribuido_a=$${params.length + 1})::int AS minhas,
+       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND t.prazo_data<CURRENT_DATE)::int AS atrasadas,
+       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND t.prazo_data=CURRENT_DATE)::int AS hoje,
+       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND (
+         t.precisa_triagem OR t.atribuido_a IS NULL
+         OR (t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura'))
+         OR (t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL)
+       ))::int AS triagem,
+       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada') AND t.onboarding_id IS NOT NULL)::int AS onboarding,
+       COUNT(*) FILTER (WHERE t.status='aguardando_validacao' OR (t.tipo='assinatura' AND t.status NOT IN ('concluida','cancelada')))::int AS validacao
+     FROM tarefas t
+     LEFT JOIN processos p ON p.id=t.processo_id
+     LEFT JOIN produtos ppr ON ppr.id=p.produto_id
+     LEFT JOIN cliente_produtos cp ON cp.id=t.cliente_produto_id
+     LEFT JOIN produtos pr ON pr.id=cp.produto_id
+     LEFT JOIN onboarding_produtos op ON op.id=t.onboarding_produto_id
+     LEFT JOIN produtos opr ON opr.id=op.produto_id
+     WHERE 1=1 ${escopo}`,
     [...params, req.user.id]
   );
   res.json({ ok: true, resumo });
