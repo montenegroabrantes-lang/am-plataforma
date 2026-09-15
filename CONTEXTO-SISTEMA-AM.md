@@ -434,3 +434,6 @@ integrações ou produção. Não registrar segredos neste documento.
 - Validação local: backend **54/54 testes**, `node --check`, `git diff --check`; frontend com build
   completo do Next.js em cópia isolada, com as 19 rotas compiladas. O comando `next build` não foi
   executado no diretório usado pelo servidor de desenvolvimento.
+- Commits: backend `cad7f87`; frontend `1ae6899`. Deploys Railway `SUCCESS`: backend
+  `3b2ea271-8348-4a1a-b3e3-6ecd6b00acfd`; frontend
+  `b4df0d59-5d98-4825-a438-2d3ec4829c89`. Health checks responderam `200` nos dois serviços.
