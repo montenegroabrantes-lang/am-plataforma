@@ -53,6 +53,8 @@ for(const [method,local,remote] of [
   ['get','/aprendizado-automatico','/api/aprendizado-automatico'],
   ['post','/aprendizado-automatico/configuracao','/api/aprendizado-automatico/configuracao'],
   ['post','/aprendizado-automatico/:codigo/desativar','/api/aprendizado-automatico/:codigo/desativar'],
+  ['get','/pendencias-processuais','/api/pendencias-processuais'],
+  ['patch','/pendencias-processuais/:contactId','/api/pendencias-processuais/:contactId'],
   ['get','/leads/:contactId/continuidade','/api/funil-leads/:contactId/continuidade'],
   ['patch','/leads/:contactId/continuidade','/api/funil-leads/:contactId/continuidade'],
   ['patch','/leads/:contactId/documentos/:messageId','/api/funil-leads/:contactId/documentos/:messageId'],
