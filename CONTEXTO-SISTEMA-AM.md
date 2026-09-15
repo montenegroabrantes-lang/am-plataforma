@@ -357,3 +357,40 @@ integrações ou produção. Não registrar segredos neste documento.
   `97c1f928-859b-4ad8-9e32-3707d146945b` e frontend
   `00bdb820-61ee-4025-84c2-10acb4657034`.
 - Nenhuma mensagem foi enviada a clientes durante diagnóstico, migração, testes ou validação.
+
+### 15/09/2026 — Tese contratada na classificação do processo
+
+- Corrigida a seção `Classificação interna` da ficha do processo. Ela usava a tabela paralela
+  `classificacoes_processuais`, que podia aparecer vazia e gravava apenas texto livre em
+  `processos.classificacao`; selecionar ou criar uma opção ali não vinculava a tese real, o
+  contrato, as tarefas nem os honorários.
+- A seção 4 agora se chama `Tese jurídica do processo` e usa o relacionamento canônico
+  `processos.produto_id -> produtos`, limitado às teses de `cliente_produtos` efetivamente
+  contratadas pelo cliente. Exibe também o percentual de honorários do vínculo.
+- O Master pode, dentro da própria ficha, vincular ao contrato uma tese já existente no catálogo,
+  informando os honorários, e depois aplicar a tese ao processo no mesmo salvamento da
+  classificação. Teses novas continuam sendo criadas em
+  `Configurações > Produtos Jurídicos`; o atalho da ficha abre diretamente essa aba.
+- Alterar a tese do processo passou a exigir perfil Master, produto ativo, UUID válido, cliente
+  vinculado e vínculo contratual prévio. A mudança sincroniza o campo legado `classificacao`, é
+  registrada em `logs_auditoria` e usa a nova tese no cálculo automático de honorários quando a
+  situação de pagamento muda no mesmo pedido.
+- O endpoint de vínculo `POST /api/produtos/clientes/:clienteId` também passou a validar cliente
+  ativo, produto ativo e percentual entre 0 e 100. A classificação manual ganhou a mesma proteção
+  de visibilidade dos processos restritos já aplicada na leitura da ficha.
+- A API da ficha devolve `teses_cliente`, evitando chamadas e estados paralelos no frontend. Erro
+  nessa consulta principal não é mais mascarado como uma lista vazia; o catálogo auxiliar exibe
+  uma mensagem própria quando não puder ser carregado.
+- Produção conferida na ficha do processo `0856094-44.2026.8.15.2001`, sem gravar alterações: o
+  sistema identificou que `FERIAS 45 DIAS` era a tese atual sem vínculo contratual e ofereceu as
+  teses contratadas `FGTS` e `PISO SALARIAL - MAGISTÉRIO`, ambas com o percentual exibido. O
+  formulário de novo vínculo abriu corretamente e permaneceu sem envio.
+- Há dois produtos ativos com o nome `Equiparação salarial no magistério` no catálogo; nenhum foi
+  excluído ou mesclado automaticamente porque podem possuir vínculos históricos distintos. Esse
+  dado deve ser revisado pelo Master em Produtos Jurídicos antes de uma futura consolidação.
+- Validação: backend **54/54 testes**, verificação sintática das rotas alteradas e build completo
+  do Next.js 14 em cópia isolada, com as 19 rotas compiladas. Health checks de backend e frontend
+  responderam `200` após a publicação.
+- Commits: backend `f0e4928`; frontend `c1f3135`. Deploys Railway `SUCCESS`: backend
+  `09214b7c-1eed-44cf-8e66-ee76255ffb57`; frontend
+  `c1b1de08-42fa-4275-87d5-50aef9638a63`.
