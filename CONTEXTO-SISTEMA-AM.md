@@ -284,3 +284,32 @@ integrações ou produção. Não registrar segredos neste documento.
   assinatura. A verificação foi cancelada antes do envio e não alterou o lead.
 - Commit do frontend: `0da02a1`.
 - Deploy Railway `SUCCESS`: `96d1ed8e-297c-449a-acfa-a51ed37660e7`.
+
+### 14/09/2026 — Ativação operacional de contratos assinados
+
+- Separadas no quadro as situações `Assinado` e `Fechado`. `Assinado` é a confirmação externa
+  recebida da Camila; `Fechado` passa a representar contrato já ativado no AM com onboarding
+  local. Isso evita mostrar como operacionalizado um contrato que ainda não gerou cadastro e
+  protocolo.
+- A nova coluna `Assinado · ativar` possui a ação `Ativar contrato`. A confirmação reaproveita o
+  formulário completo de fechamento e já reconhece a assinatura, mas exige conferência da data,
+  produtos, honorários, responsáveis, prazos e vínculo do cliente antes de gravar.
+- A seleção de cliente existente ganhou filtro por nome/CPF. O cruzamento aproximado por nome
+  continua sendo apenas uma sugestão: o operador deve confirmar o vínculo; caso prossiga como
+  cliente novo apesar de uma possível correspondência, recebe uma confirmação adicional para
+  reduzir cadastros duplicados e vínculos por homônimo.
+- Antes de ativar, a interface explica o fluxo: cliente novo cria tarefa de cadastro e mantém os
+  protocolos bloqueados até CPF e consentimento LGPD; cliente já cadastrado é vinculado e libera
+  as tarefas de protocolo imediatamente.
+- Depois de uma ativação bem-sucedida, o AM abre automaticamente o onboarding. Assim o cadastro
+  pode ser concluído no mesmo fluxo e, ao final, o sistema libera os protocolos e encaminha o
+  usuário para Tarefas.
+- Um lead com onboarding local ativo aparece em `Fechado` mesmo se a sincronização externa ainda
+  devolver `assinado`. Os resumos diários também deixaram de contar assinatura pendente de
+  ativação como fechamento concluído.
+- Validação: build completo do Next.js 14 em cópia isolada, com 19 rotas compiladas; health checks
+  do frontend e backend responderam `200`. Em produção, o quadro exibiu a nova coluna separada e
+  os onboardings ativos na coluna `Fechado`. No momento da conferência havia zero leads em
+  `Assinado · ativar`, portanto nenhuma operação real foi submetida.
+- Commit do frontend: `96a12e9`.
+- Deploy Railway `SUCCESS`: `7d24a866-a8d4-4845-bddc-c1d89816692f`.
