@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { uuidValido } from '../utils/validacao.js';
+import { registrarAuditoria } from '../middleware/auditoria.js';
 
 export const produtosRouter = Router();
 
@@ -116,6 +117,50 @@ produtosRouter.post('/clientes/:clienteId', apenasMaster, async (req, res) => {
     if (e.code === '23505') return res.status(409).json({ ok: false, erro: 'Produto já vinculado a este cliente.' });
     throw e;
   }
+});
+
+// PATCH /api/produtos/clientes/:clienteId/:cpId — atualizar honorários do contrato
+produtosRouter.patch('/clientes/:clienteId/:cpId', apenasMaster, async (req, res) => {
+  if (!uuidValido(req.params.clienteId) || !uuidValido(req.params.cpId)) {
+    return res.status(400).json({ ok: false, erro: 'Cliente ou vínculo de tese inválidos.' });
+  }
+
+  const honorariosInformados = req.body.honorarios_pct;
+  const percentual = Number(honorariosInformados);
+  if (honorariosInformados == null || String(honorariosInformados).trim() === ''
+      || !Number.isFinite(percentual) || percentual < 0 || percentual > 100) {
+    return res.status(400).json({ ok: false, erro: 'Honorários devem ser um percentual entre 0 e 100.' });
+  }
+
+  const vinculoAtual = await db.queryOne(
+    `SELECT cp.id, cp.cliente_id, cp.produto_id, cp.honorarios_pct, pr.nome AS produto_nome
+     FROM cliente_produtos cp
+     JOIN produtos pr ON pr.id = cp.produto_id
+     WHERE cp.id = $1 AND cp.cliente_id = $2`,
+    [req.params.cpId, req.params.clienteId]
+  );
+  if (!vinculoAtual) {
+    return res.status(404).json({ ok: false, erro: 'Vínculo da tese com este cliente não encontrado.' });
+  }
+
+  const [vinculo] = await db.query(
+    `UPDATE cliente_produtos SET honorarios_pct = $1
+     WHERE id = $2 AND cliente_id = $3
+     RETURNING *`,
+    [percentual, req.params.cpId, req.params.clienteId]
+  );
+
+  await registrarAuditoria({
+    usuarioId: req.user.id,
+    acao: 'alterar_honorarios_contrato',
+    entidade: 'cliente_produto',
+    entidadeId: req.params.cpId,
+    valorAntes: { honorarios_pct: vinculoAtual.honorarios_pct, produto_id: vinculoAtual.produto_id },
+    valorDepois: { honorarios_pct: percentual, produto_id: vinculoAtual.produto_id },
+    ip: req._ip,
+  });
+
+  res.json({ ok: true, vinculo: { ...vinculo, produto_nome: vinculoAtual.produto_nome } });
 });
 
 // DELETE /api/produtos/clientes/:clienteId/:cpId — remover vínculo
