@@ -394,3 +394,24 @@ integrações ou produção. Não registrar segredos neste documento.
 - Commits: backend `f0e4928`; frontend `c1f3135`. Deploys Railway `SUCCESS`: backend
   `09214b7c-1eed-44cf-8e66-ee76255ffb57`; frontend
   `c1b1de08-42fa-4275-87d5-50aef9638a63`.
+
+### 15/09/2026 — Edição de honorários das teses contratadas
+
+- Corrigida a ausência de edição do percentual em vínculos já existentes de
+  `cliente_produtos`. Antes, o honorário só podia ser informado ao criar o vínculo; depois disso
+  a interface apenas exibia o valor.
+- O Master agora pode editar o percentual tanto na seção `Tese jurídica do processo` quanto em
+  `Cliente > Teses e Protocolos`, sem remover ou recriar a tese. A edição da ficha processual
+  acompanha a tese selecionada no campo.
+- Criado `PATCH /api/produtos/clientes/:clienteId/:cpId`, restrito a Master. A rota valida os dois
+  UUIDs, confirma que o vínculo pertence ao cliente, aceita somente percentual entre 0 e 100 e
+  registra valor anterior e novo em `logs_auditoria`.
+- A tela informa expressamente que a alteração vale para os próximos cálculos automáticos. Os
+  lançamentos financeiros já gerados são históricos e não são recalculados silenciosamente.
+- Validação: backend **54/54 testes**, verificação sintática, build completo do Next.js 14 em
+  cópia isolada com as 19 rotas compiladas e health checks `200` nos dois serviços. A inspeção
+  visual pelo navegador não foi concluída porque o Mac estava bloqueado; nenhum contrato real foi
+  alterado durante os testes.
+- Commits: backend `16b7e8f`; frontend `b61d258`. Deploys Railway `SUCCESS`: backend
+  `2c68851c-ae69-42f1-8483-39caf21843ec`; frontend
+  `944a9237-61aa-4ebd-b8c4-d19d7f557334`.
