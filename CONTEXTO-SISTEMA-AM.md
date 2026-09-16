@@ -480,3 +480,7 @@ integrações ou produção. Não registrar segredos neste documento.
 - Validação local: backend **54/54 testes**, verificação sintática e `git diff --check`; frontend
   compilado em cópia isolada com as 19 rotas geradas, sem executar `next build` no diretório de
   desenvolvimento.
+- Produção confirmou a criação das três colunas de origem/período. Commits: backend `a969bc8`;
+  frontend `d63a9f6`. Deploys Railway `SUCCESS`: backend
+  `0c6e94a4-2dab-4efd-8f55-23b98750d5d7`; frontend
+  `e6863246-ddc0-4aa3-8d48-925d1e86d7e7`.
