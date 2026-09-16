@@ -17,7 +17,7 @@ tarefasRouter.param('id', (req, res, next, id) => {
 // GET /api/tarefas — lista tarefas do usuário (ou todas para Master)
 tarefasRouter.get('/', async (req, res) => {
   const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, prazo_de, prazo_ate,
-          concluida_de, concluida_ate, tipo, processo_id, fila, triagem_motivo, busca, page, limite } = req.query;
+          concluida_de, concluida_ate, tipo, processo_id, fila, triagem_motivo, origem, horizonte, busca, page, limite } = req.query;
   const { pagina: paginaSegura, limite: limiteSeguro, offset } = paginacaoSegura(page, limite || 100);
 
   const params = [];
@@ -78,6 +78,30 @@ tarefasRouter.get('/', async (req, res) => {
     condicoes.push(`(${motivos[triagem_motivo]})`);
   }
 
+  if (origem) {
+    const origens = {
+      publicacoes: `t.publicacao_id IS NOT NULL`,
+      processos: `t.processo_id IS NOT NULL AND t.publicacao_id IS NULL AND t.onboarding_id IS NULL`,
+      onboarding: `t.onboarding_id IS NOT NULL`,
+      administrativas: `t.processo_id IS NULL AND t.publicacao_id IS NULL AND t.onboarding_id IS NULL`,
+      manuais: `t.tipo='geral' AND t.publicacao_id IS NULL AND t.onboarding_id IS NULL`,
+    };
+    if (!origens[origem]) return res.status(400).json({ ok: false, erro: 'Origem de tarefa inválida.' });
+    condicoes.push(`(${origens[origem]})`);
+  }
+
+  if (horizonte) {
+    const horizontes = {
+      vencidas: `t.prazo_data < CURRENT_DATE AND t.status NOT IN ('concluida','cancelada')`,
+      hoje: `t.prazo_data = CURRENT_DATE AND t.status NOT IN ('concluida','cancelada')`,
+      tres_dias: `t.prazo_data BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '3 days' AND t.status NOT IN ('concluida','cancelada')`,
+      sete_dias: `t.prazo_data BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days' AND t.status NOT IN ('concluida','cancelada')`,
+      sem_prazo: `t.prazo_data IS NULL AND t.status NOT IN ('concluida','cancelada')`,
+    };
+    if (!horizontes[horizonte]) return res.status(400).json({ ok: false, erro: 'Período de tarefa inválido.' });
+    condicoes.push(`(${horizontes[horizonte]})`);
+  }
+
   if (prazo_dias !== undefined) {
     const dias = Number(prazo_dias);
     if (dias === 0) {
@@ -112,7 +136,11 @@ tarefasRouter.get('/', async (req, res) => {
     ) = $${params.length}`);
   }
   if (cliente_id)  { params.push(cliente_id);  condicoes.push(`COALESCE(cl.id,tc.id,oc.id,pc.id) = $${params.length}`); }
-  if (produto_id)  { params.push(produto_id);  condicoes.push(`COALESCE(pr.id,opr.id,ppr.id) = $${params.length}`); }
+  if (produto_id === 'sem_tese') condicoes.push(`COALESCE(pr.id,opr.id,ppr.id) IS NULL`);
+  else if (produto_id)  {
+    if (!uuidValido(produto_id)) return res.status(400).json({ ok: false, erro: 'Tese inválida.' });
+    params.push(produto_id); condicoes.push(`COALESCE(pr.id,opr.id,ppr.id) = $${params.length}`);
+  }
   if (atribuido_a) { params.push(atribuido_a); condicoes.push(`t.atribuido_a = $${params.length}`); }
   if (busca?.trim()) {
     params.push(`%${busca.trim()}%`);
@@ -169,6 +197,12 @@ tarefasRouter.get('/', async (req, res) => {
             COALESCE(pr.id,opr.id,ppr.id) AS produto_id,
             COALESCE(pr.nome,opr.nome,ppr.nome) AS produto_nome,
             CASE WHEN pr.id IS NOT NULL THEN 'tarefa' WHEN opr.id IS NOT NULL THEN 'contrato' WHEN ppr.id IS NOT NULL THEN 'processo' END AS produto_origem,
+            CASE
+              WHEN t.publicacao_id IS NOT NULL THEN 'publicacoes'
+              WHEN t.onboarding_id IS NOT NULL THEN 'onboarding'
+              WHEN t.processo_id IS NOT NULL THEN 'processos'
+              ELSE 'administrativas'
+            END AS origem_tarefa,
             ARRAY_REMOVE(ARRAY[
               CASE WHEN t.precisa_triagem THEN 'sinalizada'::text END,
               CASE WHEN t.atribuido_a IS NULL THEN 'sem_responsavel'::text END,
@@ -240,6 +274,90 @@ tarefasRouter.get('/resumo', async (req, res) => {
     [...params, req.user.id]
   );
   res.json({ ok: true, resumo });
+});
+
+// GET /api/tarefas/resumo-teses — carga operacional completa, sem depender da página atual.
+tarefasRouter.get('/resumo-teses', async (req, res) => {
+  const { fila = 'minha', status, origem, horizonte, cliente_id, atribuido_a } = req.query;
+  const params = [];
+  const condicoes = [`t.status NOT IN ('cancelada')`];
+
+  const filas = {
+    minha: () => { params.push(req.user.id); condicoes.push(`t.atribuido_a=$${params.length}`); condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`t.precisa_triagem=false`); },
+    equipe: () => { condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`t.precisa_triagem=false`); },
+    onboarding: () => { condicoes.push(`t.onboarding_id IS NOT NULL`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
+    protocolos: () => { condicoes.push(`t.tipo='protocolar'`); condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`t.precisa_triagem=false`); },
+    validacao: () => { condicoes.push(`(t.status='aguardando_validacao' OR t.tipo='assinatura')`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
+    prazos: () => { condicoes.push(`t.tipo IN ('prazo','prazo_pagamento')`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
+    triagem: () => { condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`(
+      t.precisa_triagem=true OR t.atribuido_a IS NULL
+      OR (t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura'))
+      OR (t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL)
+    )`); },
+    concluida: () => condicoes.push(`t.status='concluida'`),
+  };
+  if (!filas[fila]) return res.status(400).json({ ok: false, erro: 'Fila de tarefas inválida.' });
+  filas[fila]();
+
+  if (status && status !== 'abertas' && fila !== 'concluida') {
+    params.push(status); condicoes.push(`t.status=$${params.length}`);
+  }
+  const origens = {
+    publicacoes: `t.publicacao_id IS NOT NULL`,
+    processos: `t.processo_id IS NOT NULL AND t.publicacao_id IS NULL AND t.onboarding_id IS NULL`,
+    onboarding: `t.onboarding_id IS NOT NULL`,
+    administrativas: `t.processo_id IS NULL AND t.publicacao_id IS NULL AND t.onboarding_id IS NULL`,
+    manuais: `t.tipo='geral' AND t.publicacao_id IS NULL AND t.onboarding_id IS NULL`,
+  };
+  if (origem) {
+    if (!origens[origem]) return res.status(400).json({ ok: false, erro: 'Origem de tarefa inválida.' });
+    condicoes.push(`(${origens[origem]})`);
+  }
+  const horizontes = {
+    vencidas: `t.prazo_data < CURRENT_DATE AND t.status NOT IN ('concluida','cancelada')`,
+    hoje: `t.prazo_data = CURRENT_DATE AND t.status NOT IN ('concluida','cancelada')`,
+    tres_dias: `t.prazo_data BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '3 days' AND t.status NOT IN ('concluida','cancelada')`,
+    sete_dias: `t.prazo_data BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days' AND t.status NOT IN ('concluida','cancelada')`,
+    sem_prazo: `t.prazo_data IS NULL AND t.status NOT IN ('concluida','cancelada')`,
+  };
+  if (horizonte) {
+    if (!horizontes[horizonte]) return res.status(400).json({ ok: false, erro: 'Período de tarefa inválido.' });
+    condicoes.push(`(${horizontes[horizonte]})`);
+  }
+  if (cliente_id) { params.push(cliente_id); condicoes.push(`COALESCE(cl.id,tc.id,oc.id,pc.id)=$${params.length}`); }
+  if (atribuido_a) { params.push(atribuido_a); condicoes.push(`t.atribuido_a=$${params.length}`); }
+  if (req.user.perfil !== 'master' && fila !== 'minha') {
+    params.push(req.user.id); condicoes.push(`(t.atribuido_a=$${params.length} OR t.validado_por=$${params.length})`);
+  }
+
+  const rows = await db.query(
+    `SELECT COALESCE(pr.id,opr.id,ppr.id)::text AS produto_id,
+            COALESCE(pr.nome,opr.nome,ppr.nome,'Sem tese') AS produto_nome,
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE t.status='pendente')::int AS a_fazer,
+            COUNT(*) FILTER (WHERE t.status='em_execucao')::int AS em_andamento,
+            COUNT(*) FILTER (WHERE t.status='aguardando_validacao')::int AS validacao,
+            COUNT(*) FILTER (WHERE t.prazo_data<CURRENT_DATE AND t.status NOT IN ('concluida','cancelada'))::int AS vencidas,
+            COUNT(*) FILTER (WHERE t.prazo_data=CURRENT_DATE AND t.status NOT IN ('concluida','cancelada'))::int AS hoje,
+            COUNT(*) FILTER (WHERE t.publicacao_id IS NOT NULL)::int AS publicacoes
+       FROM tarefas t
+       LEFT JOIN processos p ON p.id=t.processo_id
+       LEFT JOIN produtos ppr ON ppr.id=p.produto_id
+       LEFT JOIN clientes pc ON pc.id=p.cliente_id
+       LEFT JOIN cliente_produtos cp ON cp.id=t.cliente_produto_id
+       LEFT JOIN clientes cl ON cl.id=cp.cliente_id
+       LEFT JOIN produtos pr ON pr.id=cp.produto_id
+       LEFT JOIN clientes tc ON tc.id=t.cliente_id
+       LEFT JOIN onboardings_contrato ob ON ob.id=t.onboarding_id
+       LEFT JOIN clientes oc ON oc.id=ob.cliente_id
+       LEFT JOIN onboarding_produtos op ON op.id=t.onboarding_produto_id
+       LEFT JOIN produtos opr ON opr.id=op.produto_id
+      WHERE ${condicoes.join(' AND ')}
+      GROUP BY COALESCE(pr.id,opr.id,ppr.id), COALESCE(pr.nome,opr.nome,ppr.nome,'Sem tese')
+      ORDER BY COUNT(*) DESC, COALESCE(pr.nome,opr.nome,ppr.nome,'Sem tese')`,
+    params
+  );
+  res.json({ ok: true, teses: rows });
 });
 
 // POST /api/tarefas — cria tarefa (Master atribui ao Junior)

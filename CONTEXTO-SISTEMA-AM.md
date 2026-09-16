@@ -437,3 +437,21 @@ integrações ou produção. Não registrar segredos neste documento.
 - Commits: backend `cad7f87`; frontend `1ae6899`. Deploys Railway `SUCCESS`: backend
   `3b2ea271-8348-4a1a-b3e3-6ecd6b00acfd`; frontend
   `b4df0d59-5d98-4825-a438-2d3ec4829c89`. Health checks responderam `200` nos dois serviços.
+
+### 16/09/2026 — Filtros operacionais e carga de atividades por tese
+
+- A tela de tarefas ganhou filtros combináveis de origem (`Publicações`, `Processos`, `Novos
+  contratos`, `Administrativas` e `Criadas manualmente`), horizonte (`Vencidas`, `Vencem hoje`,
+  próximos 3 ou 7 dias e `Sem prazo`) e tese, incluindo a opção `Sem tese`.
+- As combinações funcionam dentro das filas existentes e aparecem como caminho de contexto, por
+  exemplo `Minha fila › Publicações › Férias 45 dias › Vencidas`, com limpeza em uma ação.
+- A origem `Publicações` considera apenas tarefas efetivamente criadas a partir de publicação
+  (`tarefas.publicacao_id`); publicações que não geraram providência continuam fora da execução.
+- Criado `GET /api/tarefas/resumo-teses`, que calcula no banco a carga completa da fila por tese,
+  sem depender dos 100 cartões da página. O quadro apresenta a fazer, em andamento, validação,
+  originadas de publicação, vencidas e total, e cada linha funciona como filtro.
+- O backend passou a aceitar `origem`, `horizonte` e `produto_id=sem_tese`, validando opções e UUIDs.
+  A API também devolve `origem_tarefa` em cada cartão para futuras visualizações.
+- Validação local: backend **54/54 testes**, verificação sintática e `git diff --check`; frontend
+  compilado em cópia isolada, com as 19 rotas do Next.js geradas sem executar `next build` no
+  diretório utilizado pelo desenvolvimento.
