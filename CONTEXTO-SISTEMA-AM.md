@@ -455,3 +455,7 @@ integrações ou produção. Não registrar segredos neste documento.
 - Validação local: backend **54/54 testes**, verificação sintática e `git diff --check`; frontend
   compilado em cópia isolada, com as 19 rotas do Next.js geradas sem executar `next build` no
   diretório utilizado pelo desenvolvimento.
+- Produção confirmou `200` tanto na listagem combinada `Equipe + Publicações + próximos 7 dias`
+  quanto no resumo completo por tese para publicações. Commits: backend `2776fda`; frontend
+  `2d61ab8`. Deploys Railway `SUCCESS`: backend `5587eef8-73dd-4609-91ae-7e9a826caaf6`;
+  frontend `74157b72-274a-4703-9931-09d2f00bef3c`.
