@@ -169,7 +169,7 @@ async function iniciar() {
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS data_conclusao_bloqueio DATE`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS justificativa_cancelamento TEXT`).catch(() => {});
     await db.query(`ALTER TABLE tarefas DROP CONSTRAINT IF EXISTS tarefas_status_check`);
-    await db.query(`ALTER TABLE tarefas ADD CONSTRAINT tarefas_status_check CHECK (status IN ('pendente','em_execucao','aguardando_validacao','concluida','devolvida','cancelada','nao_verificada','bloqueada'))`);
+    await db.query(`ALTER TABLE tarefas ADD CONSTRAINT tarefas_status_check CHECK (status IN ('pendente','em_execucao','aguardando_validacao','aguardando_protocolo','aguardando_retorno','concluida','devolvida','cancelada','nao_verificada','bloqueada'))`);
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS periodo_inicio DATE`).catch(() => {});
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS periodo_fim DATE`).catch(() => {});
     await db.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS vinculo_inicio DATE`).catch(() => {});
@@ -182,6 +182,13 @@ async function iniciar() {
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS descricao TEXT`).catch(() => {});
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS polos_passivos_padrao TEXT[]`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS observacao TEXT`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS protocolo_confirmado_em TIMESTAMPTZ`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS protocolo_comprovante TEXT`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS diligencia_canal TEXT`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS diligencia_resultado TEXT`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS diligencia_atendente TEXT`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS diligencia_comprovante TEXT`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS realizada_em TIMESTAMPTZ`).catch(() => {});
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS classificacao TEXT`).catch(() => {});
     // Prazo limite para pagamento de RPV/Precatório
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS data_limite_pagamento DATE`).catch(() => {});

@@ -52,12 +52,16 @@ tarefasRouter.get('/', async (req, res) => {
       condicoes.push(`(
         t.precisa_triagem=true
         OR t.atribuido_a IS NULL
-        OR (t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura'))
+        OR (t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura','diligencia'))
         OR (t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL)
       )`);
     },
     prazos: () => {
       condicoes.push(`t.tipo IN ('prazo','prazo_pagamento')`);
+      condicoes.push(`t.status NOT IN ('concluida','cancelada')`);
+    },
+    diligencias: () => {
+      condicoes.push(`t.tipo='diligencia'`);
       condicoes.push(`t.status NOT IN ('concluida','cancelada')`);
     },
     concluida: () => condicoes.push(`t.status='concluida'`),
@@ -69,7 +73,7 @@ tarefasRouter.get('/', async (req, res) => {
     const motivos = {
       sinalizada: `t.precisa_triagem=true`,
       sem_responsavel: `t.atribuido_a IS NULL`,
-      sem_prazo: `t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura')`,
+      sem_prazo: `t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura','diligencia')`,
       sem_tese: `t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL`,
     };
     if (fila !== 'triagem' || !motivos[triagem_motivo]) {
@@ -206,7 +210,7 @@ tarefasRouter.get('/', async (req, res) => {
             ARRAY_REMOVE(ARRAY[
               CASE WHEN t.precisa_triagem THEN 'sinalizada'::text END,
               CASE WHEN t.atribuido_a IS NULL THEN 'sem_responsavel'::text END,
-              CASE WHEN t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura') THEN 'sem_prazo'::text END,
+              CASE WHEN t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura','diligencia') THEN 'sem_prazo'::text END,
               CASE WHEN t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL THEN 'sem_tese'::text END
             ], NULL) AS motivos_triagem,
             ob.status AS onboarding_status,
@@ -258,7 +262,7 @@ tarefasRouter.get('/resumo', async (req, res) => {
        COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND t.prazo_data=CURRENT_DATE)::int AS hoje,
        COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND (
          t.precisa_triagem OR t.atribuido_a IS NULL
-         OR (t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura'))
+         OR (t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura','diligencia'))
          OR (t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL)
        ))::int AS triagem,
        COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada') AND t.onboarding_id IS NOT NULL)::int AS onboarding,
@@ -289,9 +293,10 @@ tarefasRouter.get('/resumo-teses', async (req, res) => {
     protocolos: () => { condicoes.push(`t.tipo='protocolar'`); condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`t.precisa_triagem=false`); },
     validacao: () => { condicoes.push(`(t.status='aguardando_validacao' OR t.tipo='assinatura')`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
     prazos: () => { condicoes.push(`t.tipo IN ('prazo','prazo_pagamento')`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
+    diligencias: () => { condicoes.push(`t.tipo='diligencia'`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
     triagem: () => { condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`(
       t.precisa_triagem=true OR t.atribuido_a IS NULL
-      OR (t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura'))
+      OR (t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura','diligencia'))
       OR (t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL)
     )`); },
     concluida: () => condicoes.push(`t.status='concluida'`),
@@ -772,6 +777,7 @@ tarefasRouter.patch('/:id/assinar', apenasMaster, async (req, res) => {
   if (!tarefa) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
   if (tarefa.tipo !== 'assinatura') return res.status(400).json({ ok: false, erro: 'Esta tarefa não é de assinatura.' });
   if (tarefa.status === 'concluida') return res.status(409).json({ ok: false, erro: 'Tarefa já assinada.' });
+  if (tarefa.status === 'aguardando_protocolo') return res.status(409).json({ ok: false, erro: 'A peça já foi assinada e aguarda confirmação do protocolo.' });
   // Quem enviou para assinatura não pode assinar a própria peça
   if (tarefa.validado_por === req.user.id) {
     return res.status(403).json({ ok: false, erro: 'Quem enviou a peça não pode assiná-la. Outro usuário deve conferir e assinar.' });
@@ -781,35 +787,115 @@ tarefasRouter.patch('/:id/assinar', apenasMaster, async (req, res) => {
   }
 
   await db.execute(
-    `UPDATE tarefas SET status = 'concluida', assinado_por = $1, assinado_em = NOW(), concluida_em = NOW()
+    `UPDATE tarefas SET status = 'aguardando_protocolo', assinado_por = $1, assinado_em = NOW(), concluida_em = NULL
      WHERE id = $2`,
     [req.user.id, req.params.id]
   );
 
-  if (tarefa.calendar_event_id) deletarEventoCalendar(tarefa.calendar_event_id).catch(() => {});
-
-  // Baixa em cascata: se esta assinatura veio de uma demanda que, por sua vez, veio de um
-  // prazo (cadeia prazo → demanda → assinatura), assinar conclui o prazo original também.
-  if (tarefa.tarefa_origem_id) {
-    const demanda = await db.queryOne(`SELECT tarefa_origem_id FROM tarefas WHERE id = $1`, [tarefa.tarefa_origem_id]);
-    if (demanda?.tarefa_origem_id) {
-      const prazoOrigem = await db.queryOne(
-        `SELECT id, calendar_event_id FROM tarefas WHERE id = $1 AND tipo IN ('prazo','prazo_pagamento') AND status NOT IN ('concluida','cancelada')`,
-        [demanda.tarefa_origem_id]
-      );
-      if (prazoOrigem) {
-        await db.execute(`UPDATE tarefas SET status = 'concluida', concluida_em = NOW() WHERE id = $1`, [prazoOrigem.id]);
-        if (prazoOrigem.calendar_event_id) deletarEventoCalendar(prazoOrigem.calendar_event_id).catch(() => {});
-      }
-    }
-  }
-
   await registrarAuditoria({
     usuarioId: req.user.id, acao: 'assinar', entidade: 'tarefa', entidadeId: req.params.id,
-    valorAntes: { status: tarefa.status }, valorDepois: { status: 'concluida', assinado_por: req.user.id }, ip: req._ip,
+    valorAntes: { status: tarefa.status }, valorDepois: { status: 'aguardando_protocolo', assinado_por: req.user.id }, ip: req._ip,
   });
 
-  res.json({ ok: true });
+  res.json({ ok: true, status: 'aguardando_protocolo' });
+});
+
+// POST /api/tarefas/:id/confirmar-protocolo — só o protocolo comprovado encerra o prazo.
+// Opcionalmente já agenda uma diligência posterior, vinculada à assinatura protocolada.
+tarefasRouter.post('/:id/confirmar-protocolo', apenasMaster, async (req, res) => {
+  const { comprovante, diligencia } = req.body || {};
+  if (diligencia?.prazo_data && !dataCalendarioValida(diligencia.prazo_data)) {
+    return res.status(400).json({ ok: false, erro: 'Data da diligência inválida.' });
+  }
+  if (diligencia && (!diligencia.subtipo || !diligencia.atribuido_a || !diligencia.prazo_data)) {
+    return res.status(400).json({ ok: false, erro: 'Informe tipo, responsável e data da diligência.' });
+  }
+  if (diligencia?.atribuido_a && !uuidValido(diligencia.atribuido_a)) {
+    return res.status(400).json({ ok: false, erro: 'Responsável pela diligência inválido.' });
+  }
+
+  const pg = await db.pool.connect();
+  let criada = null;
+  let prazoCalendar = null;
+  try {
+    await pg.query('BEGIN');
+    const assinaturaResult = await pg.query(`SELECT * FROM tarefas WHERE id=$1 FOR UPDATE`, [req.params.id]);
+    const assinatura = assinaturaResult.rows[0];
+    if (!assinatura) { const e = new Error('Tarefa de assinatura não encontrada.'); e.status = 404; throw e; }
+    if (assinatura.tipo !== 'assinatura' || assinatura.status !== 'aguardando_protocolo' || !assinatura.assinado_em) {
+      const e = new Error('A peça precisa estar assinada e aguardando protocolo.'); e.status = 409; throw e;
+    }
+
+    await pg.query(
+      `UPDATE tarefas SET status='concluida', concluida_em=NOW(), protocolo_confirmado_em=NOW(), protocolo_comprovante=$1 WHERE id=$2`,
+      [String(comprovante || '').trim() || null, assinatura.id]
+    );
+    const demandaResult = assinatura.tarefa_origem_id
+      ? await pg.query(`SELECT tarefa_origem_id FROM tarefas WHERE id=$1`, [assinatura.tarefa_origem_id]) : { rows: [] };
+    const prazoId = demandaResult.rows[0]?.tarefa_origem_id;
+    if (prazoId) {
+      const prazoResult = await pg.query(
+        `UPDATE tarefas SET status='concluida', concluida_em=NOW()
+          WHERE id=$1 AND tipo IN ('prazo','prazo_pagamento') AND status NOT IN ('concluida','cancelada')
+          RETURNING calendar_event_id`, [prazoId]
+      );
+      prazoCalendar = prazoResult.rows[0]?.calendar_event_id || null;
+    }
+    if (diligencia) {
+      const duplicada = await pg.query(
+        `SELECT id FROM tarefas WHERE processo_id=$1 AND tipo='diligencia' AND subtipo=$2
+          AND status NOT IN ('concluida','cancelada') LIMIT 1`,
+        [assinatura.processo_id, diligencia.subtipo]
+      );
+      if (duplicada.rows[0]) { const e = new Error('Já existe uma diligência deste tipo aberta para o processo.'); e.status = 409; throw e; }
+      const criadaResult = await pg.query(
+        `INSERT INTO tarefas (processo_id,tipo,subtipo,descricao,instrucao,atribuido_a,validado_por,urgencia,prazo_data,tarefa_origem_id)
+         VALUES ($1,'diligencia',$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+        [assinatura.processo_id, diligencia.subtipo, diligencia.descricao?.trim() || `Diligência — ${diligencia.subtipo.replaceAll('_',' ')}`,
+         diligencia.instrucao?.trim() || null, diligencia.atribuido_a, req.user.id,
+         diligencia.urgencia || 'MEDIO', diligencia.prazo_data, assinatura.id]
+      );
+      criada = criadaResult.rows[0];
+    }
+    await pg.query('COMMIT');
+  } catch (erro) {
+    await pg.query('ROLLBACK');
+    return res.status(erro.status || 500).json({ ok: false, erro: erro.message });
+  } finally { pg.release(); }
+
+  if (prazoCalendar) deletarEventoCalendar(prazoCalendar).catch(() => {});
+  await registrarAuditoria({ usuarioId:req.user.id, acao:'confirmar_protocolo', entidade:'tarefa', entidadeId:req.params.id,
+    valorDepois:{ protocolo_confirmado:true, diligencia_id:criada?.id || null }, ip:req._ip });
+  res.json({ ok:true, diligencia:criada });
+});
+
+// PATCH /api/tarefas/:id/concluir-diligencia — registra resultado ou agenda nova verificação.
+tarefasRouter.patch('/:id/concluir-diligencia', async (req, res) => {
+  const { canal, resultado, atendente, comprovante, aguardar_retorno, proxima_verificacao } = req.body || {};
+  if (!String(canal || '').trim() || !String(resultado || '').trim()) {
+    return res.status(400).json({ ok:false, erro:'Informe o canal e o resultado da diligência.' });
+  }
+  if (aguardar_retorno && !dataCalendarioValida(proxima_verificacao)) {
+    return res.status(400).json({ ok:false, erro:'Informe a data da próxima verificação.' });
+  }
+  const tarefa = await db.queryOne(`SELECT * FROM tarefas WHERE id=$1`, [req.params.id]);
+  if (!tarefa) return res.status(404).json({ ok:false, erro:'Diligência não encontrada.' });
+  if (tarefa.tipo !== 'diligencia') return res.status(400).json({ ok:false, erro:'Esta tarefa não é uma diligência.' });
+  if (req.user.perfil !== 'master' && tarefa.atribuido_a !== req.user.id) return res.status(403).json({ ok:false, erro:'Você não tem acesso a esta diligência.' });
+  if (['concluida','cancelada'].includes(tarefa.status)) return res.status(409).json({ ok:false, erro:'Diligência já finalizada.' });
+
+  const novoStatus = aguardar_retorno ? 'aguardando_retorno' : 'concluida';
+  await db.execute(
+    `UPDATE tarefas SET status=$1,prazo_data=$2,diligencia_canal=$3,diligencia_resultado=$4,
+       diligencia_atendente=$5,diligencia_comprovante=$6,realizada_em=NOW(),concluida_em=$7 WHERE id=$8`,
+    [novoStatus, aguardar_retorno ? proxima_verificacao : tarefa.prazo_data, String(canal).trim(), String(resultado).trim(),
+     String(atendente || '').trim() || null, String(comprovante || '').trim() || null,
+     aguardar_retorno ? null : new Date(), tarefa.id]
+  );
+  if (!aguardar_retorno && tarefa.calendar_event_id) deletarEventoCalendar(tarefa.calendar_event_id).catch(() => {});
+  await registrarAuditoria({ usuarioId:req.user.id, acao:'registrar_diligencia', entidade:'tarefa', entidadeId:tarefa.id,
+    valorAntes:{status:tarefa.status}, valorDepois:{status:novoStatus,canal,resultado,proxima_verificacao}, ip:req._ip });
+  res.json({ ok:true, status:novoStatus });
 });
 
 // POST /api/tarefas/:id/gerar-demanda — a partir de uma tarefa de prazo, gera a demanda de

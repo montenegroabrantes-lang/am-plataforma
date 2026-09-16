@@ -248,13 +248,20 @@ CREATE TABLE tarefas (
   atribuido_a     UUID REFERENCES usuarios(id),    -- Junior
   validado_por    UUID REFERENCES usuarios(id),    -- Master
   status          TEXT NOT NULL DEFAULT 'pendente'
-                  CHECK (status IN ('pendente','em_execucao','aguardando_validacao','concluida','devolvida','cancelada','nao_verificada','bloqueada')),
+                  CHECK (status IN ('pendente','em_execucao','aguardando_validacao','aguardando_protocolo','aguardando_retorno','concluida','devolvida','cancelada','nao_verificada','bloqueada')),
   urgencia        TEXT CHECK (urgencia IN ('CRITICO','ALTO','MEDIO','BAIXO')),
   prazo_data      DATE,
   concluida_em    TIMESTAMPTZ,
   verificada_pje  BOOLEAN,               -- resultado da verificação soberana
   verificada_em   TIMESTAMPTZ,
   observacao_devolucao TEXT,
+  protocolo_confirmado_em TIMESTAMPTZ,
+  protocolo_comprovante TEXT,
+  diligencia_canal TEXT,
+  diligencia_resultado TEXT,
+  diligencia_atendente TEXT,
+  diligencia_comprovante TEXT,
+  realizada_em TIMESTAMPTZ,
   justificativa_cancelamento TEXT,
   precisa_triagem BOOLEAN NOT NULL DEFAULT false,
   criado_em       TIMESTAMPTZ NOT NULL DEFAULT NOW()

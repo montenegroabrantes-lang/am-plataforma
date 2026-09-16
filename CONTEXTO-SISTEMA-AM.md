@@ -484,3 +484,21 @@ integrações ou produção. Não registrar segredos neste documento.
   frontend `d63a9f6`. Deploys Railway `SUCCESS`: backend
   `0c6e94a4-2dab-4efd-8f55-23b98750d5d7`; frontend
   `e6863246-ddc0-4aa3-8d48-925d1e86d7e7`.
+
+### 16/09/2026 — Protocolo confirmado e diligências judiciais
+
+- Separada a cadeia `prazo → elaboração/juntada → assinatura → protocolo`. Assinar uma peça não
+  encerra mais o prazo judicial: a tarefa passa para `aguardando_protocolo`, e somente a ação
+  explícita `Confirmar protocolo` conclui a assinatura e o prazo de origem.
+- A confirmação aceita referência/comprovante e pode criar imediatamente uma diligência posterior,
+  herdando processo e tese. O sistema impede outra diligência aberta do mesmo subtipo no processo.
+- Criado o tipo próprio `diligencia`, com fila `Diligências` e subtipos como solicitar conclusão,
+  verificar apreciação, contatar secretaria, cobrar cumprimento, acompanhar alvará/RPV/precatório
+  e certificar decurso. Diligência não é mais confundida com a demanda de preparar uma peça.
+- A conclusão exige canal e resultado. Pode registrar atendente e comprovante; quando há retorno
+  pendente, exige data de nova verificação e mantém a tarefa em `aguardando_retorno`.
+- Foram adicionados os campos auditáveis de protocolo e diligência em `tarefas`, e os novos estados
+  `aguardando_protocolo` e `aguardando_retorno` ao domínio de status.
+- Validação local: backend **54/54 testes**, verificação sintática e `git diff --check`; frontend
+  compilado em cópia isolada com as 19 rotas geradas, sem executar `next build` no diretório de
+  desenvolvimento.
