@@ -97,6 +97,19 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
 
   const prazoCadastro = onboarding.prazo_cadastro || somarDiasUteis(new Date(), 1);
   const prazoProtocolo = onboarding.prazo_protocolo || somarDiasUteis(new Date(), 3);
+  const periodoSeguro = valor => {
+    const texto = String(valor || '').trim();
+    return /^\d{4}-\d{2}(?:-\d{2})?$/.test(texto) ? texto : null;
+  };
+  const inicioInformado = periodoSeguro(lead.inicio);
+  const fimInformado = periodoSeguro(lead.fim);
+  const dadosOrigem = {};
+  if (lead.nome) dadosOrigem.nome = 'calculadora';
+  if (lead.telefone || lead.telefone_real) dadosOrigem.whatsapp = 'calculadora';
+  if (lead.cargo) dadosOrigem.cargo = 'calculadora';
+  if (lead.orgao) dadosOrigem.orgao = 'calculadora';
+  if (inicioInformado) dadosOrigem.vinculo_inicio = 'calculadora';
+  if (fimInformado) dadosOrigem.vinculo_fim = 'calculadora';
   const idsProdutos = [...new Set(onboarding.produtos.map(p => p.produto_id))];
   const pg = await db.pool.connect();
   let registro;
@@ -145,15 +158,20 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
     const onboardingResult = await pg.query(
       `INSERT INTO onboardings_contrato
          (camila_contact_id, estimativa_id, cliente_id, nome, whatsapp, cargo, orgao,
+          vinculo_inicio_informado, vinculo_fim_informado, dados_origem,
           valor_fechado, contrato_assinado, contrato_data, status,
           responsavel_cadastro_id, responsavel_protocolo_id, prazo_cadastro, prazo_protocolo,
           registrado_por, fechado_em, atualizado_em)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true,$9,$10,$11,$12,$13,$14,$15,NOW(),NOW())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,true,$12,$13,$14,$15,$16,$17,$18,NOW(),NOW())
        ON CONFLICT (camila_contact_id) DO UPDATE SET
          estimativa_id = COALESCE(EXCLUDED.estimativa_id, onboardings_contrato.estimativa_id),
          cliente_id = COALESCE(EXCLUDED.cliente_id, onboardings_contrato.cliente_id),
          nome = EXCLUDED.nome, whatsapp = EXCLUDED.whatsapp, cargo = EXCLUDED.cargo,
-         orgao = EXCLUDED.orgao, valor_fechado = EXCLUDED.valor_fechado,
+         orgao = EXCLUDED.orgao,
+         vinculo_inicio_informado = COALESCE(EXCLUDED.vinculo_inicio_informado, onboardings_contrato.vinculo_inicio_informado),
+         vinculo_fim_informado = COALESCE(EXCLUDED.vinculo_fim_informado, onboardings_contrato.vinculo_fim_informado),
+         dados_origem = onboardings_contrato.dados_origem || EXCLUDED.dados_origem,
+         valor_fechado = EXCLUDED.valor_fechado,
          contrato_assinado = true, contrato_data = EXCLUDED.contrato_data,
          status = CASE WHEN onboardings_contrato.status = 'concluido' THEN 'concluido' ELSE EXCLUDED.status END,
          responsavel_cadastro_id = EXCLUDED.responsavel_cadastro_id,
@@ -165,6 +183,7 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
         String(contactId), lead.estimativa_id ? String(lead.estimativa_id) : null,
         cliente?.id || null, String(lead.nome || '').trim() || null,
         lead.telefone || lead.telefone_real || null, lead.cargo || null, lead.orgao || null,
+        inicioInformado, fimInformado, JSON.stringify(dadosOrigem),
         Number(lead.valor_fechado || lead.valor || 0) || null,
         onboarding.contrato_data, status,
         onboarding.responsavel_cadastro_id || null, onboarding.responsavel_protocolo_id,
@@ -328,7 +347,7 @@ export async function cancelarOnboardingPendente(contactId, usuarioId, ip) {
 }
 
 export async function concluirCadastroOnboarding({ onboardingId, dados, usuario, ip }) {
-  const { nome, cpf, whatsapp, email, lgpd_consentimento, vinculos } = dados || {};
+  const { nome, cpf, whatsapp, email, lgpd_consentimento, dados_calculadora_confirmados, vinculos } = dados || {};
   if (!nome || !cpf) {
     const erro = new Error('Nome e CPF são obrigatórios.'); erro.status = 400; throw erro;
   }
@@ -357,6 +376,9 @@ export async function concluirCadastroOnboarding({ onboardingId, dados, usuario,
       const erro = new Error('O cadastro deste onboarding já foi concluído ou vinculado.');
       erro.status = 409;
       throw erro;
+    }
+    if (Object.keys(onboarding.dados_origem || {}).length && dados_calculadora_confirmados !== true) {
+      const erro = new Error('Revise e confirme os dados recebidos da calculadora.'); erro.status = 400; throw erro;
     }
     if (usuario.perfil !== 'master' && onboarding.responsavel_cadastro_id !== usuario.id) {
       const erro = new Error('Você não é o responsável por este cadastro.'); erro.status = 403; throw erro;

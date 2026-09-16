@@ -459,3 +459,24 @@ integrações ou produção. Não registrar segredos neste documento.
   quanto no resumo completo por tese para publicações. Commits: backend `2776fda`; frontend
   `2d61ab8`. Deploys Railway `SUCCESS`: backend `5587eef8-73dd-4609-91ae-7e9a826caaf6`;
   frontend `74157b72-274a-4703-9931-09d2f00bef3c`.
+
+### 16/09/2026 — Pré-preenchimento seguro do cadastro pela calculadora
+
+- O fechamento comercial passou a transportar para o onboarding o período informado pela
+  calculadora, além de nome, WhatsApp, cargo e órgão, que já acompanhavam o fluxo. Os valores são
+  gravados localmente no fechamento para o cadastro não depender da disponibilidade posterior da
+  Camila.
+- Foram adicionados `vinculo_inicio_informado`, `vinculo_fim_informado` e `dados_origem` em
+  `onboardings_contrato`. `dados_origem` registra quais campos vieram da calculadora, sem guardar
+  CPF, e-mail ou consentimento que não tenham sido efetivamente fornecidos.
+- A tela `Completar cadastro` identifica visualmente os campos pré-preenchidos, mantém todos
+  editáveis e exige uma confirmação humana específica de revisão. Essa confirmação é separada do
+  consentimento LGPD, que continua obrigatório e nunca é marcado automaticamente.
+- Datas completas recebidas podem preencher o vínculo. Quando a origem traz apenas mês e ano, a
+  competência é exibida como referência e o funcionário precisa confirmar as datas exatas; o
+  sistema não inventa o primeiro ou o último dia do mês.
+- O backend também exige a confirmação dos dados da calculadora antes de criar/vincular o cliente,
+  preserva a validação real do CPF e continua verificando duplicidade pelo CPF dentro da transação.
+- Validação local: backend **54/54 testes**, verificação sintática e `git diff --check`; frontend
+  compilado em cópia isolada com as 19 rotas geradas, sem executar `next build` no diretório de
+  desenvolvimento.

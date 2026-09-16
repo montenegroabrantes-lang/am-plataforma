@@ -375,6 +375,8 @@ estimativasRouter.post('/leads/:contactId/desfecho', apenasMaster, async (req, r
           telefone: onboarding?.telefone,
           cargo: onboarding?.cargo,
           orgao: onboarding?.orgao,
+          inicio: onboarding?.inicio,
+          fim: onboarding?.fim,
           valor: desfecho.valorFechado,
         },
         onboarding,
