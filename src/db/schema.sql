@@ -445,6 +445,16 @@ CREATE TABLE logs_auditoria (
 );
 -- Log é append-only: sem UPDATE nem DELETE permitidos via aplicação
 
+-- CHAVES DE API PARA INTEGRAÇÕES EXTERNAS. O segredo não é armazenado: apenas seu SHA-256.
+CREATE TABLE chaves_api_externas (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), master_id UUID NOT NULL REFERENCES usuarios(id),
+  nome TEXT NOT NULL, descricao TEXT, chave_hash TEXT NOT NULL UNIQUE, prefixo TEXT NOT NULL,
+  permissoes TEXT[] NOT NULL DEFAULT '{}', ativa BOOLEAN NOT NULL DEFAULT true, expira_em TIMESTAMPTZ,
+  ultimo_uso_em TIMESTAMPTZ, ultimo_uso_ip TEXT, criado_por UUID REFERENCES usuarios(id),
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), revogada_em TIMESTAMPTZ, revogada_por UUID REFERENCES usuarios(id)
+);
+CREATE INDEX idx_chaves_api_master ON chaves_api_externas (master_id, ativa, criado_em DESC);
+
 -- ─────────────────────────────────────────────
 --  ÍNDICES PRINCIPAIS
 -- ─────────────────────────────────────────────

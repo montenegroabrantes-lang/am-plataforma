@@ -506,3 +506,18 @@ integrações ou produção. Não registrar segredos neste documento.
   backend `0f4f760`; frontend `8aaaa81`. Deploys Railway `SUCCESS`: backend
   `85125a90-5e4b-4a0a-ae88-5267bf5c3444`; frontend
   `65ce15e8-5353-4857-8f10-698effe2faf7`.
+
+### 17/09/2026 — Administração de chaves de integração externa
+
+- Criada a área **Configurações → Integrações e API**, restrita a Masters, para criar e revogar
+  chaves destinadas a sistemas externos. Não confundir com segredos de infraestrutura, Camila,
+  Digisac ou Railway: estes continuam somente nas variáveis de ambiente.
+- Cada chave recebe nome, finalidade, permissões mínimas (`leitura`, `clientes`, `processos`,
+  `estimativas`, `tarefas`) e expiração opcional. A chave completa é mostrada exclusivamente uma
+  vez após a criação; depois a interface apresenta apenas um identificador mascarado.
+- A tabela `chaves_api_externas` conserva apenas SHA-256 do segredo e registra uso mais recente,
+  IP, criação e revogação. Criação e revogação também entram em `logs_auditoria`.
+- `src/routes/chavesApi.js` exporta `autenticarChaveExterna` para as futuras rotas públicas de
+  integração, usando `X-AM-API-Key` (ou Bearer) e rejeitando chaves revogadas ou expiradas. Não
+  existe ainda uma rota de negócio externa genérica: ela deve ser criada com escopo explícito e
+  checagem da permissão necessária, sem conceder acesso administrativo.

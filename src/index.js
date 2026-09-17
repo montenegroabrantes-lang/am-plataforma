@@ -34,6 +34,7 @@ import { estimativasRouter } from './routes/estimativas.js';
 import { pushTJRouter }      from './routes/pushTJ.js';
 import { onboardingsRouter } from './routes/onboardings.js';
 import { integracaoCamilaRouter, autenticarIntegracaoCamila } from './routes/integracaoCamila.js';
+import { chavesApiRouter } from './routes/chavesApi.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -134,6 +135,7 @@ app.use('/api/publicacoes',   autenticar, publicacoesRouter);
 app.use('/api/estimativas',   autenticar, estimativasRouter);
 app.use('/api/push-tj',       autenticar, pushTJRouter);
 app.use('/api/onboardings',   autenticar, onboardingsRouter);
+app.use('/api/chaves-api',    autenticar, chavesApiRouter);
 
 // Global error handler — captura erros não tratados nas rotas
 app.use((err, req, res, next) => {
@@ -473,6 +475,16 @@ async function iniciar() {
       )
     `).catch(() => {});
     await db.query(`CREATE INDEX IF NOT EXISTS idx_push_execucoes_inicio ON push_execucoes (iniciado_em DESC)`).catch(() => {});
+
+    // Chaves para integrações externas: guarda somente SHA-256, nunca o segredo em texto.
+    await db.query(`CREATE TABLE IF NOT EXISTS chaves_api_externas (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), master_id UUID NOT NULL REFERENCES usuarios(id),
+      nome TEXT NOT NULL, descricao TEXT, chave_hash TEXT NOT NULL UNIQUE, prefixo TEXT NOT NULL,
+      permissoes TEXT[] NOT NULL DEFAULT '{}', ativa BOOLEAN NOT NULL DEFAULT true, expira_em TIMESTAMPTZ,
+      ultimo_uso_em TIMESTAMPTZ, ultimo_uso_ip TEXT, criado_por UUID REFERENCES usuarios(id),
+      criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), revogada_em TIMESTAMPTZ, revogada_por UUID REFERENCES usuarios(id)
+    )`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_chaves_api_master ON chaves_api_externas (master_id, ativa, criado_em DESC)`).catch(() => {});
 
     // ── Índices de performance para suportar 5000+ processos ──────────────────
     await db.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`).catch(() => {});
