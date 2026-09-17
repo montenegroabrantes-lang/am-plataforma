@@ -521,3 +521,6 @@ integrações ou produção. Não registrar segredos neste documento.
   integração, usando `X-AM-API-Key` (ou Bearer) e rejeitando chaves revogadas ou expiradas. Não
   existe ainda uma rota de negócio externa genérica: ela deve ser criada com escopo explícito e
   checagem da permissão necessária, sem conceder acesso administrativo.
+- A chave pode ser editada posteriormente quanto a nome, finalidade, permissões e expiração. O
+  segredo não é editável nem recuperável; para trocar credencial usa-se rotação (nova chave e
+  revogação da anterior), preservando a segurança e o histórico de auditoria.

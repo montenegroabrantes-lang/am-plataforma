@@ -43,6 +43,31 @@ chavesApiRouter.post('/', apenasMaster, async (req, res) => {
   res.status(201).json({ ok: true, chave, registro });
 });
 
+// Edita metadados e escopo, sem nunca alterar/expor o segredo já emitido.
+chavesApiRouter.patch('/:id', apenasMaster, async (req, res) => {
+  const anterior = await db.queryOne(
+    'SELECT id, nome, descricao, permissoes, expira_em, ativa FROM chaves_api_externas WHERE id = $1 AND master_id = $2',
+    [req.params.id, escopoMaster(req)]
+  );
+  if (!anterior) return res.status(404).json({ ok: false, erro: 'Chave não encontrada.' });
+  if (!anterior.ativa) return res.status(400).json({ ok: false, erro: 'Uma chave revogada não pode ser editada. Crie outra se precisar reativar a integração.' });
+  const nome = String(req.body?.nome ?? anterior.nome).trim();
+  const descricao = String(req.body?.descricao ?? anterior.descricao ?? '').trim().slice(0, 500) || null;
+  const permissoes = [...new Set((Array.isArray(req.body?.permissoes) ? req.body.permissoes : anterior.permissoes).filter(p => PERMISSOES_VALIDAS.has(p)))];
+  const expiraEm = req.body?.expira_em === '' ? null : (req.body?.expira_em ?? anterior.expira_em);
+  if (nome.length < 3 || nome.length > 100) return res.status(400).json({ ok: false, erro: 'Informe um nome entre 3 e 100 caracteres.' });
+  if (!permissoes.length) return res.status(400).json({ ok: false, erro: 'Selecione ao menos uma permissão.' });
+  if (expiraEm && Number.isNaN(Date.parse(expiraEm))) return res.status(400).json({ ok: false, erro: 'Data de expiração inválida.' });
+  const [chave] = await db.query(
+    `UPDATE chaves_api_externas SET nome = $3, descricao = $4, permissoes = $5, expira_em = $6
+     WHERE id = $1 AND master_id = $2
+     RETURNING id, nome, descricao, prefixo, permissoes, ativa, expira_em, ultimo_uso_em, ultimo_uso_ip, criado_em`,
+    [req.params.id, escopoMaster(req), nome, descricao, permissoes, expiraEm]
+  );
+  await registrarAuditoria({ usuarioId: req.user.id, acao: 'editar', entidade: 'chave_api_externa', entidadeId: chave.id, valorAntes: anterior, valorDepois: { nome, descricao, permissoes, expira_em: expiraEm }, ip: req._ip });
+  res.json({ ok: true, chave });
+});
+
 chavesApiRouter.patch('/:id/revogar', apenasMaster, async (req, res) => {
   const anterior = await db.queryOne('SELECT id, nome, ativa FROM chaves_api_externas WHERE id = $1 AND master_id = $2', [req.params.id, escopoMaster(req)]);
   if (!anterior) return res.status(404).json({ ok: false, erro: 'Chave não encontrada.' });
