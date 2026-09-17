@@ -536,3 +536,18 @@ integrações ou produção. Não registrar segredos neste documento.
 - Não foi criada falsa integração de valor/tese de honorários: o contrato atual da API da Camila
   para estimativa manual não confirma esses campos. Para disponibilizá-los corretamente será
   preciso alterar/consultar o serviço Camila no Railway ou obter sua especificação.
+
+### 17/09/2026 — Operações seguras em lote nas tarefas
+
+- A tela de tarefas agora oferece filtro de vencimento `Vence até`, preserva itens selecionados
+  entre páginas e permite selecionar/desmarcar somente a página atual sem perder a seleção das
+  demais páginas. A seleção é limpa quando muda o contexto da busca/fila/filtros.
+- Masters podem, em lote, atribuir, alterar prazo, concluir tarefas elegíveis, cancelar com
+  justificativa e restaurar tarefas canceladas com motivo. Há uma prévia antes da confirmação,
+  exibindo quantidade elegível, período filtrado e itens que ficaram de fora.
+- A conclusão em lote bloqueia deliberadamente `protocolar`, `cadastro_cliente`, `assinatura` e
+  `diligencia`, pois cada uma possui exigência própria (CNJ/comprovante, onboarding, protocolo ou
+  resultado). O backend registra auditoria e remove eventos do Calendar das tarefas concluídas.
+- Rotas: `POST /api/tarefas/lote/previsualizar`, `POST /api/tarefas/lote/concluir` e
+  `POST /api/tarefas/lote/restaurar`; `PATCH /api/tarefas/lote` continua responsável por
+  atribuição, prazo e cancelamento. Todas são exclusivas de Master e limitadas a 200 tarefas.

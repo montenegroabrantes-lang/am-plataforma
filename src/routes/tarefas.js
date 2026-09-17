@@ -21,7 +21,8 @@ tarefasRouter.get('/', async (req, res) => {
   const { pagina: paginaSegura, limite: limiteSeguro, offset } = paginacaoSegura(page, limite || 100);
 
   const params = [];
-  const condicoes = ["t.status NOT IN ('cancelada')"];
+  // Canceladas só aparecem quando solicitadas explicitamente — necessárias para restauração.
+  const condicoes = [status === 'cancelada' || fila === 'cancelada' ? '1=1' : "t.status NOT IN ('cancelada')"];
 
   const filas = {
     minha: () => {
@@ -65,6 +66,7 @@ tarefasRouter.get('/', async (req, res) => {
       condicoes.push(`t.status NOT IN ('concluida','cancelada')`);
     },
     concluida: () => condicoes.push(`t.status='concluida'`),
+    cancelada: () => condicoes.push(`t.status='cancelada'`),
   };
   if (fila && filas[fila]) filas[fila]();
   else if (fila) return res.status(400).json({ ok: false, erro: 'Fila de tarefas inválida.' });
@@ -464,6 +466,61 @@ tarefasRouter.patch('/lote', apenasMaster, async (req, res) => {
     ip: req._ip,
   });
   res.json({ ok: true, atualizadas: result.length });
+});
+
+function idsLoteValidos(ids, res) {
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 200 || ids.some(id => !uuidValido(id))) {
+    res.status(400).json({ ok: false, erro: 'Selecione de 1 a 200 tarefas válidas.' });
+    return false;
+  }
+  return true;
+}
+
+const TIPOS_CONCLUSAO_INDIVIDUAL = new Set(['protocolar', 'cadastro_cliente', 'assinatura', 'diligencia']);
+const STATUS_CONCLUSAO_EM_LOTE = new Set(['pendente', 'em_execucao', 'aguardando_validacao', 'devolvida']);
+
+// Prévia usada pelo modal: não modifica nada e explica o que não pode ser baixado em lote.
+tarefasRouter.post('/lote/previsualizar', apenasMaster, async (req, res) => {
+  const { ids, acao = 'concluir' } = req.body || {};
+  if (!idsLoteValidos(ids, res)) return;
+  if (!['concluir', 'cancelar', 'restaurar'].includes(acao)) return res.status(400).json({ ok: false, erro: 'Ação inválida.' });
+  const tarefas = await db.query('SELECT id, tipo, status, descricao, prazo_data FROM tarefas WHERE id = ANY($1::uuid[])', [ids]);
+  const elegiveis = [];
+  const bloqueadas = [];
+  for (const tarefa of tarefas) {
+    let motivo = null;
+    if (acao === 'concluir') {
+      if (TIPOS_CONCLUSAO_INDIVIDUAL.has(tarefa.tipo)) motivo = 'exige conclusão individual';
+      else if (!STATUS_CONCLUSAO_EM_LOTE.has(tarefa.status)) motivo = `status ${tarefa.status}`;
+    } else if (acao === 'cancelar' && ['concluida', 'cancelada', 'bloqueada'].includes(tarefa.status)) motivo = `status ${tarefa.status}`;
+    else if (acao === 'restaurar' && tarefa.status !== 'cancelada') motivo = 'não está cancelada';
+    (motivo ? bloqueadas : elegiveis).push(motivo ? { ...tarefa, motivo } : tarefa);
+  }
+  res.json({ ok: true, solicitadas: ids.length, encontradas: tarefas.length, elegiveis, bloqueadas });
+});
+
+tarefasRouter.post('/lote/concluir', apenasMaster, async (req, res) => {
+  const { ids } = req.body || {};
+  if (!idsLoteValidos(ids, res)) return;
+  const tarefas = await db.query('SELECT id, tipo, status, calendar_event_id FROM tarefas WHERE id = ANY($1::uuid[])', [ids]);
+  const elegiveis = tarefas.filter(t => STATUS_CONCLUSAO_EM_LOTE.has(t.status) && !TIPOS_CONCLUSAO_INDIVIDUAL.has(t.tipo));
+  if (!elegiveis.length) return res.status(409).json({ ok: false, erro: 'Nenhuma tarefa selecionada pode ser concluída em lote.' });
+  const idsElegiveis = elegiveis.map(t => t.id);
+  await db.execute(`UPDATE tarefas SET status='concluida', concluida_em=NOW() WHERE id = ANY($1::uuid[])`, [idsElegiveis]);
+  for (const tarefa of elegiveis.filter(t => t.calendar_event_id)) deletarEventoCalendar(tarefa.calendar_event_id).catch(() => {});
+  await registrarAuditoria({ usuarioId: req.user.id, acao: 'concluir_lote', entidade: 'tarefa', valorDepois: { ids: idsElegiveis, quantidade: idsElegiveis.length }, ip: req._ip });
+  res.json({ ok: true, concluidas: idsElegiveis.length, ignoradas: tarefas.length - idsElegiveis.length });
+});
+
+tarefasRouter.post('/lote/restaurar', apenasMaster, async (req, res) => {
+  const { ids, justificativa } = req.body || {};
+  if (!idsLoteValidos(ids, res)) return;
+  if (!String(justificativa || '').trim()) return res.status(400).json({ ok: false, erro: 'Informe a justificativa da restauração.' });
+  const result = await db.query(`UPDATE tarefas SET status='pendente', concluida_em=NULL, justificativa_cancelamento=NULL
+    WHERE id=ANY($1::uuid[]) AND status='cancelada' RETURNING id`, [ids]);
+  if (!result.length) return res.status(409).json({ ok: false, erro: 'Nenhuma tarefa cancelada foi encontrada.' });
+  await registrarAuditoria({ usuarioId: req.user.id, acao: 'restaurar_lote', entidade: 'tarefa', valorDepois: { ids: result.map(t => t.id), justificativa: String(justificativa).trim() }, ip: req._ip });
+  res.json({ ok: true, restauradas: result.length });
 });
 
 // PATCH /api/tarefas/:id/concluir-com-numero — conclui tarefa de protocolo inserindo número CNJ
