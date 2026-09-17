@@ -5,7 +5,7 @@ import { apenasMaster } from '../middleware/auth.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 
 export const chavesApiRouter = Router();
-const PERMISSOES_VALIDAS = new Set(['leitura', 'clientes', 'processos', 'estimativas', 'tarefas']);
+const PERMISSOES_VALIDAS = new Set(['leitura', 'clientes', 'processos', 'estimativas', 'tarefas', 'camila']);
 const PREFIXO = 'am_live_';
 const hashChave = chave => createHash('sha256').update(chave).digest('hex');
 const rotuloChave = chave => `${chave.slice(0, 11)}••••••••${chave.slice(-4)}`;

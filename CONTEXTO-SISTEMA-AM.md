@@ -524,3 +524,15 @@ integrações ou produção. Não registrar segredos neste documento.
 - A chave pode ser editada posteriormente quanto a nome, finalidade, permissões e expiração. O
   segredo não é editável nem recuperável; para trocar credencial usa-se rotação (nova chave e
   revogação da anterior), preservando a segurança e o histórico de auditoria.
+
+### 17/09/2026 — Primeiro endpoint público para contato pela Camila
+
+- A permissão `camila` foi adicionada às chaves externas. Ela habilita somente dois caminhos que
+  reutilizam o fluxo já existente da Camila: mensagem a um `contactId` existente e reabordagem.
+  Ambos registram auditoria e não permitem acesso administrativo ao AM.
+- Endpoints: `POST /api/integracoes/v1/camila/leads/:contactId/mensagem` (corpo `mensagem`, até
+  2.000 caracteres) e `POST /api/integracoes/v1/camila/leads/:contactId/reabordar`. Ambos exigem
+  `X-AM-API-Key` com permissão `camila` e encaminham à Camila pela credencial interna do Railway.
+- Não foi criada falsa integração de valor/tese de honorários: o contrato atual da API da Camila
+  para estimativa manual não confirma esses campos. Para disponibilizá-los corretamente será
+  preciso alterar/consultar o serviço Camila no Railway ou obter sua especificação.
