@@ -520,11 +520,25 @@ tarefasRouter.post('/lote/restaurar', apenasMaster, async (req, res) => {
   const { ids, justificativa } = req.body || {};
   if (!idsLoteValidos(ids, res)) return;
   if (!String(justificativa || '').trim()) return res.status(400).json({ ok: false, erro: 'Informe a justificativa da restauração.' });
-  const result = await db.query(`UPDATE tarefas SET status='pendente', concluida_em=NULL, justificativa_cancelamento=NULL
-    WHERE id=ANY($1::uuid[]) AND status='cancelada' RETURNING id`, [ids]);
-  if (!result.length) return res.status(409).json({ ok: false, erro: 'Nenhuma tarefa cancelada foi encontrada.' });
-  await registrarAuditoria({ usuarioId: req.user.id, acao: 'restaurar_lote', entidade: 'tarefa', valorDepois: { ids: result.map(t => t.id), justificativa: String(justificativa).trim() }, ip: req._ip });
-  res.json({ ok: true, restauradas: result.length });
+  // Uma restauração em massa não pode falhar inteira quando um protocolo já tem
+  // equivalente aberto. Atualizamos um por vez para restaurar os demais e devolvemos
+  // os conflitos para revisão, preservando a garantia de uma única tarefa ativa.
+  const restauradas = [];
+  const bloqueadas = [];
+  for (const id of ids) {
+    try {
+      const result = await db.query(`UPDATE tarefas SET status='pendente', concluida_em=NULL, justificativa_cancelamento=NULL
+        WHERE id=$1 AND status='cancelada' RETURNING id`, [id]);
+      if (result.length) restauradas.push(id);
+      else bloqueadas.push({ id, motivo: 'não está cancelada' });
+    } catch (erro) {
+      if (erro?.code === '23505') bloqueadas.push({ id, motivo: 'já existe protocolo ativo para este vínculo' });
+      else throw erro;
+    }
+  }
+  if (!restauradas.length) return res.status(409).json({ ok: false, erro: 'Nenhuma tarefa foi restaurada; algumas já possuem protocolo ativo.', bloqueadas });
+  await registrarAuditoria({ usuarioId: req.user.id, acao: 'restaurar_lote', entidade: 'tarefa', valorDepois: { ids: restauradas, quantidade: restauradas.length, bloqueadas: bloqueadas.length, justificativa: String(justificativa).trim() }, ip: req._ip });
+  res.json({ ok: true, restauradas: restauradas.length, bloqueadas });
 });
 
 // PATCH /api/tarefas/:id/concluir-com-numero — conclui tarefa de protocolo inserindo número CNJ
