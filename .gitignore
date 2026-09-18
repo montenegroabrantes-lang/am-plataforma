@@ -4,3 +4,5 @@ node_modules/
 /tmp/
 .DS_Store
 .claude/
+.token-integracao-claude.txt
+_to_delete/
