@@ -38,6 +38,7 @@ import { chavesApiRouter } from './routes/chavesApi.js';
 import { integracoesExternasRouter } from './routes/integracoesExternas.js';
 import { acervoRouter } from './routes/acervo.js';
 import { mcpRouter } from './mcp/index.js';
+import { oauthRouter } from './oauth/index.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -57,6 +58,7 @@ if (!process.env.FRONTEND_URL) {
 app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 app.use(auditar);
 
 let dbOk = false;
@@ -142,6 +144,7 @@ app.use('/api/onboardings',   autenticar, onboardingsRouter);
 app.use('/api/chaves-api',    autenticar, chavesApiRouter);
 app.use('/api/acervo',        autenticar, acervoRouter);
 app.use('/mcp',               mcpRouter);
+app.use(oauthRouter); // /.well-known/*, /oauth/authorize, /oauth/token, /oauth/register — sem autenticar
 
 // Global error handler — captura erros não tratados nas rotas
 app.use((err, req, res, next) => {
