@@ -36,6 +36,7 @@ import { onboardingsRouter } from './routes/onboardings.js';
 import { integracaoCamilaRouter, autenticarIntegracaoCamila } from './routes/integracaoCamila.js';
 import { chavesApiRouter } from './routes/chavesApi.js';
 import { integracoesExternasRouter } from './routes/integracoesExternas.js';
+import { acervoRouter } from './routes/acervo.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -138,6 +139,7 @@ app.use('/api/estimativas',   autenticar, estimativasRouter);
 app.use('/api/push-tj',       autenticar, pushTJRouter);
 app.use('/api/onboardings',   autenticar, onboardingsRouter);
 app.use('/api/chaves-api',    autenticar, chavesApiRouter);
+app.use('/api/acervo',        autenticar, acervoRouter);
 
 // Global error handler — captura erros não tratados nas rotas
 app.use((err, req, res, next) => {
@@ -487,6 +489,39 @@ async function iniciar() {
       criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), revogada_em TIMESTAMPTZ, revogada_por UUID REFERENCES usuarios(id)
     )`).catch(() => {});
     await db.query(`CREATE INDEX IF NOT EXISTS idx_chaves_api_master ON chaves_api_externas (master_id, ativa, criado_em DESC)`).catch(() => {});
+
+    // Acervo jurídico: preserva a biblioteca mesmo se o processo de origem for removido.
+    await db.query(`CREATE TABLE IF NOT EXISTS teses_acervo (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), slug TEXT NOT NULL UNIQUE, label TEXT NOT NULL,
+      drive_folder_id TEXT, ativo BOOLEAN NOT NULL DEFAULT true, criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`).catch(() => {});
+    await db.query(`CREATE TABLE IF NOT EXISTS acervo_pecas (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), peca_operacional_id UUID REFERENCES pecas(id) ON DELETE SET NULL,
+      processo_id UUID REFERENCES processos(id) ON DELETE SET NULL, processo_numero TEXT, cliente_id UUID REFERENCES clientes(id) ON DELETE SET NULL,
+      cliente_nome TEXT NOT NULL, titulo TEXT NOT NULL, tipo_peca TEXT NOT NULL, ente TEXT NOT NULL, ente_detalhe TEXT,
+      tribunal TEXT, instancia TEXT NOT NULL, orgao_julgador TEXT, relator TEXT, data_protocolo DATE, drive_file_id TEXT, drive_url TEXT,
+      resultado TEXT NOT NULL DEFAULT 'pendente', resumo TEXT, modelo_aprovado BOOLEAN NOT NULL DEFAULT false,
+      visibilidade_snapshot TEXT NOT NULL DEFAULT 'normal' CHECK (visibilidade_snapshot IN ('normal','restrito')),
+      criado_por UUID REFERENCES usuarios(id), criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      arquivada_em TIMESTAMPTZ, arquivada_por UUID REFERENCES usuarios(id)
+    )`).catch(() => {});
+    await db.query(`CREATE TABLE IF NOT EXISTS acervo_precedentes (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), processo_id UUID REFERENCES processos(id) ON DELETE SET NULL, processo_numero TEXT,
+      orgao TEXT NOT NULL, tribunal TEXT, instancia TEXT NOT NULL, relator TEXT, data_julgamento DATE NOT NULL, ente TEXT,
+      ratio TEXT NOT NULL, ementa TEXT, resultado TEXT NOT NULL, favoravel BOOLEAN NOT NULL, vinculante BOOLEAN NOT NULL DEFAULT false,
+      conferido BOOLEAN NOT NULL DEFAULT false, conferido_por UUID REFERENCES usuarios(id), conferido_em TIMESTAMPTZ, fonte_primaria_url TEXT,
+      drive_file_id TEXT, drive_url TEXT, visibilidade_snapshot TEXT NOT NULL DEFAULT 'normal' CHECK (visibilidade_snapshot IN ('normal','restrito')),
+      criado_por UUID REFERENCES usuarios(id), criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      arquivada_em TIMESTAMPTZ, arquivada_por UUID REFERENCES usuarios(id)
+    )`).catch(() => {});
+    await db.query(`CREATE TABLE IF NOT EXISTS acervo_pecas_teses (peca_id UUID NOT NULL REFERENCES acervo_pecas(id) ON DELETE CASCADE, tese_id UUID NOT NULL REFERENCES teses_acervo(id), PRIMARY KEY(peca_id,tese_id))`).catch(() => {});
+    await db.query(`CREATE TABLE IF NOT EXISTS acervo_precedentes_teses (precedente_id UUID NOT NULL REFERENCES acervo_precedentes(id) ON DELETE CASCADE, tese_id UUID NOT NULL REFERENCES teses_acervo(id), PRIMARY KEY(precedente_id,tese_id))`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_acervo_pecas_busca ON acervo_pecas (ente, tribunal, instancia, resultado) WHERE arquivada_em IS NULL`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_acervo_precedentes_busca ON acervo_precedentes (ente, tribunal, instancia, favoravel, conferido) WHERE arquivada_em IS NULL`).catch(() => {});
+    const tesesAcervo = [
+      ['piso-salarial','Piso salarial'],['piso-salarial-magisterio-pb','Piso salarial — magistério x PB'],['piso-salarial-aux-saude-bucal','Piso salarial — auxiliar de saúde bucal + 40% insalubridade'],['educacao-professores','Educação — professores'],['ferias-45-dias','13º e férias sobre 45 dias'],['horas-extras-professores-efetivos','Horas extras — professores efetivos'],['adicional-noturno','Adicional noturno 25%'],['insalubridade','Insalubridade'],['insalubridade-profissional-saude','Insalubridade — profissional de saúde'],['sobreaviso-pb','Sobreaviso x PB'],['equiparacao-tec-aux-enfermagem','Equiparação técnico e auxiliar de enfermagem'],['progressao-funcional','Progressão funcional'],['fgts-nulidade','FGTS por nulidade de contrato temporário'],['fgts-pernambuco','FGTS — Pernambuco'],['fgts-espirito-santo','FGTS — Espírito Santo'],['fgts-servidor-federal','FGTS — servidor nível federal'],['pb-prev','PB PREV'],['repeticao-indebito-inss','Ação de repetição de indébito — INSS'],['auxilio-residencia-medica','Auxílio residência médica'],['danos-materiais','Indenização por danos materiais'],['eleitoral','Direito eleitoral'],['outros','Outros']
+    ];
+    for (const [slug,label] of tesesAcervo) await db.query(`INSERT INTO teses_acervo (slug,label) VALUES ($1,$2) ON CONFLICT (slug) DO NOTHING`, [slug,label]).catch(() => {});
 
     // ── Índices de performance para suportar 5000+ processos ──────────────────
     await db.query(`CREATE EXTENSION IF NOT EXISTS pg_trgm`).catch(() => {});

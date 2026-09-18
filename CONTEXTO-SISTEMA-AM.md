@@ -551,3 +551,19 @@ integrações ou produção. Não registrar segredos neste documento.
 - Rotas: `POST /api/tarefas/lote/previsualizar`, `POST /api/tarefas/lote/concluir` e
   `POST /api/tarefas/lote/restaurar`; `PATCH /api/tarefas/lote` continua responsável por
   atribuição, prazo e cancelamento. Todas são exclusivas de Master e limitadas a 200 tarefas.
+
+### 17/09/2026 — Acervo jurídico de peças e precedentes
+
+- Criado o módulo `Acervo jurídico`, separado das tabelas operacionais `pecas` e `banco_pecas`
+  já existentes. As novas tabelas `acervo_pecas`, `acervo_precedentes`, `teses_acervo` e suas
+  relações de teses preservam o histórico mesmo que o processo de origem seja excluído.
+- O catálogo inicial contém teses normalizadas e permite várias teses por peça ou precedente.
+  Peças e precedentes preservam a visibilidade original do processo; registros restritos não
+  aparecem para quem não tem a permissão específica de processo restrito.
+- A tela `/acervo` inclui busca, filtros por tese/ente/instância, abas de peças, precedentes,
+  pendências de organização e arquivados, lista com painel de detalhes, acesso à fonte no Drive,
+  cadastro de Master, conferência explícita de fonte primária, arquivamento/restauração e
+  auditoria. O Drive continua sendo o arquivo de origem; não há ainda cópia ou versionamento de
+  arquivos.
+- A consulta de precedente só recebe selo de conferido com fonte primária e usuário/data de
+  conferência. Resultado formal e favorabilidade são registrados separadamente.
