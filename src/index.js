@@ -405,6 +405,9 @@ async function iniciar() {
     await db.query(`ALTER TABLE onboardings_contrato ADD COLUMN IF NOT EXISTS vinculo_inicio_informado TEXT`).catch(() => {});
     await db.query(`ALTER TABLE onboardings_contrato ADD COLUMN IF NOT EXISTS vinculo_fim_informado TEXT`).catch(() => {});
     await db.query(`ALTER TABLE onboardings_contrato ADD COLUMN IF NOT EXISTS dados_origem JSONB NOT NULL DEFAULT '{}'::jsonb`).catch(() => {});
+    // Rascunho do cadastro: permite interromper o atendimento sem perder dados já
+    // conferidos. Só é lido pelos responsáveis do próprio onboarding.
+    await db.query(`ALTER TABLE onboardings_contrato ADD COLUMN IF NOT EXISTS cadastro_rascunho JSONB NOT NULL DEFAULT '{}'::jsonb`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS onboarding_id UUID REFERENCES onboardings_contrato(id) ON DELETE SET NULL`);
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS onboarding_produto_id UUID REFERENCES onboarding_produtos(id) ON DELETE SET NULL`);
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS precisa_triagem BOOLEAN NOT NULL DEFAULT false`);

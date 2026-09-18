@@ -567,3 +567,18 @@ integrações ou produção. Não registrar segredos neste documento.
   arquivos.
 - A consulta de precedente só recebe selo de conferido com fonte primária e usuário/data de
   conferência. Resultado formal e favorabilidade são registrados separadamente.
+
+### 18/09/2026 — Fluxo contínuo entre contrato e cadastro
+
+- O fechamento de contrato agora leva os vínculos revisados para o onboarding como rascunho,
+  sem presumir CPF, consentimento LGPD ou confirmação humana. Assim, o cadastro deixa de pedir
+  novamente cargo, órgão e período já conferidos na estimativa.
+- A ficha de onboarding ganhou salvamento real de rascunho no servidor. O acesso é limitado ao
+  Master ou aos responsáveis pelo onboarding; o rascunho é apagado quando o cadastro é concluído.
+- A ativação permite definir uma única pessoa para cadastro e protocolo quando ela executará as
+  duas etapas. A busca de cliente existente consulta toda a base por nome ou CPF, sem depender da
+  primeira página carregada na tela.
+- A ficha apresenta as pendências que impedem a liberação e o botão de tarefas abre somente as
+  tarefas daquele contrato.
+- Validação local: verificação sintática do backend, suíte **54/54** e build isolado do Next.js
+  com as 20 rotas compiladas. O deploy em produção ainda precisa ser confirmado após os commits.

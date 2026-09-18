@@ -110,6 +110,14 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
   if (lead.orgao) dadosOrigem.orgao = 'calculadora';
   if (inicioInformado) dadosOrigem.vinculo_inicio = 'calculadora';
   if (fimInformado) dadosOrigem.vinculo_fim = 'calculadora';
+  // A ficha de estimativa pode enviar mais de um vínculo revisado. Eles seguem
+  // para o cadastro como rascunho, sem jamais presumir CPF, LGPD ou confirmação.
+  const vinculosRevisados = Array.isArray(onboarding.vinculos) ? onboarding.vinculos.slice(0, 2).map(v => ({
+    cargo: String(v?.cargo || '').slice(0, 250), orgao: String(v?.orgao || '').slice(0, 250),
+    vinculo_inicio: String(v?.vinculo_inicio || '').slice(0, 10), vinculo_fim: String(v?.vinculo_fim || '').slice(0, 10),
+    polo_passivo: String(v?.polo_passivo || '').slice(0, 250), vinculo_ativo: v?.vinculo_ativo !== false,
+  })) : [{ cargo: lead.cargo || '', orgao: lead.orgao || '', vinculo_inicio: inicioInformado || '', vinculo_fim: fimInformado || '', polo_passivo: '', vinculo_ativo: true }];
+  const cadastroRascunho = { nome: String(lead.nome || '').trim(), whatsapp: lead.telefone || lead.telefone_real || '', email: '', vinculos: vinculosRevisados };
   const idsProdutos = [...new Set(onboarding.produtos.map(p => p.produto_id))];
   const pg = await db.pool.connect();
   let registro;
@@ -158,11 +166,11 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
     const onboardingResult = await pg.query(
       `INSERT INTO onboardings_contrato
          (camila_contact_id, estimativa_id, cliente_id, nome, whatsapp, cargo, orgao,
-          vinculo_inicio_informado, vinculo_fim_informado, dados_origem,
+          vinculo_inicio_informado, vinculo_fim_informado, dados_origem, cadastro_rascunho,
           valor_fechado, contrato_assinado, contrato_data, status,
           responsavel_cadastro_id, responsavel_protocolo_id, prazo_cadastro, prazo_protocolo,
           registrado_por, fechado_em, atualizado_em)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,true,$12,$13,$14,$15,$16,$17,$18,NOW(),NOW())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,true,$13,$14,$15,$16,$17,$18,$19,NOW(),NOW())
        ON CONFLICT (camila_contact_id) DO UPDATE SET
          estimativa_id = COALESCE(EXCLUDED.estimativa_id, onboardings_contrato.estimativa_id),
          cliente_id = COALESCE(EXCLUDED.cliente_id, onboardings_contrato.cliente_id),
@@ -171,6 +179,7 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
          vinculo_inicio_informado = COALESCE(EXCLUDED.vinculo_inicio_informado, onboardings_contrato.vinculo_inicio_informado),
          vinculo_fim_informado = COALESCE(EXCLUDED.vinculo_fim_informado, onboardings_contrato.vinculo_fim_informado),
          dados_origem = onboardings_contrato.dados_origem || EXCLUDED.dados_origem,
+         cadastro_rascunho = CASE WHEN onboardings_contrato.cadastro_rascunho = '{}'::jsonb THEN EXCLUDED.cadastro_rascunho ELSE onboardings_contrato.cadastro_rascunho END,
          valor_fechado = EXCLUDED.valor_fechado,
          contrato_assinado = true, contrato_data = EXCLUDED.contrato_data,
          status = CASE WHEN onboardings_contrato.status = 'concluido' THEN 'concluido' ELSE EXCLUDED.status END,
@@ -183,7 +192,7 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
         String(contactId), lead.estimativa_id ? String(lead.estimativa_id) : null,
         cliente?.id || null, String(lead.nome || '').trim() || null,
         lead.telefone || lead.telefone_real || null, lead.cargo || null, lead.orgao || null,
-        inicioInformado, fimInformado, JSON.stringify(dadosOrigem),
+        inicioInformado, fimInformado, JSON.stringify(dadosOrigem), JSON.stringify(cadastroRascunho),
         Number(lead.valor_fechado || lead.valor || 0) || null,
         onboarding.contrato_data, status,
         onboarding.responsavel_cadastro_id || null, onboarding.responsavel_protocolo_id,
@@ -497,7 +506,7 @@ export async function concluirCadastroOnboarding({ onboardingId, dados, usuario,
     );
     await pg.query(
       `UPDATE onboardings_contrato
-          SET cliente_id=$1, status='protocolo_pendente', atualizado_em=NOW()
+          SET cliente_id=$1, status='protocolo_pendente', cadastro_rascunho='{}'::jsonb, atualizado_em=NOW()
         WHERE id=$2`,
       [cliente.id, onboarding.id]
     );

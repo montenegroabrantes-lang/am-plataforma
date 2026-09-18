@@ -127,6 +127,7 @@ CREATE TABLE onboardings_contrato (
   vinculo_inicio_informado TEXT,
   vinculo_fim_informado    TEXT,
   dados_origem             JSONB NOT NULL DEFAULT '{}'::jsonb,
+  cadastro_rascunho        JSONB NOT NULL DEFAULT '{}'::jsonb,
   valor_fechado            NUMERIC(14,2),
   contrato_assinado        BOOLEAN NOT NULL DEFAULT false,
   contrato_data            DATE,

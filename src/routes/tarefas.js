@@ -17,7 +17,7 @@ tarefasRouter.param('id', (req, res, next, id) => {
 // GET /api/tarefas — lista tarefas do usuário (ou todas para Master)
 tarefasRouter.get('/', async (req, res) => {
   const { status, urgencia, cliente_id, produto_id, atribuido_a, prazo_dias, prazo_de, prazo_ate,
-          concluida_de, concluida_ate, tipo, processo_id, fila, triagem_motivo, origem, horizonte, busca, page, limite } = req.query;
+          concluida_de, concluida_ate, tipo, processo_id, onboarding_id, fila, triagem_motivo, origem, horizonte, busca, page, limite } = req.query;
   const { pagina: paginaSegura, limite: limiteSeguro, offset } = paginacaoSegura(page, limite || 100);
 
   const params = [];
@@ -122,6 +122,10 @@ tarefasRouter.get('/', async (req, res) => {
     condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`);
   }
   if (processo_id) { params.push(processo_id); condicoes.push(`t.processo_id = $${params.length}`); }
+  if (onboarding_id) {
+    if (!uuidValido(onboarding_id)) return res.status(400).json({ ok: false, erro: 'Contrato inválido.' });
+    params.push(onboarding_id); condicoes.push(`t.onboarding_id = $${params.length}`);
+  }
   if (tipo)      { params.push(tipo);     condicoes.push(`t.tipo = $${params.length}`); }
   else if (!processo_id && !fila) condicoes.push(`t.publicacao_id IS NULL`); // compatibilidade com a tela antiga
   if (prazo_de)  { params.push(prazo_de); condicoes.push(`t.prazo_data >= $${params.length}::date`); }
