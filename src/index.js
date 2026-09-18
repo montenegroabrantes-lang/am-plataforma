@@ -37,6 +37,7 @@ import { integracaoCamilaRouter, autenticarIntegracaoCamila } from './routes/int
 import { chavesApiRouter } from './routes/chavesApi.js';
 import { integracoesExternasRouter } from './routes/integracoesExternas.js';
 import { acervoRouter } from './routes/acervo.js';
+import { mcpRouter } from './mcp/index.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
@@ -140,6 +141,7 @@ app.use('/api/push-tj',       autenticar, pushTJRouter);
 app.use('/api/onboardings',   autenticar, onboardingsRouter);
 app.use('/api/chaves-api',    autenticar, chavesApiRouter);
 app.use('/api/acervo',        autenticar, acervoRouter);
+app.use('/mcp',               mcpRouter);
 
 // Global error handler — captura erros não tratados nas rotas
 app.use((err, req, res, next) => {
