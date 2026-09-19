@@ -40,19 +40,21 @@ export async function verificarCiclosRecorrentes() {
 
       // Início do período acumulado: mês seguinte ao fim do último processo; sem processo,
       // o próprio início do vínculo. A elegibilidade chega quando passam intervalo_meses.
+      // Tudo em UTC: DATE chega como 'YYYY-MM-DD' e new Date() o interpreta como meia-noite UTC;
+      // usar setters locais aqui deslocaria o dia conforme o TZ do servidor e quebraria o dedup.
       let cicloInicio = null;
       if (ultimoProcesso?.periodo_fim) {
         cicloInicio = new Date(ultimoProcesso.periodo_fim);
-        cicloInicio.setDate(1);
-        cicloInicio.setMonth(cicloInicio.getMonth() + 1);
+        cicloInicio.setUTCDate(1);
+        cicloInicio.setUTCMonth(cicloInicio.getUTCMonth() + 1);
       } else if (v.vinculo_inicio) {
         cicloInicio = new Date(v.vinculo_inicio);
-        cicloInicio.setDate(1);
+        cicloInicio.setUTCDate(1);
       } else {
         continue; // sem referência de data
       }
       const dataReferencia = new Date(cicloInicio);
-      dataReferencia.setMonth(dataReferencia.getMonth() + prod.intervalo_meses - 1);
+      dataReferencia.setUTCMonth(dataReferencia.getUTCMonth() + prod.intervalo_meses - 1);
       if (dataReferencia > hoje) continue;
 
       // Já existe processo cobrindo este ciclo?
@@ -82,7 +84,7 @@ export async function verificarCiclosRecorrentes() {
          VALUES ($1, 'protocolar', 'ciclo', $2, 'MEDIO', 'pendente', $3::date)`,
         [v.cliente_produto_id, `Novo ciclo — ${prod.nome} — ${v.cliente_nome}`, cicloInicioIso]
       );
-      const periodoTexto = `${cicloInicio.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' })} até hoje`;
+      const periodoTexto = `${cicloInicio.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric', timeZone: 'UTC' })} até hoje`;
 
       console.log(`[Ciclos] Tarefa criada: ${prod.nome} — ${v.cliente_nome} | ${periodoTexto}`);
       totalTarefas++;
