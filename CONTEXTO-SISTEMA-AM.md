@@ -686,3 +686,16 @@ integrações ou produção. Não registrar segredos neste documento.
   um responsável e prazos escalonados por semana (do `ciclo_inicio` mais antigo pro mais recente,
   N por semana configurável) em vez de despejar todo o backlog na mesma data. Barra roxa própria
   na aba "Novos ciclos" quando há seleção, reaproveitando o checkbox de seleção já existente.
+
+### 19/09/2026 (noite, cont.) — Fila própria para Re-protocolo
+
+- Nova fila `reprotocolo`: `tipo='protocolar' AND processo_id IS NULL AND ciclo_inicio IS NOT NULL
+  AND subtipo<>'ciclo'` — ciclo já aceito (manual, em lote ou automático), pronto pra protocolar.
+  `protocolar_inicial` passou a exigir `ciclo_inicio IS NULL`, ficando só com cliente
+  genuinamente novo (cadastro pendente ou protocolo sem processo e sem origem em ciclo).
+  Verificado contra produção: 11 protocolar_inicial + 1 reprotocolo + 362 novos ciclos = 374,
+  bate exato com o total de tarefas 'protocolar' sem processo (sem sobreposição nem lacuna).
+  `resumo.reprotocolo` novo; mesmo split espelhado em `/resumo-teses`.
+- Frontend: aba "🔁 Re-protocolo" e card no cockpit, visíveis pra todos (não só Master, já que
+  quem foi atribuído ao re-protocolo precisa achar a tarefa). Card/badge/ações não mudaram —
+  já eram calculados por campo (`ciclo_inicio`), só a fila que lista passou a separar.

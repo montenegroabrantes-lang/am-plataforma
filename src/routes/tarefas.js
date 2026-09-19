@@ -55,9 +55,16 @@ tarefasRouter.get('/', async (req, res) => {
       condicoes.push(`t.status NOT IN ('concluida','cancelada')`);
     },
     protocolar_inicial: () => {
-      condicoes.push(`((t.tipo='cadastro_cliente' AND t.onboarding_id IS NOT NULL) OR (t.tipo='protocolar' AND t.processo_id IS NULL))`);
+      // Só cliente genuinamente novo: cadastro pendente, ou protocolo sem processo E sem
+      // origem em ciclo (ciclo_inicio) — um re-protocolo aceito vai para a fila `reprotocolo`.
+      condicoes.push(`((t.tipo='cadastro_cliente' AND t.onboarding_id IS NOT NULL) OR (t.tipo='protocolar' AND t.processo_id IS NULL AND t.ciclo_inicio IS NULL))`);
       condicoes.push(`t.status NOT IN ('concluida','cancelada')`);
-      condicoes.push(NAO_CICLO);
+    },
+    reprotocolo: () => {
+      // Ciclo já aceito (subtipo='ciclo_aceito', manual ou automático) e pronto pra protocolar —
+      // separado de "Protocolar inicial" pra não misturar cliente novo com continuação de tese.
+      condicoes.push(`t.tipo='protocolar' AND t.processo_id IS NULL AND t.ciclo_inicio IS NOT NULL AND t.subtipo <> 'ciclo'`);
+      condicoes.push(`t.status NOT IN ('concluida','cancelada')`);
     },
     peticoes: () => {
       condicoes.push(`t.processo_id IS NOT NULL`);
@@ -321,7 +328,8 @@ tarefasRouter.get('/resumo', async (req, res) => {
          OR (t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL)
        ))::int AS triagem,
        COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada') AND t.onboarding_id IS NOT NULL)::int AS onboarding,
-       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada') AND ${NAO_CICLO} AND ((t.tipo='cadastro_cliente' AND t.onboarding_id IS NOT NULL) OR (t.tipo='protocolar' AND t.processo_id IS NULL)))::int AS protocolar_inicial,
+       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada') AND ((t.tipo='cadastro_cliente' AND t.onboarding_id IS NOT NULL) OR (t.tipo='protocolar' AND t.processo_id IS NULL AND t.ciclo_inicio IS NULL)))::int AS protocolar_inicial,
+       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada') AND t.tipo='protocolar' AND t.processo_id IS NULL AND t.ciclo_inicio IS NOT NULL AND t.subtipo<>'ciclo')::int AS reprotocolo,
        COUNT(*) FILTER (WHERE t.status='aguardando_validacao' OR (t.tipo='assinatura' AND t.status NOT IN ('concluida','cancelada')))::int AS validacao
      FROM tarefas t
      LEFT JOIN processos p ON p.id=t.processo_id
@@ -403,7 +411,8 @@ tarefasRouter.get('/resumo-teses', async (req, res) => {
     equipe: () => { condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`t.precisa_triagem=false`); condicoes.push(NAO_CICLO); },
     ciclos: () => { condicoes.push(`t.tipo='protocolar' AND t.subtipo='ciclo'`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); condicoes.push(`(t.ciclo_adiado_ate IS NULL OR t.ciclo_adiado_ate <= CURRENT_DATE)`); },
     onboarding: () => { condicoes.push(`t.onboarding_id IS NOT NULL`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
-    protocolar_inicial: () => { condicoes.push(`((t.tipo='cadastro_cliente' AND t.onboarding_id IS NOT NULL) OR (t.tipo='protocolar' AND t.processo_id IS NULL))`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); condicoes.push(NAO_CICLO); },
+    protocolar_inicial: () => { condicoes.push(`((t.tipo='cadastro_cliente' AND t.onboarding_id IS NOT NULL) OR (t.tipo='protocolar' AND t.processo_id IS NULL AND t.ciclo_inicio IS NULL))`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
+    reprotocolo: () => { condicoes.push(`t.tipo='protocolar' AND t.processo_id IS NULL AND t.ciclo_inicio IS NOT NULL AND t.subtipo <> 'ciclo'`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
     peticoes: () => { condicoes.push(`t.processo_id IS NOT NULL`); condicoes.push(`(t.tipo IN ('demanda','assinatura') OR t.status='aguardando_protocolo')`); condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); },
     protocolos: () => { condicoes.push(`t.tipo='protocolar'`); condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`t.precisa_triagem=false`); condicoes.push(NAO_CICLO); },
     validacao: () => { condicoes.push(`(t.status='aguardando_validacao' OR t.tipo='assinatura')`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
