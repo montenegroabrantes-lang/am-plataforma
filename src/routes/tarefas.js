@@ -841,7 +841,7 @@ tarefasRouter.patch('/:id/ciclo/aceitar', apenasMaster, async (req, res) => {
     `UPDATE tarefas SET subtipo='ciclo_aceito', atribuido_a=$1, prazo_data=$2::date, validado_por=$3,
         precisa_triagem=false, ciclo_adiado_ate=NULL, urgencia='ALTO',
         cliente_vinculo_id=COALESCE(cliente_vinculo_id,$4),
-        descricao=REPLACE(descricao,'Novo ciclo — ','Protocolar processo — ')
+        descricao=REPLACE(descricao,'Novo ciclo — ','Re-protocolo — ')
       WHERE id=$5 RETURNING *`,
     [atribuido_a, prazo_data, req.user.id, vinculoAuto?.id || null, req.params.id]
   );
@@ -867,6 +867,70 @@ tarefasRouter.patch('/:id/ciclo/adiar', apenasMaster, async (req, res) => {
   await registrarAuditoria({
     usuarioId: req.user.id, acao: 'adiar_ciclo', entidade: 'tarefa', entidadeId: req.params.id,
     valorDepois: { adiar_ate, justificativa }, ip: req._ip,
+  });
+  res.json({ ok: true });
+});
+
+// PATCH /api/tarefas/ciclos/aceitar-lote — esvazia o backlog de "Novos ciclos" no ritmo do
+// escritório: um responsável para todos, prazos escalonados por semana (mais antigo primeiro),
+// em vez de despejar todo o backlog de uma vez com o mesmo prazo.
+tarefasRouter.patch('/ciclos/aceitar-lote', apenasMaster, async (req, res) => {
+  const { ids, atribuido_a, prazo_inicial, por_semana } = req.body || {};
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 200 || ids.some(id => !uuidValido(id))) {
+    return res.status(400).json({ ok: false, erro: 'Selecione de 1 a 200 ciclos válidos.' });
+  }
+  if (!uuidValido(atribuido_a)) return res.status(400).json({ ok: false, erro: 'Informe o responsável.' });
+  if (!prazo_inicial || !dataCalendarioValida(prazo_inicial)) return res.status(400).json({ ok: false, erro: 'Informe a data inicial dos prazos.' });
+  const lote = Number.isInteger(Number(por_semana)) && Number(por_semana) > 0 ? Math.min(Number(por_semana), 100) : 10;
+  const responsavelAtivo = await db.queryOne(`SELECT id FROM usuarios WHERE id=$1 AND ativo=true`, [atribuido_a]);
+  if (!responsavelAtivo) return res.status(400).json({ ok: false, erro: 'O responsável selecionado não está ativo.' });
+
+  const tarefas = await db.query(
+    `SELECT t.id, cp.cliente_id FROM tarefas t
+     JOIN cliente_produtos cp ON cp.id = t.cliente_produto_id
+     WHERE t.id = ANY($1::uuid[]) AND t.tipo = 'protocolar' AND t.subtipo = 'ciclo' AND t.status = 'pendente'
+     ORDER BY t.ciclo_inicio ASC NULLS LAST`,
+    [ids]
+  );
+  if (!tarefas.length) return res.status(409).json({ ok: false, erro: 'Nenhum ciclo pendente encontrado para os itens selecionados.' });
+
+  let atualizadas = 0;
+  for (let i = 0; i < tarefas.length; i++) {
+    const t = tarefas[i];
+    const prazo = new Date(`${prazo_inicial}T12:00:00`);
+    prazo.setDate(prazo.getDate() + Math.floor(i / lote) * 7);
+    const prazoIso = prazo.toISOString().slice(0, 10);
+    const vinculoAuto = await vinculoUnicoAtivo(t.cliente_id);
+    await db.execute(
+      `UPDATE tarefas SET subtipo='ciclo_aceito', atribuido_a=$1, prazo_data=$2::date, validado_por=$3,
+          urgencia='ALTO', precisa_triagem=false, ciclo_adiado_ate=NULL,
+          cliente_vinculo_id=COALESCE(cliente_vinculo_id,$4),
+          descricao=REPLACE(descricao,'Novo ciclo — ','Re-protocolo — ')
+        WHERE id=$5`,
+      [atribuido_a, prazoIso, req.user.id, vinculoAuto?.id || null, t.id]
+    );
+    atualizadas++;
+  }
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'aceitar_lote_ciclos', entidade: 'tarefa',
+    valorDepois: { quantidade: atualizadas, atribuido_a, prazo_inicial, por_semana: lote, ids: tarefas.map(t => t.id) }, ip: req._ip,
+  });
+  res.json({ ok: true, atualizadas });
+});
+
+// PATCH /api/tarefas/:id/ciclo/devolver — desfaz uma entrada em RE-PROTOCOLO (manual ou
+// automática) e volta a tarefa para "Novos ciclos" pendente de decisão. Só antes de protocolar.
+tarefasRouter.patch('/:id/ciclo/devolver', apenasMaster, async (req, res) => {
+  const result = await db.query(
+    `UPDATE tarefas SET subtipo='ciclo', atribuido_a=NULL, prazo_data=NULL, urgencia='MEDIO',
+        validado_por=NULL, precisa_triagem=false
+      WHERE id=$1 AND subtipo='ciclo_aceito' AND processo_id IS NULL
+        AND status NOT IN ('concluida','cancelada') RETURNING id`,
+    [req.params.id]
+  );
+  if (!result.length) return res.status(409).json({ ok: false, erro: 'Só é possível devolver um re-protocolo ainda não protocolado.' });
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'devolver_ciclo', entidade: 'tarefa', entidadeId: req.params.id, ip: req._ip,
   });
   res.json({ ok: true });
 });

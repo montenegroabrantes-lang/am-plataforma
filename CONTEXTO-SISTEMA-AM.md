@@ -659,3 +659,30 @@ integrações ou produção. Não registrar segredos neste documento.
   de protocolo aberta ou processo cobrindo o período — mais a lista de ciclos adiados com a
   data de retorno. Exibida no topo da aba "Novos ciclos" (seção "Próximos ciclos a vencer").
   Em 19/09/2026: 6 vencem em 3 meses, 15 em 6, 39 em 12, 196 em 24.
+
+### 19/09/2026 (noite) — Ciclo entra automaticamente como RE-PROTOCOLO + restauração
+
+- **Restauração**: 204 tarefas de ciclo canceladas por engano antes de existir a fila "Novos
+  ciclos" (justificativas majoritariamente "ERRO") foram restauradas via migração idempotente
+  em `index.js`: só quando o vínculo do cliente segue ativo, não há outra tarefa de protocolo já
+  aberta pro mesmo cliente_produto e nenhum processo cobre o período recalculado. Descartou
+  duplicatas históricas (19 grupos, ficou a mais recente de cada — o índice único
+  `uq_tarefa_protocolo_ativa` barra 2 tarefas 'protocolar' ativas pro mesmo par). Registrado em
+  `logs_auditoria` (usuário "Integração Claude"). Rodado e commitado em produção: 204 restauradas.
+- **RE-PROTOCOLO automático**: `produtos.responsavel_reprotocolo_id` e
+  `produtos.prazo_reprotocolo_dias_uteis` (default 10) novos, editáveis via `PATCH /api/produtos/:id`.
+  O cron (`ciclosRecorrentes.js`) só entra direto em Protocolar inicial (`subtipo='ciclo_aceito'`,
+  sem passar por "Aceitar ciclo") quando: existe processo anterior real (é de fato continuação),
+  o polo é resolvido sem ambiguidade (vínculo único ativo, ou `clientes.polo_passivo`) e há um
+  responsável ativo (1º a configuração da tese, 2º fallback o `master_responsavel_id` do processo
+  anterior). Sem alguma dessas condições, cai como sempre em "Novos ciclos". Urgência ALTO, prazo
+  por `somarDiasUteis`. Não se aplica retroativamente ao backlog (as 159+204 continuam manuais).
+- Badge **RE-PROTOCOLO** (com marca "AUTOMÁTICO" quando `validado_por` é nulo) substitui
+  "PROTOCOLO INICIAL" no card sempre que `t.ciclo_inicio` existe e a tarefa não está mais em
+  `subtipo='ciclo'` — vale tanto pro aceite manual quanto pro automático.
+- `PATCH /api/tarefas/:id/ciclo/devolver` (Master): desfaz um re-protocolo ainda não protocolado
+  e volta pra "Novos ciclos"; botão "Devolver p/ ciclos" no card.
+- `PATCH /api/tarefas/ciclos/aceitar-lote` (Master): aceita vários ciclos pendentes de uma vez com
+  um responsável e prazos escalonados por semana (do `ciclo_inicio` mais antigo pro mais recente,
+  N por semana configurável) em vez de despejar todo o backlog na mesma data. Barra roxa própria
+  na aba "Novos ciclos" quando há seleção, reaproveitando o checkbox de seleção já existente.

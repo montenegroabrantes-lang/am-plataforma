@@ -425,6 +425,12 @@ async function iniciar() {
     // (fixo) e um adiamento opcional, para nunca se misturarem com a fila de protocolo inicial.
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS ciclo_inicio DATE`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS ciclo_adiado_ate DATE`).catch(() => {});
+    // Configuração por tese para o ciclo virar RE-PROTOCOLO sozinho (sem passar por "Aceitar
+    // ciclo"): só quando o cliente já teve processo anterior daquela tese, o polo é conhecido
+    // sem ambiguidade e há um responsável para atribuir — do contrário, cai em "Novos ciclos"
+    // como hoje. Sem configuração nenhuma, o fallback (1b) usa o responsável do processo anterior.
+    await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS responsavel_reprotocolo_id UUID REFERENCES usuarios(id) ON DELETE SET NULL`).catch(() => {});
+    await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS prazo_reprotocolo_dias_uteis INTEGER NOT NULL DEFAULT 10`).catch(() => {});
     // Backfill dos ciclos criados antes do subtipo existir: o texto antigo "Período a solicitar"
     // trazia uma janela futura errada; o início real é o mês seguinte ao fim do último processo.
     await db.query(`
@@ -442,6 +448,61 @@ async function iniciar() {
       WHERE t.cliente_produto_id=cp.id AND t.tipo='protocolar' AND t.subtipo IS NULL
         AND t.descricao LIKE '%Período a solicitar%' AND t.status NOT IN ('concluida','cancelada')
     `).catch(e => console.warn('[Migration] Backfill de ciclos:', e.message));
+
+    // Restaura ciclos cancelados por engano antes de existir a fila "Novos ciclos" — quando o
+    // rótulo de ciclo ainda não existia, várias dessas tarefas pareciam lixo (datas 2027/2028
+    // por causa do cálculo antigo de período) e foram canceladas sem se saber o que eram.
+    // Só restaura quando: o vínculo do cliente segue ativo, não existe outra tarefa de protocolo
+    // já aberta para o mesmo cliente_produto (evita duplicar o ciclo que o cron já recriou) e
+    // nenhum processo já cobre o período recalculado. Idempotente: após restaurar, a linha deixa
+    // de casar com `status='cancelada'` e não é tocada de novo.
+    await db.query(`
+      WITH candidatos AS (
+        SELECT t.id, cp.cliente_id, cp.produto_id,
+               COALESCE(DATE_TRUNC('month', p.periodo_fim + INTERVAL '1 month')::date, DATE_TRUNC('month', c.vinculo_inicio)::date) AS novo_ciclo_inicio,
+               ROW_NUMBER() OVER (PARTITION BY t.cliente_produto_id ORDER BY t.criado_em DESC) AS rn
+        FROM tarefas t
+        JOIN cliente_produtos cp ON cp.id=t.cliente_produto_id
+        JOIN clientes c ON c.id=cp.cliente_id
+        LEFT JOIN LATERAL (
+          SELECT periodo_fim FROM processos
+           WHERE cliente_id=cp.cliente_id AND produto_id=cp.produto_id AND periodo_fim IS NOT NULL
+           ORDER BY periodo_fim DESC LIMIT 1
+        ) p ON true
+        WHERE t.tipo='protocolar' AND t.status='cancelada' AND t.descricao LIKE '%Período a solicitar:%'
+          AND c.ativo IS NOT FALSE AND c.vinculo_ativo=true
+          AND COALESCE(DATE_TRUNC('month', p.periodo_fim + INTERVAL '1 month')::date, DATE_TRUNC('month', c.vinculo_inicio)::date) IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM tarefas t2 WHERE t2.cliente_produto_id=t.cliente_produto_id
+              AND t2.tipo='protocolar' AND t2.status NOT IN ('concluida','cancelada')
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM processos px WHERE px.cliente_id=cp.cliente_id AND px.produto_id=cp.produto_id
+              AND px.status<>'arquivado'
+              AND (px.periodo_fim IS NULL OR px.periodo_fim >= COALESCE(DATE_TRUNC('month', p.periodo_fim + INTERVAL '1 month')::date, DATE_TRUNC('month', c.vinculo_inicio)::date))
+          )
+      )
+      UPDATE tarefas t SET
+        status='pendente', concluida_em=NULL, justificativa_cancelamento=NULL,
+        subtipo='ciclo', precisa_triagem=false, ciclo_inicio=k.novo_ciclo_inicio,
+        descricao=REGEXP_REPLACE(REPLACE(t.descricao, 'Protocolar processo — ', 'Novo ciclo — '), '\\s*\\|\\s*Período a solicitar:.*$', '')
+      FROM candidatos k
+      -- Um mesmo cliente_produto pode ter mais de uma cancelada acumulada (duplicidade
+      -- histórica); restaura só a mais recente de cada grupo — o índice único
+      -- uq_tarefa_protocolo_ativa permite no máximo 1 tarefa 'protocolar' ativa por par.
+      WHERE t.id=k.id AND k.rn=1
+      RETURNING t.id
+    `).then(async r => {
+      if (r.length > 0) {
+        console.log(`[Migration] Restaurados ${r.length} ciclos cancelados por engano.`);
+        await db.execute(
+          `INSERT INTO logs_auditoria (usuario_id, acao, entidade, valor_depois)
+           VALUES ((SELECT id FROM usuarios WHERE email='integracao-claude@abrantesemontenegro.com.br'),
+                   'restaurar_lote_ciclos', 'tarefa', $1)`,
+          [JSON.stringify({ quantidade: r.length, motivo: 'Cancelados por engano antes da fila "Novos ciclos" existir; restaurados a pedido do usuário em 19/09/2026.', ids: r.map(x => x.id) })]
+        ).catch(() => {});
+      }
+    }).catch(e => console.warn('[Migration] Restauração de ciclos cancelados:', e.message));
 
     // O acervo legado nasceu da antiga equivalência "elegível = contratado". Ele permanece
     // íntegro, mas sai da fila operacional até conferência humana; nada é apagado.

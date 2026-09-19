@@ -49,13 +49,27 @@ produtosRouter.post('/', apenasMaster, async (req, res) => {
 produtosRouter.patch('/:id', apenasMaster, async (req, res) => {
   const campos = ['nome', 'polos_passivos_padrao', 'codigo_assunto_pje',
                   'tribunais_padrao', 'cargos_elegiveis', 'orgaos_elegiveis', 'ativo', 'intervalo_meses',
-                  'honorarios_padrao', 'descricao'];
+                  'honorarios_padrao', 'descricao', 'responsavel_reprotocolo_id', 'prazo_reprotocolo_dias_uteis'];
+  if (req.body.responsavel_reprotocolo_id) {
+    if (!uuidValido(req.body.responsavel_reprotocolo_id)) {
+      return res.status(400).json({ ok: false, erro: 'Responsável de re-protocolo inválido.' });
+    }
+    const ativo = await db.queryOne(`SELECT id FROM usuarios WHERE id=$1 AND ativo=true`, [req.body.responsavel_reprotocolo_id]);
+    if (!ativo) return res.status(400).json({ ok: false, erro: 'O responsável de re-protocolo selecionado não está ativo.' });
+  }
+  if (req.body.prazo_reprotocolo_dias_uteis !== undefined) {
+    const dias = Number(req.body.prazo_reprotocolo_dias_uteis);
+    if (!Number.isInteger(dias) || dias < 1 || dias > 90) {
+      return res.status(400).json({ ok: false, erro: 'Prazo de re-protocolo deve ser um número inteiro entre 1 e 90 dias úteis.' });
+    }
+  }
+
   const updates = [];
   const params  = [];
 
   for (const campo of campos) {
     if (req.body[campo] !== undefined) {
-      params.push(req.body[campo]);
+      params.push(req.body[campo] === '' ? null : req.body[campo]);
       updates.push(`${campo} = $${params.length}`);
     }
   }

@@ -5,10 +5,13 @@
  * Chamado diariamente pelo cron job.
  */
 import { db } from '../db/index.js';
+import { somarDiasUteis } from '../utils/diasUteis.js';
+import { vinculoUnicoAtivo } from '../utils/vinculos.js';
 
 export async function verificarCiclosRecorrentes() {
   const produtos = await db.query(
-    `SELECT id, nome, intervalo_meses, cargos_elegiveis, orgaos_elegiveis
+    `SELECT id, nome, intervalo_meses, cargos_elegiveis, orgaos_elegiveis,
+            responsavel_reprotocolo_id, prazo_reprotocolo_dias_uteis
      FROM produtos WHERE ativo = true AND intervalo_meses IS NOT NULL AND intervalo_meses > 0`
   );
 
@@ -31,7 +34,7 @@ export async function verificarCiclosRecorrentes() {
     for (const v of vinculos) {
       // Buscar o último processo deste produto para este cliente com periodo_fim definido
       const ultimoProcesso = await db.queryOne(
-        `SELECT periodo_fim, status FROM processos
+        `SELECT periodo_fim, status, master_responsavel_id FROM processos
          WHERE cliente_id = $1 AND produto_id = $2
          AND periodo_fim IS NOT NULL
          ORDER BY periodo_fim DESC LIMIT 1`,
@@ -79,14 +82,39 @@ export async function verificarCiclosRecorrentes() {
       );
       if (tarefaExistente) continue;
 
+      // Continuação de um processo anterior (re-protocolo) com polo sem ambiguidade e um
+      // responsável ativo entram direto em Protocolar inicial — sem passar por "Aceitar ciclo".
+      // Sem processo anterior (1ª elegibilidade), ou faltando polo/responsável, cai como antes
+      // em "Novos ciclos" para decisão humana.
+      let subtipo = 'ciclo', descricaoPrefixo = 'Novo ciclo', atribuidoA = null, prazoData = null, cicloVinculoId = null;
+      if (ultimoProcesso?.periodo_fim) {
+        const vinculoAuto = await vinculoUnicoAtivo(v.cliente_id);
+        const poloResolvido = vinculoAuto?.polo_passivo || v.polo_passivo || null;
+        cicloVinculoId = vinculoAuto?.id || null;
+
+        let responsavel = prod.responsavel_reprotocolo_id || ultimoProcesso.master_responsavel_id || null;
+        if (responsavel) {
+          const ativo = await db.queryOne(`SELECT id FROM usuarios WHERE id=$1 AND ativo=true`, [responsavel]);
+          if (!ativo) responsavel = null;
+        }
+
+        if (poloResolvido && responsavel) {
+          subtipo = 'ciclo_aceito';
+          descricaoPrefixo = 'Re-protocolo';
+          atribuidoA = responsavel;
+          prazoData = somarDiasUteis(hoje, prod.prazo_reprotocolo_dias_uteis || 10);
+        }
+      }
+
       await db.execute(
-        `INSERT INTO tarefas (cliente_produto_id, tipo, subtipo, descricao, urgencia, status, ciclo_inicio)
-         VALUES ($1, 'protocolar', 'ciclo', $2, 'MEDIO', 'pendente', $3::date)`,
-        [v.cliente_produto_id, `Novo ciclo — ${prod.nome} — ${v.cliente_nome}`, cicloInicioIso]
+        `INSERT INTO tarefas (cliente_produto_id, tipo, subtipo, descricao, urgencia, status, ciclo_inicio, atribuido_a, prazo_data, cliente_vinculo_id)
+         VALUES ($1, 'protocolar', $2, $3, $4, 'pendente', $5::date, $6, $7, $8)`,
+        [v.cliente_produto_id, subtipo, `${descricaoPrefixo} — ${prod.nome} — ${v.cliente_nome}`,
+         atribuidoA ? 'ALTO' : 'MEDIO', cicloInicioIso, atribuidoA, prazoData, cicloVinculoId]
       );
       const periodoTexto = `${cicloInicio.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric', timeZone: 'UTC' })} até hoje`;
 
-      console.log(`[Ciclos] Tarefa criada: ${prod.nome} — ${v.cliente_nome} | ${periodoTexto}`);
+      console.log(`[Ciclos] Tarefa criada (${subtipo}): ${prod.nome} — ${v.cliente_nome} | ${periodoTexto}${atribuidoA ? ' | auto-aceito' : ''}`);
       totalTarefas++;
     }
   }
