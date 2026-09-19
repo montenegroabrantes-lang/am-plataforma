@@ -420,12 +420,36 @@ async function iniciar() {
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_tarefa_cadastro_onboarding ON tarefas (onboarding_id, tipo) WHERE onboarding_id IS NOT NULL AND tipo='cadastro_cliente' AND status NOT IN ('cancelada')`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_tarefa_protocolo_onboarding ON tarefas (onboarding_produto_id, tipo) WHERE onboarding_produto_id IS NOT NULL AND tipo='protocolar' AND status NOT IN ('cancelada')`);
 
+    // Ciclos recorrentes (ex: FGTS remanescente a cada 25 meses) são sinal de "novo período
+    // acumulado", não protocolo pronto. Ganham subtipo próprio, o início do período acumulado
+    // (fixo) e um adiamento opcional, para nunca se misturarem com a fila de protocolo inicial.
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS ciclo_inicio DATE`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS ciclo_adiado_ate DATE`).catch(() => {});
+    // Backfill dos ciclos criados antes do subtipo existir: o texto antigo "Período a solicitar"
+    // trazia uma janela futura errada; o início real é o mês seguinte ao fim do último processo.
+    await db.query(`
+      UPDATE tarefas t SET
+        subtipo='ciclo', precisa_triagem=false,
+        ciclo_inicio=COALESCE(t.ciclo_inicio, DATE_TRUNC('month', p.periodo_fim + INTERVAL '1 month')::date, DATE_TRUNC('month', c.vinculo_inicio)::date),
+        descricao=REGEXP_REPLACE(REPLACE(t.descricao, 'Protocolar processo — ', 'Novo ciclo — '), '\\s*\\|\\s*Período a solicitar:.*$', '')
+      FROM cliente_produtos cp
+      JOIN clientes c ON c.id=cp.cliente_id
+      LEFT JOIN LATERAL (
+        SELECT periodo_fim FROM processos
+         WHERE cliente_id=cp.cliente_id AND produto_id=cp.produto_id AND periodo_fim IS NOT NULL
+         ORDER BY periodo_fim DESC LIMIT 1
+      ) p ON true
+      WHERE t.cliente_produto_id=cp.id AND t.tipo='protocolar' AND t.subtipo IS NULL
+        AND t.descricao LIKE '%Período a solicitar%' AND t.status NOT IN ('concluida','cancelada')
+    `).catch(e => console.warn('[Migration] Backfill de ciclos:', e.message));
+
     // O acervo legado nasceu da antiga equivalência "elegível = contratado". Ele permanece
     // íntegro, mas sai da fila operacional até conferência humana; nada é apagado.
+    // Tarefas nascidas de ciclo (ciclo_inicio) ficam de fora: para elas, ter processo anterior é a regra.
     await db.query(`
       UPDATE tarefas t SET precisa_triagem=true
        FROM cliente_produtos cp
-      WHERE t.cliente_produto_id=cp.id AND t.tipo='protocolar'
+      WHERE t.cliente_produto_id=cp.id AND t.tipo='protocolar' AND t.ciclo_inicio IS NULL
         AND t.onboarding_id IS NULL AND t.status NOT IN ('concluida','cancelada')
         AND (cp.honorarios_pct=0 OR EXISTS (
           SELECT 1 FROM processos p
@@ -566,31 +590,8 @@ async function iniciar() {
       ON CONFLICT (categoria, chave) DO NOTHING
     `).catch(() => {});
 
-    // Atualizar descrição de tarefas de ciclo recorrente existentes para incluir período
-    await db.query(`
-      UPDATE tarefas t
-      SET descricao = CONCAT(
-        'Protocolar processo — ', pr.nome, ' — ', c.nome,
-        ' | Período a solicitar: ',
-        TO_CHAR(DATE_TRUNC('month', p.periodo_fim + INTERVAL '1 month'), 'MM/YYYY'),
-        ' a ',
-        TO_CHAR(DATE_TRUNC('month', p.periodo_fim + (pr.intervalo_meses || ' months')::INTERVAL), 'MM/YYYY')
-      )
-      FROM cliente_produtos cp
-      JOIN clientes c ON c.id = cp.cliente_id
-      JOIN produtos pr ON pr.id = cp.produto_id
-      JOIN (
-        SELECT DISTINCT ON (cliente_id, produto_id) cliente_id, produto_id, periodo_fim
-        FROM processos
-        WHERE periodo_fim IS NOT NULL
-        ORDER BY cliente_id, produto_id, periodo_fim DESC
-      ) p ON p.cliente_id = cp.cliente_id AND p.produto_id = cp.produto_id
-      WHERE t.cliente_produto_id = cp.id
-        AND t.tipo = 'protocolar'
-        AND t.status NOT IN ('concluida', 'cancelada')
-        AND pr.intervalo_meses IS NOT NULL
-        AND t.descricao NOT LIKE '%Período a solicitar%'
-    `).catch(e => console.warn('[Migration] Atualização descrição tarefas ciclo:', e.message));
+    // (A reescrita antiga de "Período a solicitar" foi removida: o período do ciclo agora é
+    //  estruturado em tarefas.ciclo_inicio e calculado até o mês atual na consulta.)
 
     const { recarregarAiConfig } = await import('./config/ai.js');
     await recarregarAiConfig(db);

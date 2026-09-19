@@ -38,56 +38,51 @@ export async function verificarCiclosRecorrentes() {
         [v.cliente_id, prod.id]
       );
 
-      // Determinar data de referência para o próximo ciclo
-      let dataReferencia = null;
-
+      // Início do período acumulado: mês seguinte ao fim do último processo; sem processo,
+      // o próprio início do vínculo. A elegibilidade chega quando passam intervalo_meses.
+      let cicloInicio = null;
       if (ultimoProcesso?.periodo_fim) {
-        // Próximo ciclo = fim do último período + intervalo_meses
-        dataReferencia = new Date(ultimoProcesso.periodo_fim);
-        dataReferencia.setMonth(dataReferencia.getMonth() + prod.intervalo_meses);
+        cicloInicio = new Date(ultimoProcesso.periodo_fim);
+        cicloInicio.setDate(1);
+        cicloInicio.setMonth(cicloInicio.getMonth() + 1);
       } else if (v.vinculo_inicio) {
-        // Sem processo anterior: usar vinculo_inicio + intervalo como primeira elegibilidade
-        dataReferencia = new Date(v.vinculo_inicio);
-        dataReferencia.setMonth(dataReferencia.getMonth() + prod.intervalo_meses);
+        cicloInicio = new Date(v.vinculo_inicio);
+        cicloInicio.setDate(1);
       } else {
-        // Sem referência de data — pular
-        continue;
+        continue; // sem referência de data
       }
-
-      // Verificar se a data de elegibilidade já chegou
+      const dataReferencia = new Date(cicloInicio);
+      dataReferencia.setMonth(dataReferencia.getMonth() + prod.intervalo_meses - 1);
       if (dataReferencia > hoje) continue;
 
-      // Verificar se já existe processo ou tarefa aberta para o ciclo atual
+      // Já existe processo cobrindo este ciclo?
       const processoAberto = await db.queryOne(
         `SELECT id FROM processos
          WHERE cliente_id = $1 AND produto_id = $2
          AND status NOT IN ('arquivado')
          AND (periodo_fim IS NULL OR periodo_fim >= $3)`,
-        [v.cliente_id, prod.id, dataReferencia]
+        [v.cliente_id, prod.id, cicloInicio]
       );
       if (processoAberto) continue;
 
-      const tarefaPendente = await db.queryOne(
+      // Já existe tarefa de protocolo aberta, ou um ciclo com este mesmo início que foi
+      // descartado pela equipe? Nos dois casos não recriamos — descartar tem que valer.
+      const cicloInicioIso = cicloInicio.toISOString().slice(0, 10);
+      const tarefaExistente = await db.queryOne(
         `SELECT id FROM tarefas
          WHERE cliente_produto_id = $1 AND tipo = 'protocolar'
-         AND status NOT IN ('concluida','cancelada')`,
-        [v.cliente_produto_id]
+           AND (status NOT IN ('concluida','cancelada') OR ciclo_inicio = $2::date)
+         LIMIT 1`,
+        [v.cliente_produto_id, cicloInicioIso]
       );
-      if (tarefaPendente) continue;
+      if (tarefaExistente) continue;
 
-      // Criar tarefa de novo ciclo
-      const fmtMesAno = d => d.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' });
-      const dataFim = new Date(dataReferencia);
-      dataFim.setMonth(dataFim.getMonth() + prod.intervalo_meses - 1);
-      const periodoTexto = `${fmtMesAno(dataReferencia)} a ${fmtMesAno(dataFim)}`;
       await db.execute(
-        `INSERT INTO tarefas (cliente_produto_id, tipo, descricao, urgencia, status)
-         VALUES ($1, 'protocolar', $2, 'MEDIO', 'pendente')`,
-        [
-          v.cliente_produto_id,
-          `Protocolar processo — ${prod.nome} — ${v.cliente_nome} | Período a solicitar: ${periodoTexto}`,
-        ]
+        `INSERT INTO tarefas (cliente_produto_id, tipo, subtipo, descricao, urgencia, status, ciclo_inicio)
+         VALUES ($1, 'protocolar', 'ciclo', $2, 'MEDIO', 'pendente', $3::date)`,
+        [v.cliente_produto_id, `Novo ciclo — ${prod.nome} — ${v.cliente_nome}`, cicloInicioIso]
       );
+      const periodoTexto = `${cicloInicio.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric' })} até hoje`;
 
       console.log(`[Ciclos] Tarefa criada: ${prod.nome} — ${v.cliente_nome} | ${periodoTexto}`);
       totalTarefas++;

@@ -623,3 +623,34 @@ integrações ou produção. Não registrar segredos neste documento.
   de ações secundárias (`⋯` com abrir cliente/contrato, observação, cancelar) não foram
   implementados nesta sessão — o cancelamento já existia como botão próprio com justificativa
   obrigatória e foi mantido como está.
+
+### 19/09/2026 (tarde) — Ciclos recorrentes separados da fila de protocolo inicial
+
+- Diagnóstico: 159 das 171 tarefas em "Protocolar inicial" eram ciclos de FGTS remanescente
+  (cron `src/services/ciclosRecorrentes.js`, intervalo 25 meses), todas criadas em 19/09, sem
+  responsável/prazo. A migração de boot que marca `precisa_triagem` em protocolos com processo
+  anterior as quarentenava (158/159) com o rótulo errado "CONFERIR CONTRATAÇÃO". O texto
+  "Período a solicitar" usava `ref → ref+24 meses` (janela futura, 2027/2028) em 84 delas.
+- Modelo novo: `tarefas.subtipo='ciclo'` (pendente de aceite) → `'ciclo_aceito'` (virou
+  protocolo). `tarefas.ciclo_inicio DATE` (mês seguinte ao `periodo_fim` do último processo;
+  sem processo, `clientes.vinculo_inicio`), `tarefas.ciclo_adiado_ate DATE`. O período acumulado
+  é sempre `ciclo_inicio → mês atual`; `ciclo_meses` calculado no `GET /api/tarefas`.
+- Backfill de boot (aditivo, idempotente): as 159 recebem `subtipo='ciclo'`,
+  `precisa_triagem=false`, `ciclo_inicio` e descrição "Novo ciclo — TESE — NOME". A migração
+  de triagem passa a ignorar tarefas com `ciclo_inicio`. A antiga reescrita de "Período a
+  solicitar" foi removida do boot.
+- Filas: `NAO_CICLO` exclui `subtipo='ciclo'` de minha/equipe/protocolar_inicial/protocolos/
+  triagem (GET, resumo e resumo-teses). Nova fila `ciclos` (só Master na UI), ordenada por
+  `ciclo_inicio` (mais atrasado primeiro), respeitando `ciclo_adiado_ate`. `resumo.ciclos` novo.
+- Endpoints (Master): `PATCH /api/tarefas/:id/ciclo/aceitar` {atribuido_a, prazo_data} —
+  vira `ciclo_aceito`, urgência ALTO, auto-vínculo único, entra em Protocolar inicial;
+  `PATCH /api/tarefas/:id/ciclo/adiar` {adiar_ate, justificativa}. Descartar = cancelar com
+  justificativa (rota existente). O cron não recria um ciclo cancelado com o mesmo
+  `ciclo_inicio` (dedup considera `ciclo_inicio` além de status aberto).
+- Frontend: aba "🔁 Novos ciclos" + card no cockpit; card do ciclo com badge NOVO CICLO,
+  "PERÍODO ACUMULADO · MM/AAAA → MM/AAAA (N meses)", CONTRA, ações Aceitar ciclo / Adiar /
+  Descartar; modal de aceite exige responsável + prazo. Tarefas `ciclo_aceito` seguem
+  mostrando o período acumulado no card de protocolo.
+- Pendente (item D da análise): polo passivo dos vínculos ainda é texto livre — 4 nomes fora
+  do catálogo `polos_passivos` (ESTADO PERNANBUCO, ESTADO PARAIBA, Governo de Pernambuco,
+  MUNICIPIO DE NATAL) e 6 nulos.

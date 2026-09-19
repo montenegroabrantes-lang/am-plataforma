@@ -9,6 +9,13 @@ import { vinculoUnicoAtivo } from '../utils/vinculos.js';
 
 export const tarefasRouter = Router();
 
+// Ciclos recorrentes ainda não aceitos (subtipo='ciclo') vivem na própria fila "ciclos";
+// nunca entram nas filas operacionais nem na triagem, para não soterrar o trabalho real.
+const NAO_CICLO = `COALESCE(t.subtipo,'')<>'ciclo'`;
+// Meses acumulados do período do ciclo (inclusive), do início até o mês corrente.
+const CICLO_MESES = `CASE WHEN t.ciclo_inicio IS NOT NULL THEN
+  ((DATE_PART('year',CURRENT_DATE)-DATE_PART('year',t.ciclo_inicio))*12 + DATE_PART('month',CURRENT_DATE)-DATE_PART('month',t.ciclo_inicio) + 1)::int END`;
+
 // Rejeita :id malformado antes de bater no banco (evita 500 cru do Postgres)
 tarefasRouter.param('id', (req, res, next, id) => {
   if (!uuidValido(id)) return res.status(400).json({ ok: false, erro: 'ID inválido.' });
@@ -31,10 +38,17 @@ tarefasRouter.get('/', async (req, res) => {
       condicoes.push(`t.atribuido_a=$${params.length}`);
       condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`);
       condicoes.push(`t.precisa_triagem=false`);
+      condicoes.push(NAO_CICLO);
     },
     equipe: () => {
       condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`);
       condicoes.push(`t.precisa_triagem=false`);
+      condicoes.push(NAO_CICLO);
+    },
+    ciclos: () => {
+      condicoes.push(`t.tipo='protocolar' AND t.subtipo='ciclo'`);
+      condicoes.push(`t.status NOT IN ('concluida','cancelada')`);
+      condicoes.push(`(t.ciclo_adiado_ate IS NULL OR t.ciclo_adiado_ate <= CURRENT_DATE)`);
     },
     onboarding: () => {
       condicoes.push(`t.onboarding_id IS NOT NULL`);
@@ -43,6 +57,7 @@ tarefasRouter.get('/', async (req, res) => {
     protocolar_inicial: () => {
       condicoes.push(`((t.tipo='cadastro_cliente' AND t.onboarding_id IS NOT NULL) OR (t.tipo='protocolar' AND t.processo_id IS NULL))`);
       condicoes.push(`t.status NOT IN ('concluida','cancelada')`);
+      condicoes.push(NAO_CICLO);
     },
     peticoes: () => {
       condicoes.push(`t.processo_id IS NOT NULL`);
@@ -53,6 +68,7 @@ tarefasRouter.get('/', async (req, res) => {
       condicoes.push(`t.tipo='protocolar'`);
       condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`);
       condicoes.push(`t.precisa_triagem=false`);
+      condicoes.push(NAO_CICLO);
     },
     validacao: () => {
       condicoes.push(`(t.status='aguardando_validacao' OR t.tipo='assinatura')`);
@@ -60,6 +76,7 @@ tarefasRouter.get('/', async (req, res) => {
     },
     triagem: () => {
       condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`);
+      condicoes.push(NAO_CICLO);
       condicoes.push(`(
         t.precisa_triagem=true
         OR t.atribuido_a IS NULL
@@ -239,6 +256,7 @@ tarefasRouter.get('/', async (req, res) => {
               CASE WHEN t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL THEN 'sem_tese'::text END
             ], NULL) AS motivos_triagem,
             ob.status AS onboarding_status,
+            ${CICLO_MESES} AS ciclo_meses,
             vinc.vinculos_ativos AS vinculos_ativos,
             vinc.polos_passivos_vinculo AS polos_passivos,
             -- Prioridade: processo já existente > vínculo ativo único > cadastro do cliente > padrão da tese.
@@ -263,6 +281,7 @@ tarefasRouter.get('/', async (req, res) => {
      WHERE ${condicoes.join(' AND ')}
      ORDER BY
        CASE WHEN t.precisa_triagem THEN 1 ELSE 0 END,
+       CASE WHEN t.subtipo='ciclo' THEN t.ciclo_inicio END ASC NULLS LAST,
        CASE WHEN t.prazo_data < CURRENT_DATE AND t.status NOT IN ('concluida','cancelada') THEN 0 ELSE 1 END,
        CASE
          WHEN t.prazo_data IS NULL OR t.status IN ('concluida','cancelada') THEN
@@ -291,17 +310,18 @@ tarefasRouter.get('/resumo', async (req, res) => {
   }
   const resumo = await db.queryOne(
     `SELECT
-       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND t.precisa_triagem=false)::int AS abertas,
-       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND t.precisa_triagem=false AND t.atribuido_a=$${params.length + 1})::int AS minhas,
+       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND t.precisa_triagem=false AND ${NAO_CICLO})::int AS abertas,
+       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND t.precisa_triagem=false AND ${NAO_CICLO} AND t.atribuido_a=$${params.length + 1})::int AS minhas,
        COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND t.prazo_data<CURRENT_DATE)::int AS atrasadas,
        COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND t.prazo_data=CURRENT_DATE)::int AS hoje,
-       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND (
+       COUNT(*) FILTER (WHERE t.tipo='protocolar' AND t.subtipo='ciclo' AND t.status NOT IN ('concluida','cancelada') AND (t.ciclo_adiado_ate IS NULL OR t.ciclo_adiado_ate <= CURRENT_DATE))::int AS ciclos,
+       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada','bloqueada') AND ${NAO_CICLO} AND (
          t.precisa_triagem OR t.atribuido_a IS NULL
          OR (t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura','diligencia'))
          OR (t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL)
        ))::int AS triagem,
        COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada') AND t.onboarding_id IS NOT NULL)::int AS onboarding,
-       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada') AND ((t.tipo='cadastro_cliente' AND t.onboarding_id IS NOT NULL) OR (t.tipo='protocolar' AND t.processo_id IS NULL)))::int AS protocolar_inicial,
+       COUNT(*) FILTER (WHERE t.status NOT IN ('concluida','cancelada') AND ${NAO_CICLO} AND ((t.tipo='cadastro_cliente' AND t.onboarding_id IS NOT NULL) OR (t.tipo='protocolar' AND t.processo_id IS NULL)))::int AS protocolar_inicial,
        COUNT(*) FILTER (WHERE t.status='aguardando_validacao' OR (t.tipo='assinatura' AND t.status NOT IN ('concluida','cancelada')))::int AS validacao
      FROM tarefas t
      LEFT JOIN processos p ON p.id=t.processo_id
@@ -323,16 +343,17 @@ tarefasRouter.get('/resumo-teses', async (req, res) => {
   const condicoes = [`t.status NOT IN ('cancelada')`];
 
   const filas = {
-    minha: () => { params.push(req.user.id); condicoes.push(`t.atribuido_a=$${params.length}`); condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`t.precisa_triagem=false`); },
-    equipe: () => { condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`t.precisa_triagem=false`); },
+    minha: () => { params.push(req.user.id); condicoes.push(`t.atribuido_a=$${params.length}`); condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`t.precisa_triagem=false`); condicoes.push(NAO_CICLO); },
+    equipe: () => { condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`t.precisa_triagem=false`); condicoes.push(NAO_CICLO); },
+    ciclos: () => { condicoes.push(`t.tipo='protocolar' AND t.subtipo='ciclo'`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); condicoes.push(`(t.ciclo_adiado_ate IS NULL OR t.ciclo_adiado_ate <= CURRENT_DATE)`); },
     onboarding: () => { condicoes.push(`t.onboarding_id IS NOT NULL`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
-    protocolar_inicial: () => { condicoes.push(`((t.tipo='cadastro_cliente' AND t.onboarding_id IS NOT NULL) OR (t.tipo='protocolar' AND t.processo_id IS NULL))`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
+    protocolar_inicial: () => { condicoes.push(`((t.tipo='cadastro_cliente' AND t.onboarding_id IS NOT NULL) OR (t.tipo='protocolar' AND t.processo_id IS NULL))`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); condicoes.push(NAO_CICLO); },
     peticoes: () => { condicoes.push(`t.processo_id IS NOT NULL`); condicoes.push(`(t.tipo IN ('demanda','assinatura') OR t.status='aguardando_protocolo')`); condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); },
-    protocolos: () => { condicoes.push(`t.tipo='protocolar'`); condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`t.precisa_triagem=false`); },
+    protocolos: () => { condicoes.push(`t.tipo='protocolar'`); condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`t.precisa_triagem=false`); condicoes.push(NAO_CICLO); },
     validacao: () => { condicoes.push(`(t.status='aguardando_validacao' OR t.tipo='assinatura')`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
     prazos: () => { condicoes.push(`t.tipo IN ('prazo','prazo_pagamento')`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
     diligencias: () => { condicoes.push(`t.tipo='diligencia'`); condicoes.push(`t.status NOT IN ('concluida','cancelada')`); },
-    triagem: () => { condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(`(
+    triagem: () => { condicoes.push(`t.status NOT IN ('concluida','cancelada','bloqueada')`); condicoes.push(NAO_CICLO); condicoes.push(`(
       t.precisa_triagem=true OR t.atribuido_a IS NULL
       OR (t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura','diligencia'))
       OR (t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL)
@@ -740,6 +761,58 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
   });
 
   res.json({ ok: true, processo_id: processoId, numero: numeroLimpo });
+});
+
+// PATCH /api/tarefas/:id/ciclo/aceitar — o Master confirma que o novo ciclo vira protocolo:
+// exige responsável e prazo, e a tarefa passa para a fila de protocolo inicial.
+tarefasRouter.patch('/:id/ciclo/aceitar', apenasMaster, async (req, res) => {
+  const { atribuido_a, prazo_data } = req.body || {};
+  if (!uuidValido(atribuido_a)) return res.status(400).json({ ok: false, erro: 'Informe o responsável pelo protocolo.' });
+  if (!prazo_data || !dataCalendarioValida(prazo_data)) return res.status(400).json({ ok: false, erro: 'Informe um prazo válido.' });
+  const responsavelAtivo = await db.queryOne(`SELECT id FROM usuarios WHERE id=$1 AND ativo=true`, [atribuido_a]);
+  if (!responsavelAtivo) return res.status(400).json({ ok: false, erro: 'O responsável selecionado não está ativo.' });
+
+  const tarefa = await db.queryOne(
+    `SELECT t.id, t.status, t.subtipo, t.descricao, cp.cliente_id
+       FROM tarefas t LEFT JOIN cliente_produtos cp ON cp.id=t.cliente_produto_id
+      WHERE t.id=$1`, [req.params.id]);
+  if (!tarefa) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
+  if (tarefa.subtipo !== 'ciclo') return res.status(409).json({ ok: false, erro: 'Esta tarefa não é um ciclo pendente de aceite.' });
+  if (['concluida','cancelada'].includes(tarefa.status)) return res.status(409).json({ ok: false, erro: 'Ciclo já encerrado.' });
+
+  const vinculoAuto = await vinculoUnicoAtivo(tarefa.cliente_id);
+  const [atualizada] = await db.query(
+    `UPDATE tarefas SET subtipo='ciclo_aceito', atribuido_a=$1, prazo_data=$2::date, validado_por=$3,
+        precisa_triagem=false, ciclo_adiado_ate=NULL, urgencia='ALTO',
+        cliente_vinculo_id=COALESCE(cliente_vinculo_id,$4),
+        descricao=REPLACE(descricao,'Novo ciclo — ','Protocolar processo — ')
+      WHERE id=$5 RETURNING *`,
+    [atribuido_a, prazo_data, req.user.id, vinculoAuto?.id || null, req.params.id]
+  );
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'aceitar_ciclo', entidade: 'tarefa', entidadeId: req.params.id,
+    valorDepois: { atribuido_a, prazo_data, cliente_vinculo_id: atualizada.cliente_vinculo_id }, ip: req._ip,
+  });
+  res.json({ ok: true, tarefa: atualizada });
+});
+
+// PATCH /api/tarefas/:id/ciclo/adiar — some da fila de ciclos até a data informada, sem cancelar.
+tarefasRouter.patch('/:id/ciclo/adiar', apenasMaster, async (req, res) => {
+  const { adiar_ate, justificativa } = req.body || {};
+  if (!adiar_ate || !dataCalendarioValida(adiar_ate)) return res.status(400).json({ ok: false, erro: 'Informe até quando adiar.' });
+  if (!String(justificativa || '').trim()) return res.status(400).json({ ok: false, erro: 'Informe a justificativa do adiamento.' });
+  const result = await db.query(
+    `UPDATE tarefas SET ciclo_adiado_ate=$1::date,
+        observacao=CONCAT_WS(E'\\n', NULLIF(observacao,''), 'Adiado até ' || TO_CHAR($1::date,'DD/MM/YYYY') || ': ' || $2)
+      WHERE id=$3 AND subtipo='ciclo' AND status NOT IN ('concluida','cancelada') RETURNING id`,
+    [adiar_ate, String(justificativa).trim(), req.params.id]
+  );
+  if (!result.length) return res.status(409).json({ ok: false, erro: 'Só é possível adiar um ciclo pendente de aceite.' });
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'adiar_ciclo', entidade: 'tarefa', entidadeId: req.params.id,
+    valorDepois: { adiar_ate, justificativa }, ip: req._ip,
+  });
+  res.json({ ok: true });
 });
 
 // PATCH /api/tarefas/:id/responsavel — troca responsável e prazo (Master)
