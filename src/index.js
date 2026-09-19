@@ -224,6 +224,10 @@ async function iniciar() {
       WHERE (cargo IS NOT NULL OR orgao IS NOT NULL OR polo_passivo IS NOT NULL)
         AND NOT EXISTS (SELECT 1 FROM cliente_vinculos cv WHERE cv.cliente_id = clientes.id)
     `).catch(e => console.warn('[Migration] cliente_vinculos:', e.message));
+    // Amarra a tarefa de protocolo ao vínculo funcional escolhido — sem isso, o protocolo
+    // pode ser registrado contra o polo passivo errado quando o cliente tem 2 vínculos.
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS cliente_vinculo_id UUID REFERENCES cliente_vinculos(id) ON DELETE SET NULL`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tarefas_cliente_vinculo ON tarefas (cliente_vinculo_id) WHERE cliente_vinculo_id IS NOT NULL`).catch(() => {});
     await db.query(`
       CREATE TABLE IF NOT EXISTS classif_campos (
         id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),

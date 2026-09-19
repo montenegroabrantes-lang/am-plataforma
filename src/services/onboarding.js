@@ -4,6 +4,7 @@ import { uuidValido } from '../utils/validacao.js';
 import { somarDiasUteis, dataCalendarioValida } from '../utils/diasUteis.js';
 import { criarPastaCliente, criarSubpasta } from './drive/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
+import { vinculoUnicoAtivo } from '../utils/vinculos.js';
 
 function numeroPercentual(valor, padrao = 20) {
   const n = Number(valor);
@@ -242,6 +243,9 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
       }
 
       const descricaoProtocolo = `Protocolar processo — ${produto.nome} — ${cliente?.nome || lead.nome || 'novo cliente'}`;
+      // Com exatamente 1 vínculo ativo, já pré-associa a tarefa a ele; com 0 ou 2+, fica
+      // vazio e a escolha do polo passivo é exigida no momento do protocolo.
+      const vinculoAuto = cliente ? await vinculoUnicoAtivo(cliente.id, pg) : null;
       let tarefaAdotada = null;
       if (clienteProdutoId) {
         const existenteResult = await pg.query(
@@ -255,23 +259,24 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
         await pg.query(
           `UPDATE tarefas SET cliente_id=$1,onboarding_id=$2,onboarding_produto_id=$3,
              descricao=$4,instrucao=$5,atribuido_a=$6,validado_por=$7,urgencia='ALTO',
-             prazo_data=$8,status='pendente',precisa_triagem=false WHERE id=$9`,
+             prazo_data=$8,status='pendente',precisa_triagem=false,
+             cliente_vinculo_id=COALESCE(cliente_vinculo_id,$9) WHERE id=$10`,
           [cliente.id,registro.id,op.id,descricaoProtocolo,
            'Confirmar documentos e protocolar a ação contratada. Ao concluir, informe o número CNJ.',
-           onboarding.responsavel_protocolo_id,usuarioId,prazoProtocolo,tarefaAdotada.id]
+           onboarding.responsavel_protocolo_id,usuarioId,prazoProtocolo,vinculoAuto?.id || null,tarefaAdotada.id]
         );
       } else {
         await pg.query(
           `INSERT INTO tarefas
              (cliente_id, cliente_produto_id, onboarding_id, onboarding_produto_id, tipo,
-              descricao, instrucao, atribuido_a, validado_por, urgencia, prazo_data, status, precisa_triagem)
-           VALUES ($1,$2,$3,$4,'protocolar',$5,$6,$7,$8,'ALTO',$9,$10,false)
+              descricao, instrucao, atribuido_a, validado_por, urgencia, prazo_data, status, precisa_triagem, cliente_vinculo_id)
+           VALUES ($1,$2,$3,$4,'protocolar',$5,$6,$7,$8,'ALTO',$9,$10,false,$11)
            ON CONFLICT DO NOTHING`,
           [
             cliente?.id || null, clienteProdutoId, registro.id, op.id, descricaoProtocolo,
             'Confirmar documentos e protocolar a ação contratada. Ao concluir, informe o número CNJ.',
             onboarding.responsavel_protocolo_id, usuarioId, prazoProtocolo,
-            cliente ? 'pendente' : 'bloqueada',
+            cliente ? 'pendente' : 'bloqueada', vinculoAuto?.id || null,
           ]
         );
       }
@@ -279,10 +284,11 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
         `UPDATE tarefas SET atribuido_a=$1, prazo_data=$2,
              cliente_id=COALESCE($3,cliente_id), cliente_produto_id=COALESCE($4,cliente_produto_id),
              status=CASE WHEN $3::uuid IS NOT NULL AND status='bloqueada' THEN 'pendente' ELSE status END,
-             precisa_triagem=false
+             precisa_triagem=false,
+             cliente_vinculo_id=COALESCE(cliente_vinculo_id,$6)
           WHERE onboarding_produto_id=$5 AND tipo='protocolar'
             AND status NOT IN ('concluida','cancelada')`,
-        [onboarding.responsavel_protocolo_id, prazoProtocolo, cliente?.id || null, clienteProdutoId, op.id]
+        [onboarding.responsavel_protocolo_id, prazoProtocolo, cliente?.id || null, clienteProdutoId, op.id, vinculoAuto?.id || null]
       );
     }
 

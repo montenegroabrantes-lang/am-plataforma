@@ -580,5 +580,46 @@ integrações ou produção. Não registrar segredos neste documento.
   primeira página carregada na tela.
 - A ficha apresenta as pendências que impedem a liberação e o botão de tarefas abre somente as
   tarefas daquele contrato.
-- Validação local: verificação sintática do backend, suíte **54/54** e build isolado do Next.js
-  com as 20 rotas compiladas. O deploy em produção ainda precisa ser confirmado após os commits.
+- Validação: verificação sintática do backend, suíte **54/54** e build isolado do Next.js
+  com as 20 rotas compiladas. Em produção, o health check do backend respondeu `200` com banco
+  operante, a rota de rascunho respondeu `401` sem credencial e a rota do frontend respondeu
+  `200`. Nenhum cadastro real foi criado ou alterado durante a verificação.
+- Commits: backend `0bd3ee6`; frontend `2de65ef`.
+
+### 19/09/2026 — Polo passivo seguro no protocolo inicial
+
+- `GET /api/tarefas` passou a agregar, via `LEFT JOIN LATERAL` em `cliente_vinculos`, os campos
+  `vinculos_ativos` (lista completa), `polos_passivos` (distintos) e `polo_passivo` (resolvido).
+  Prioridade: `processos.polo_passivo` já existente > vínculo ativo único > `clientes.polo_passivo`
+  > padrão da tese (`produtos.polos_passivos_padrao[1]`). Com 2+ vínculos ativos, nunca escolhe
+  um polo arbitrário — o campo fica vazio e a UI exige seleção humana.
+- Nova coluna `tarefas.cliente_vinculo_id` (FK para `cliente_vinculos`, `ON DELETE SET NULL`),
+  migrada de forma aditiva em `src/index.js`. Já aplicada manualmente no banco de produção
+  (Railway) antes do deploy do código, sem impacto em dados existentes.
+- `src/utils/vinculos.js` (novo): `vinculoUnicoAtivo(clienteId)` resolve automaticamente o vínculo
+  quando o cliente tem exatamente 1 vínculo ativo; com 0 ou 2+ retorna `null`. Usado tanto na
+  criação manual de tarefa (`POST /api/tarefas`) quanto na criação automática de protocolo pelo
+  onboarding (`src/services/onboarding.js`).
+- `PATCH /api/tarefas/:id/concluir-com-numero` reforçado: valida que o `vinculo_id` pertence ao
+  cliente e está ativo (400/409 quando não), exige seleção explícita quando há 2+ vínculos ativos
+  sem `vinculo_id` informado, grava `cliente_vinculo_id` na tarefa e copia o polo escolhido para
+  `processos.polo_passivo` (sem sobrescrever um valor já preenchido) — tudo na mesma transação.
+  A transação agora também trava a linha da tarefa (`SELECT ... FOR UPDATE`) e reconfirma o status
+  dentro dela, para que um duplo clique nunca crie dois processos. Auditoria passou a registrar
+  `cliente_vinculo_id` e `polo_passivo` usados.
+- Frontend (`am-plataforma-web/src/app/(dashboard)/tarefas/page.js`): o card de tarefas de
+  protocolo (`tipo='protocolar'`) ganhou o bloco **CONTRA**, com três estados — polo resolvido,
+  "polo a confirmar" com a lista de vínculos quando há 2+, ou alerta "polo não informado" com
+  atalho para completar o vínculo no cadastro do cliente. O modal de conclusão só lista/exige
+  seleção de vínculos **ativos** (antes contava também vínculos inativos) e o botão de submissão
+  passou a mostrar "Registrando protocolo..." durante a requisição.
+- Testes: `src/utils/vinculos.test.js` (novo) cobre único vínculo, nenhum vínculo e múltiplos
+  vínculos ativos. Suíte completa do backend: **58/58**. A query agregada foi validada
+  diretamente contra o banco de produção (leitura), e a migração aditiva da coluna foi aplicada
+  e confirmada sem erros. Não foi possível validar o endpoint via HTTP fim a fim nesta sessão sem
+  resetar a senha de um usuário real — evitado por ser uma ação irreversível sobre uma conta de
+  produção; a validação ficou nos níveis de SQL direto e suíte automatizada.
+- Pendente para quem continuar: testes de frontend (responsividade, teclado, contraste) e o menu
+  de ações secundárias (`⋯` com abrir cliente/contrato, observação, cancelar) não foram
+  implementados nesta sessão — o cancelamento já existia como botão próprio com justificativa
+  obrigatória e foi mantido como está.

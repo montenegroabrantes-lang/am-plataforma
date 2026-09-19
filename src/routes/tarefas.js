@@ -5,6 +5,7 @@ import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } f
 import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { dataCalendarioValida } from '../utils/diasUteis.js';
+import { vinculoUnicoAtivo } from '../utils/vinculos.js';
 
 export const tarefasRouter = Router();
 
@@ -193,7 +194,16 @@ tarefasRouter.get('/', async (req, res) => {
      LEFT JOIN onboardings_contrato ob ON ob.id=t.onboarding_id
      LEFT JOIN clientes oc ON oc.id=ob.cliente_id
      LEFT JOIN onboarding_produtos op ON op.id=t.onboarding_produto_id
-     LEFT JOIN produtos opr ON opr.id=op.produto_id`;
+     LEFT JOIN produtos opr ON opr.id=op.produto_id
+     LEFT JOIN LATERAL (
+       SELECT
+         COALESCE(json_agg(jsonb_build_object('id',cv.id,'cargo',cv.cargo,'orgao',cv.orgao,'polo_passivo',cv.polo_passivo) ORDER BY cv.ordem)
+                  FILTER (WHERE cv.vinculo_ativo), '[]'::json) AS vinculos_ativos,
+         COUNT(*) FILTER (WHERE cv.vinculo_ativo)::int AS qtd_vinculos_ativos,
+         ARRAY_REMOVE(ARRAY_AGG(DISTINCT NULLIF(TRIM(cv.polo_passivo), '')) FILTER (WHERE cv.vinculo_ativo), NULL) AS polos_passivos_vinculo
+       FROM cliente_vinculos cv
+       WHERE cv.cliente_id = COALESCE(cl.id,tc.id,oc.id,pc.id)
+     ) vinc ON true`;
 
   // COUNT antes de adicionar LIMIT/OFFSET
   const [{ total }] = await db.query(
@@ -229,6 +239,16 @@ tarefasRouter.get('/', async (req, res) => {
               CASE WHEN t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL THEN 'sem_tese'::text END
             ], NULL) AS motivos_triagem,
             ob.status AS onboarding_status,
+            vinc.vinculos_ativos AS vinculos_ativos,
+            vinc.polos_passivos_vinculo AS polos_passivos,
+            -- Prioridade: processo já existente > vínculo ativo único > cadastro do cliente > padrão da tese.
+            -- Com mais de um vínculo ativo, nunca escolhemos um polo arbitrário: fica para triagem humana.
+            COALESCE(
+              NULLIF(TRIM(p.polo_passivo), ''),
+              CASE WHEN vinc.qtd_vinculos_ativos = 1 THEN vinc.polos_passivos_vinculo[1] END,
+              NULLIF(TRIM(COALESCE(cl.polo_passivo,tc.polo_passivo,oc.polo_passivo,pc.polo_passivo)), ''),
+              NULLIF(TRIM(COALESCE(pr.polos_passivos_padrao[1],opr.polos_passivos_padrao[1],ppr.polos_passivos_padrao[1])), '')
+            ) AS polo_passivo,
             -- Urgência recalculada pela proximidade real do prazo (não fica congelada no valor da criação)
             CASE
               WHEN t.prazo_data IS NULL THEN t.urgencia
@@ -404,14 +424,18 @@ tarefasRouter.post('/', apenasMaster, async (req, res) => {
     if (!responsavelAtivo) return res.status(400).json({ ok: false, erro: 'O responsável selecionado não está ativo.' });
   }
 
+  // Protocolo com exatamente 1 vínculo ativo já nasce associado a ele; com 0 ou 2+,
+  // fica em aberto e a escolha do polo passivo é exigida ao registrar o protocolo.
+  const vinculoAuto = tipo === 'protocolar' ? await vinculoUnicoAtivo(cliente_id) : null;
+
   const [nova] = await db.query(
-    `INSERT INTO tarefas (processo_id, cliente_id, cliente_produto_id, tipo, subtipo, descricao, instrucao, atribuido_a, validado_por, urgencia, prazo_data, assinante_sugerido)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+    `INSERT INTO tarefas (processo_id, cliente_id, cliente_produto_id, tipo, subtipo, descricao, instrucao, atribuido_a, validado_por, urgencia, prazo_data, assinante_sugerido, cliente_vinculo_id)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
      RETURNING *`,
     [
       processo_id || null, cliente_id || null, cliente_produto_id || null, tipo, subtipo || null, descricao, instrucao || null,
       atribuido_a || null, req.user.id,
-      urgencia || 'MEDIO', prazo_data || null, assinante_sugerido || null,
+      urgencia || 'MEDIO', prazo_data || null, assinante_sugerido || null, vinculoAuto?.id || null,
     ]
   );
 
@@ -583,14 +607,36 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
     return res.status(403).json({ ok: false, erro: 'Você não é o responsável por esta tarefa.' });
   }
 
-  // Se vinculo_id fornecido, usa polo_passivo daquele vínculo
-  if (vinculo_id) {
-    const vinc = await db.queryOne(
-      `SELECT polo_passivo FROM cliente_vinculos WHERE id = $1 AND cliente_id = $2`,
-      [vinculo_id, tarefa.cliente_id]
-    );
-    if (vinc) tarefa.cliente_polo_passivo = vinc.polo_passivo;
+  if (vinculo_id && !uuidValido(vinculo_id)) {
+    return res.status(400).json({ ok: false, erro: 'Vínculo inválido.' });
   }
+
+  const vinculosCliente = await db.query(
+    `SELECT id, polo_passivo, vinculo_ativo FROM cliente_vinculos WHERE cliente_id = $1 ORDER BY ordem`,
+    [tarefa.cliente_id]
+  );
+  const vinculosAtivos = vinculosCliente.filter(v => v.vinculo_ativo);
+
+  let vinculoEscolhido = null;
+  if (vinculo_id) {
+    // Rejeita seleção que não pertence a este cliente ou que aponta para um vínculo inativo —
+    // nunca protocola contra o polo de um vínculo de outro cliente ou já encerrado.
+    vinculoEscolhido = vinculosCliente.find(v => v.id === vinculo_id) || null;
+    if (!vinculoEscolhido) {
+      return res.status(400).json({ ok: false, erro: 'Vínculo não encontrado para este cliente.' });
+    }
+    if (!vinculoEscolhido.vinculo_ativo) {
+      return res.status(409).json({ ok: false, erro: 'O vínculo selecionado não está mais ativo.' });
+    }
+  } else if (vinculosAtivos.length > 1) {
+    // Nunca escolhe um polo arbitrário entre vários vínculos ativos.
+    return res.status(400).json({ ok: false, erro: 'Selecione o vínculo e o polo passivo antes de registrar o protocolo.' });
+  } else if (vinculosAtivos.length === 1) {
+    vinculoEscolhido = vinculosAtivos[0];
+  }
+
+  const poloFinal = vinculoEscolhido?.polo_passivo || tarefa.cliente_polo_passivo || null;
+  const clienteVinculoId = vinculoEscolhido?.id || tarefa.cliente_vinculo_id || null;
 
   // Detecta tribunal pelo segmento CNJ (NNNNNNN-DD.AAAA.J.TT.OOOO)
   const segmentos = numeroLimpo.split(/[-.]/).filter(Boolean);
@@ -605,13 +651,33 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
 
   const pgClient = await db.pool.connect();
   let processoId;
+  let jaConcluida = false;
   try {
     await pgClient.query('BEGIN');
+
+    // Trava a linha e reconfirma o status dentro da transação: evita que um duplo clique
+    // (ou duas abas) crie dois processos para a mesma tarefa de protocolo.
+    const trava = await pgClient.query(
+      `SELECT status FROM tarefas WHERE id=$1 FOR UPDATE`,
+      [req.params.id]
+    );
+    if (!trava.rows[0] || trava.rows[0].status === 'concluida') {
+      await pgClient.query('ROLLBACK');
+      jaConcluida = true;
+    } else {
 
     // Verifica duplicidade
     const existente = await pgClient.query('SELECT id FROM processos WHERE numero = $1', [numeroLimpo]);
     if (existente.rows[0]) {
       processoId = existente.rows[0].id;
+      // Copia o polo escolhido também para um processo pré-existente, sem sobrescrever
+      // um valor que já tenha sido preenchido por outra fonte (ex: sincronização do tribunal).
+      if (poloFinal) {
+        await pgClient.query(
+          `UPDATE processos SET polo_passivo = COALESCE(NULLIF(polo_passivo, ''), $1) WHERE id = $2`,
+          [poloFinal, processoId]
+        );
+      }
     } else {
       const r = await pgClient.query(
         `INSERT INTO processos (numero, tribunal, sistema, grau, cliente_id, produto_id,
@@ -619,15 +685,15 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
          VALUES ($1,$2,$3,'1',$4,$5,$6,$7,$8,'aguardando_primeira_captura')
          RETURNING id`,
         [numeroLimpo, tribunal, sistema, tarefa.cliente_id, tarefa.produto_id,
-         masterId, tarefa.cliente_polo_passivo || null, periodo_fim || null]
+         masterId, poloFinal, periodo_fim || null]
       );
       processoId = r.rows[0].id;
     }
 
     await pgClient.query(
       `UPDATE tarefas SET status='concluida', numero_processo_inserido=$1,
-       processo_id=$2, concluida_em=NOW() WHERE id=$3`,
-      [numeroLimpo, processoId, req.params.id]
+       processo_id=$2, concluida_em=NOW(), cliente_vinculo_id=$4 WHERE id=$3`,
+      [numeroLimpo, processoId, req.params.id, clienteVinculoId]
     );
 
     if (tarefa.onboarding_id) {
@@ -646,11 +712,16 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
     }
 
     await pgClient.query('COMMIT');
+    }
   } catch (e) {
-    await pgClient.query('ROLLBACK');
+    await pgClient.query('ROLLBACK').catch(() => {});
     throw e;
   } finally {
     pgClient.release();
+  }
+
+  if (jaConcluida) {
+    return res.status(409).json({ ok: false, erro: 'Tarefa já concluída.' });
   }
 
   // Enfileira sync (fora da transação)
@@ -663,7 +734,9 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
   const { registrarAuditoria } = await import('../middleware/auditoria.js');
   await registrarAuditoria({
     usuarioId: req.user.id, acao: 'protocolar', entidade: 'processo',
-    entidadeId: processoId, valorDepois: { numero: numeroLimpo }, ip: req._ip,
+    entidadeId: processoId,
+    valorDepois: { numero: numeroLimpo, cliente_vinculo_id: clienteVinculoId, polo_passivo: poloFinal },
+    ip: req._ip,
   });
 
   res.json({ ok: true, processo_id: processoId, numero: numeroLimpo });
