@@ -24,7 +24,7 @@ export async function verificarCiclosRecorrentes() {
     // Buscar todos os clientes vinculados a este produto
     const vinculos = await db.query(
       `SELECT cp.id AS cliente_produto_id, cp.cliente_id,
-              c.nome AS cliente_nome, c.cargo, c.orgao, c.vinculo_inicio
+              c.nome AS cliente_nome, c.cargo, c.orgao, c.vinculo_inicio, c.polo_passivo
        FROM cliente_produtos cp
        JOIN clientes c ON c.id = cp.cliente_id
        WHERE cp.produto_id = $1 AND c.ativo IS NOT FALSE AND c.vinculo_ativo = true`,

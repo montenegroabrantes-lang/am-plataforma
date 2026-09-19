@@ -69,7 +69,10 @@ produtosRouter.patch('/:id', apenasMaster, async (req, res) => {
 
   for (const campo of campos) {
     if (req.body[campo] !== undefined) {
-      params.push(req.body[campo] === '' ? null : req.body[campo]);
+      // Só o responsável de re-protocolo é opcional o suficiente pra aceitar string vazia
+      // como "limpar seleção"; nome/ativo/etc. são NOT NULL e não podem virar null aqui.
+      const valor = campo === 'responsavel_reprotocolo_id' && req.body[campo] === '' ? null : req.body[campo];
+      params.push(valor);
       updates.push(`${campo} = $${params.length}`);
     }
   }

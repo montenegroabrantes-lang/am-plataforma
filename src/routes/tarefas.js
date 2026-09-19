@@ -923,7 +923,8 @@ tarefasRouter.patch('/ciclos/aceitar-lote', apenasMaster, async (req, res) => {
 tarefasRouter.patch('/:id/ciclo/devolver', apenasMaster, async (req, res) => {
   const result = await db.query(
     `UPDATE tarefas SET subtipo='ciclo', atribuido_a=NULL, prazo_data=NULL, urgencia='MEDIO',
-        validado_por=NULL, precisa_triagem=false
+        validado_por=NULL, precisa_triagem=false,
+        descricao=REPLACE(descricao,'Re-protocolo — ','Novo ciclo — ')
       WHERE id=$1 AND subtipo='ciclo_aceito' AND processo_id IS NULL
         AND status NOT IN ('concluida','cancelada') RETURNING id`,
     [req.params.id]
