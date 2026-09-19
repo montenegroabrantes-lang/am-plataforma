@@ -336,6 +336,62 @@ tarefasRouter.get('/resumo', async (req, res) => {
   res.json({ ok: true, resumo });
 });
 
+// GET /api/tarefas/ciclos/previsao?meses=6 — o que vai vencer (calculado, sem criar tarefa)
+// e o que está adiado. Mesma regra do cron: início = mês seguinte ao periodo_fim do último
+// processo (ou vinculo_inicio); vence quando completa intervalo_meses. Só Master.
+tarefasRouter.get('/ciclos/previsao', apenasMaster, async (req, res) => {
+  const meses = [3, 6, 12, 24].includes(Number(req.query.meses)) ? Number(req.query.meses) : 6;
+  const proximos = await db.query(
+    `WITH base AS (
+       SELECT cp.id AS cliente_produto_id, c.id AS cliente_id, c.nome AS cliente_nome, c.cpf AS cliente_cpf,
+              pr.id AS produto_id, pr.nome AS produto_nome, pr.intervalo_meses,
+              COALESCE(DATE_TRUNC('month', p.periodo_fim + INTERVAL '1 month')::date,
+                       DATE_TRUNC('month', c.vinculo_inicio)::date) AS ciclo_inicio,
+              vinc.polo_passivo
+         FROM cliente_produtos cp
+         JOIN clientes c ON c.id = cp.cliente_id AND c.ativo IS NOT FALSE AND c.vinculo_ativo = true
+         JOIN produtos pr ON pr.id = cp.produto_id AND pr.ativo = true AND pr.intervalo_meses > 0
+         LEFT JOIN LATERAL (
+           SELECT periodo_fim FROM processos
+            WHERE cliente_id = cp.cliente_id AND produto_id = cp.produto_id AND periodo_fim IS NOT NULL
+            ORDER BY periodo_fim DESC LIMIT 1
+         ) p ON true
+         LEFT JOIN LATERAL (
+           SELECT CASE WHEN COUNT(*) FILTER (WHERE cv.vinculo_ativo) = 1
+                       THEN MAX(cv.polo_passivo) FILTER (WHERE cv.vinculo_ativo) END AS polo_passivo
+             FROM cliente_vinculos cv WHERE cv.cliente_id = c.id
+         ) vinc ON true
+     ), calc AS (
+       SELECT b.*, (b.ciclo_inicio + ((b.intervalo_meses - 1) || ' months')::interval)::date AS vence_em
+         FROM base b WHERE b.ciclo_inicio IS NOT NULL
+     )
+     SELECT cliente_id, cliente_nome, cliente_cpf, produto_id, produto_nome, polo_passivo, ciclo_inicio, vence_em,
+            ((DATE_PART('year', vence_em) - DATE_PART('year', CURRENT_DATE)) * 12
+              + DATE_PART('month', vence_em) - DATE_PART('month', CURRENT_DATE))::int AS meses_para_vencer
+       FROM calc k
+      WHERE vence_em > CURRENT_DATE
+        AND vence_em <= (CURRENT_DATE + ($1 || ' months')::interval)::date
+        AND NOT EXISTS (SELECT 1 FROM tarefas t WHERE t.cliente_produto_id = k.cliente_produto_id
+                          AND t.tipo = 'protocolar' AND t.status NOT IN ('concluida','cancelada'))
+        AND NOT EXISTS (SELECT 1 FROM processos px WHERE px.cliente_id = k.cliente_id AND px.produto_id = k.produto_id
+                          AND px.status <> 'arquivado' AND (px.periodo_fim IS NULL OR px.periodo_fim >= k.ciclo_inicio))
+      ORDER BY vence_em, cliente_nome`,
+    [String(meses)]
+  );
+  const adiados = await db.query(
+    `SELECT t.id, t.ciclo_inicio, t.ciclo_adiado_ate, t.observacao, ${CICLO_MESES} AS ciclo_meses,
+            c.id AS cliente_id, c.nome AS cliente_nome, c.cpf AS cliente_cpf, pr.nome AS produto_nome
+       FROM tarefas t
+       JOIN cliente_produtos cp ON cp.id = t.cliente_produto_id
+       JOIN clientes c ON c.id = cp.cliente_id
+       JOIN produtos pr ON pr.id = cp.produto_id
+      WHERE t.tipo = 'protocolar' AND t.subtipo = 'ciclo' AND t.status NOT IN ('concluida','cancelada')
+        AND t.ciclo_adiado_ate > CURRENT_DATE
+      ORDER BY t.ciclo_adiado_ate, c.nome`
+  );
+  res.json({ ok: true, meses, proximos, adiados });
+});
+
 // GET /api/tarefas/resumo-teses — carga operacional completa, sem depender da página atual.
 tarefasRouter.get('/resumo-teses', async (req, res) => {
   const { fila = 'minha', status, origem, horizonte, cliente_id, atribuido_a } = req.query;

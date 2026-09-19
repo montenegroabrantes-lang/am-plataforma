@@ -654,3 +654,8 @@ integrações ou produção. Não registrar segredos neste documento.
 - Pendente (item D da análise): polo passivo dos vínculos ainda é texto livre — 4 nomes fora
   do catálogo `polos_passivos` (ESTADO PERNANBUCO, ESTADO PARAIBA, Governo de Pernambuco,
   MUNICIPIO DE NATAL) e 6 nulos.
+- `GET /api/tarefas/ciclos/previsao?meses=3|6|12|24` (Master): projeção calculada (sem criar
+  tarefa) dos ciclos que vencem na janela — mesma regra do cron, excluindo quem já tem tarefa
+  de protocolo aberta ou processo cobrindo o período — mais a lista de ciclos adiados com a
+  data de retorno. Exibida no topo da aba "Novos ciclos" (seção "Próximos ciclos a vencer").
+  Em 19/09/2026: 6 vencem em 3 meses, 15 em 6, 39 em 12, 196 em 24.
