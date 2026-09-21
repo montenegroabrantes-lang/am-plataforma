@@ -76,6 +76,49 @@ export async function sincronizarEventosSAC() {
   return salvos;
 }
 
+// Cria (ou reaproveita, se já existir) o contato do Digisac pro número informado — documentação
+// oficial: POST /api/v1/contacts, campos internalName/number/serviceId/defaultDepartmentId.
+// Idempotente por design: busca antes de criar (mesma conexão/serviceId), pra nunca duplicar
+// contato a cada novo cadastro ou edição do mesmo cliente. Nunca lança — cadastro de cliente
+// não pode falhar por causa do Digisac, mesmo estilo do resto deste arquivo (enviarAlerta) e
+// da criação de pasta no Drive.
+export async function criarOuBuscarContato(numero, nome) {
+  const api = client();
+  const serviceId = process.env.DIGISAC_SERVICE_ID;
+  if (!api || !serviceId) {
+    console.warn('[Digisac] criarOuBuscarContato ignorado — Digisac ou DIGISAC_SERVICE_ID não configurados.');
+    return null;
+  }
+
+  const phone = String(numero || '').replace(/\D/g, '');
+  if (phone.length < 10) {
+    console.warn('[Digisac] criarOuBuscarContato: número inválido —', numero);
+    return null;
+  }
+  const numeroCompleto = phone.startsWith('55') ? phone : `55${phone}`;
+
+  try {
+    const busca = await api.get('/contacts', {
+      params: { 'where[data.number][$iLike]': `%${numeroCompleto}%`, 'where[serviceId]': serviceId },
+    });
+    const existente = (busca.data?.data || busca.data || [])[0];
+    if (existente?.id) return existente.id;
+
+    const criado = await api.post('/contacts', {
+      internalName: nome || numeroCompleto,
+      number: numeroCompleto,
+      serviceId,
+      defaultDepartmentId: null,
+    });
+    const contatoId = criado.data?.id || criado.data?.data?.id || null;
+    if (contatoId) console.log(`[Digisac] Contato criado para +${numeroCompleto}: ${contatoId}`);
+    return contatoId;
+  } catch (err) {
+    console.error('[Digisac] Erro ao criar/buscar contato:', err.response?.data || err.message);
+    return null;
+  }
+}
+
 // Envia mensagem de texto via Digisac → WhatsApp do destinatário
 export async function enviarAlerta(numero, texto) {
   const api = client();

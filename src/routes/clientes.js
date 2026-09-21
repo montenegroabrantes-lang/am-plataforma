@@ -5,6 +5,7 @@ import { db }        from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { criarPastaCliente, criarSubpasta, uploadPdf } from '../services/drive/index.js';
+import { criarOuBuscarContato } from '../services/digisac/index.js';
 import { verificarElegibilidadeCliente } from '../services/elegibilidade.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { cpfValido } from '../utils/cpf.js';
@@ -253,7 +254,7 @@ clientesRouter.post('/', async (req, res) => {
               vinculo_inicio, vinculo_fim, polo_passivo, lgpd_consentimento, lgpd_data, vinculo_ativo,
               master_responsavel_id, cadastrado_por)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-       RETURNING id, nome, cpf`,
+       RETURNING id, nome, cpf, whatsapp`,
       [
         nome.trim(), cpf.replace(/\D/g, ''), whatsapp || null, email || null,
         v1.cargo || null, v1.orgao || null,
@@ -286,15 +287,27 @@ clientesRouter.post('/', async (req, res) => {
           'UPDATE clientes SET drive_pasta_id = $1, drive_pasta_url = $2 WHERE id = $3',
           [pastaId, url, novo.id]
         );
-        // Subpastas padrão
+        // Subpastas padrão — mesmo conjunto de 5 usado no fluxo de onboarding
+        // (src/services/onboarding.js); faltava "Contratos" aqui.
         await Promise.all([
           criarSubpasta(pastaId, 'Documentos Pessoais'),
           criarSubpasta(pastaId, 'Vínculo Funcional'),
           criarSubpasta(pastaId, 'Procurações'),
+          criarSubpasta(pastaId, 'Contratos'),
           criarSubpasta(pastaId, 'Petições'),
         ]);
       })
       .catch(err => console.error('[Drive] Falha ao criar pasta:', err.message));
+
+    // Cria (ou reaproveita) o contato correspondente no Digisac, em background — mesmo
+    // padrão do Drive acima: nunca bloqueia nem falha o cadastro do cliente.
+    if (novo.whatsapp) {
+      criarOuBuscarContato(novo.whatsapp, novo.nome)
+        .then(async contatoId => {
+          if (contatoId) await db.execute('UPDATE clientes SET digisac_contact_id = $1 WHERE id = $2', [contatoId, novo.id]);
+        })
+        .catch(err => console.error('[Digisac] Falha ao criar/buscar contato:', err.message));
+    }
 
     await registrarAuditoria({
       usuarioId: req.user.id, acao: 'criar', entidade: 'cliente',

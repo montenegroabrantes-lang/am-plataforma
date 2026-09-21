@@ -7,6 +7,7 @@ import { criarPastaCliente, criarSubpasta } from './drive/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { vinculoUnicoAtivo } from '../utils/vinculos.js';
 import { resolverDemanda } from '../utils/demandas.js';
+import { criarOuBuscarContato } from './digisac/index.js';
 
 function numeroPercentual(valor, padrao = 20) {
   const n = Number(valor);
@@ -148,13 +149,22 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
   };
   const inicioInformado = periodoSeguro(lead.inicio);
   const fimInformado = periodoSeguro(lead.fim);
+  // Achado real (21/09/2026): isto marcava campo como "vindo da calculadora" só por estar
+  // preenchido, sem checar se o lead de fato veio de um contactId real da Camila. Resultado:
+  // um cadastro 100% manual (fluxo "Cadastrar cliente novo" → "Cadastro direto", sem lead
+  // nenhum) tratava o que o próprio operador acabou de digitar como se fosse dado da
+  // calculadora — exigia o checkbox extra "confirme os dados da calculadora" e mostrava
+  // "· Calculadora" nos campos, tudo sem sentido pra quem nunca passou pelo Digisac.
+  const veioDaCalculadora = !!contactId;
   const dadosOrigem = {};
-  if (lead.nome) dadosOrigem.nome = 'calculadora';
-  if (lead.telefone || lead.telefone_real) dadosOrigem.whatsapp = 'calculadora';
-  if (lead.cargo) dadosOrigem.cargo = 'calculadora';
-  if (lead.orgao) dadosOrigem.orgao = 'calculadora';
-  if (inicioInformado) dadosOrigem.vinculo_inicio = 'calculadora';
-  if (fimInformado) dadosOrigem.vinculo_fim = 'calculadora';
+  if (veioDaCalculadora) {
+    if (lead.nome) dadosOrigem.nome = 'calculadora';
+    if (lead.telefone || lead.telefone_real) dadosOrigem.whatsapp = 'calculadora';
+    if (lead.cargo) dadosOrigem.cargo = 'calculadora';
+    if (lead.orgao) dadosOrigem.orgao = 'calculadora';
+    if (inicioInformado) dadosOrigem.vinculo_inicio = 'calculadora';
+    if (fimInformado) dadosOrigem.vinculo_fim = 'calculadora';
+  }
   // A ficha de estimativa pode enviar mais de um vínculo revisado. Eles seguem
   // para o cadastro como rascunho, sem jamais presumir CPF, LGPD ou confirmação.
   const vinculosRevisados = Array.isArray(onboarding.vinculos) ? onboarding.vinculos.slice(0, 2).map(v => ({
@@ -653,6 +663,17 @@ export async function concluirCadastroOnboarding({ onboardingId, dados, usuario,
   }
 
   void sincronizarDriveCliente(cliente, onboardingId);
+
+  // Mesmo padrão do Drive acima — cria/reaproveita o contato do Digisac em background, nunca
+  // bloqueia nem falha a conclusão do cadastro. Só dispara quando ainda não tem contato
+  // vinculado (cliente novo, ou já existia mas nunca tinha WhatsApp registrado até agora).
+  if (cliente.whatsapp && !cliente.digisac_contact_id) {
+    criarOuBuscarContato(cliente.whatsapp, cliente.nome)
+      .then(async contatoId => {
+        if (contatoId) await db.execute('UPDATE clientes SET digisac_contact_id = $1 WHERE id = $2', [contatoId, cliente.id]);
+      })
+      .catch(err => console.error('[Digisac] Falha ao criar/buscar contato:', err.message));
+  }
 
   await registrarAuditoria({
     usuarioId: usuario.id, acao: 'concluir_cadastro', entidade: 'onboarding_contrato',

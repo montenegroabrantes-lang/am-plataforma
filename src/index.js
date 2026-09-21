@@ -189,6 +189,9 @@ async function iniciar() {
     // Anotações do cadastro do cliente — cifradas (AES-256-GCM) por poderem conter credenciais
     // de portais do servidor (ex: senha do contracheque), nunca gravadas em texto puro.
     await db.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS anotacoes_enc TEXT`).catch(() => {});
+    // Contato correspondente no Digisac (21/09/2026) — criado/reaproveitado automaticamente
+    // ao cadastrar um cliente com WhatsApp, pra equipe não precisar cadastrar duas vezes.
+    await db.query(`ALTER TABLE clientes ADD COLUMN IF NOT EXISTS digisac_contact_id TEXT`).catch(() => {});
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS intervalo_meses INTEGER`).catch(() => {});
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS honorarios_padrao NUMERIC(5,2)`).catch(() => {});
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS descricao TEXT`).catch(() => {});
