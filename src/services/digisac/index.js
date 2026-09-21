@@ -98,10 +98,18 @@ export async function criarOuBuscarContato(numero, nome) {
   const numeroCompleto = phone.startsWith('55') ? phone : `55${phone}`;
 
   try {
+    // Achado do revisor: a documentação oficial usa $iLike com wildcards (%numero%) pro
+    // exemplo de busca por número, mas isso casa por SUBSTRING — um número de 13 dígitos
+    // pode ser prefixo/sufixo literal de outro (ex.: dado legado sem o 9º dígito, ou DDD
+    // gravado errado antes de alguma normalização). Sem wildcard nenhum, $iLike ainda
+    // funciona (é só case-insensitive), mas passa a exigir igualdade exata da string
+    // completa. Confirma de novo em JS, contra o campo bruto da resposta, como segunda
+    // camada — nunca reaproveita um contato cujo número não bate exatamente.
     const busca = await api.get('/contacts', {
-      params: { 'where[data.number][$iLike]': `%${numeroCompleto}%`, 'where[serviceId]': serviceId },
+      params: { 'where[data.number][$iLike]': numeroCompleto, 'where[serviceId]': serviceId },
     });
-    const existente = (busca.data?.data || busca.data || [])[0];
+    const candidatos = busca.data?.data || busca.data || [];
+    const existente = candidatos.find(c => String(c?.data?.number || '').replace(/\D/g, '') === numeroCompleto);
     if (existente?.id) return existente.id;
 
     const criado = await api.post('/contacts', {
