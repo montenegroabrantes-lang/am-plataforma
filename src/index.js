@@ -409,6 +409,10 @@ async function iniciar() {
     await db.query(`ALTER TABLE onboardings_contrato ADD COLUMN IF NOT EXISTS vinculo_inicio_informado TEXT`).catch(() => {});
     await db.query(`ALTER TABLE onboardings_contrato ADD COLUMN IF NOT EXISTS vinculo_fim_informado TEXT`).catch(() => {});
     await db.query(`ALTER TABLE onboardings_contrato ADD COLUMN IF NOT EXISTS dados_origem JSONB NOT NULL DEFAULT '{}'::jsonb`).catch(() => {});
+    // Em que etapa do funil da Camila o lead estava no momento da ativação — "registrar CNJ
+    // no AM" não é o mesmo que "peticionar no tribunal", e essa etapa deixa rastreável se o
+    // contrato passou por assinatura confirmada ou foi ativado direto de outra etapa.
+    await db.query(`ALTER TABLE onboardings_contrato ADD COLUMN IF NOT EXISTS etapa_no_fechamento TEXT`).catch(() => {});
     // Rascunho do cadastro: permite interromper o atendimento sem perder dados já
     // conferidos. Só é lido pelos responsáveis do próprio onboarding.
     await db.query(`ALTER TABLE onboardings_contrato ADD COLUMN IF NOT EXISTS cadastro_rascunho JSONB NOT NULL DEFAULT '{}'::jsonb`).catch(() => {});

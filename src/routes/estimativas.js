@@ -3,7 +3,6 @@
 // Envs necessárias no Railway: CAMILA_API_URL (ex.: https://camila.up.railway.app)
 // e CAMILA_API_KEY (mesmo valor da env AM_API_KEY configurada na Camila).
 import { Router } from 'express';
-import axios from 'axios';
 import rateLimit from 'express-rate-limit';
 import { apenasMaster } from '../middleware/auth.js';
 import { db } from '../db/index.js';
@@ -18,19 +17,9 @@ import {
   ReferenciaEstadualError,
 } from '../services/remuneracaoEstadual.js';
 import { obterAcessoTribunal } from '../services/acessoTribunal.js';
+import { camila } from '../services/camila.js';
 
 export const estimativasRouter = Router();
-
-function camila() {
-  const baseURL = process.env.CAMILA_API_URL || process.env.CAMILA_ADMIN_URL;
-  const apiKey  = process.env.CAMILA_API_KEY;
-  if (!baseURL || !apiKey) return null;
-  return axios.create({
-    baseURL,
-    headers: { 'x-api-key': apiKey },
-    timeout: 10_000,
-  });
-}
 
 const semConfig = res => res.status(503).json({
   ok: false, erro: 'Integração com a Camila não configurada (CAMILA_API_URL / CAMILA_API_KEY).',
@@ -404,6 +393,20 @@ estimativasRouter.post('/leads/:contactId/desfecho', apenasMaster, async (req, r
     }
   }
 
+  // 'perdido' com onboarding ativo no AM é o caso real do Luã Henrique (19-20/09/2026): a
+  // Camila registrou perdido enquanto o AM ainda tinha protocolo pendente, e nenhum dos dois
+  // lados acusou a divergência. Marcar perdido é uma decisão que exige cancelar o onboarding
+  // primeiro — não pode simplesmente coexistir.
+  if (desfecho.desfecho === 'perdido') {
+    const onboardingAtivo = await buscarOnboardingPorContato(req.params.contactId);
+    if (onboardingAtivo && onboardingAtivo.status !== 'cancelado') {
+      return res.status(409).json({
+        ok: false,
+        erro: 'Este lead tem um onboarding ativo no AM. Cancele o onboarding (e as tarefas) antes de marcar como perdido.',
+      });
+    }
+  }
+
   try {
     const { data } = await api.post(`/api/funil-leads/${req.params.contactId}/desfecho`, {
       ...desfecho,
@@ -446,18 +449,35 @@ estimativasRouter.post('/onboarding-manual', apenasMaster, async (req, res) => {
 estimativasRouter.delete('/leads/:contactId/desfecho', apenasMaster, async (req, res) => {
   const api = camila();
   if (!api) return semConfig(res);
-  try {
-    const onboarding = await buscarOnboardingPorContato(req.params.contactId);
-    if (onboarding && (onboarding.status !== 'cadastro_pendente' || onboarding.cliente_id)) {
-      return res.status(409).json({
-        ok: false,
-        erro: 'O onboarding já avançou. Revise as tarefas e os vínculos antes de desfazer o fechamento.',
-      });
+  const onboarding = await buscarOnboardingPorContato(req.params.contactId);
+  if (onboarding && (onboarding.status !== 'cadastro_pendente' || onboarding.cliente_id)) {
+    return res.status(409).json({
+      ok: false,
+      erro: 'O onboarding já avançou. Revise as tarefas e os vínculos antes de desfazer o fechamento.',
+    });
+  }
+  // Cancela local ANTES de avisar a Camila (invertido em 20/09/2026) — na ordem antiga, se o
+  // cancelamento local falhasse depois da Camila já ter revertido o lead, ela voltava a
+  // abordar um cliente cujo onboarding no AM continuava ativo. Cancelar primeiro garante que,
+  // se algo falhar depois, o pior cenário é a Camila ficar temporariamente desatualizada —
+  // nunca o contrário.
+  if (onboarding) {
+    try {
+      await cancelarOnboardingPendente(req.params.contactId, req.user.id, req._ip);
+    } catch (err) {
+      return res.status(err.status || 500).json({ ok: false, erro: err.message });
     }
+  }
+  try {
     const { data } = await api.delete(`/api/funil-leads/${req.params.contactId}/desfecho`);
-    if (onboarding) await cancelarOnboardingPendente(req.params.contactId, req.user.id, req._ip);
     res.json(data);
   } catch (err) {
+    if (onboarding) {
+      return res.status(202).json({
+        ok: true,
+        aviso: 'Onboarding cancelado no AM, mas a Camila está indisponível — o lead pode continuar aparecendo como fechado lá até sincronizar de novo.',
+      });
+    }
     res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
   }
 });

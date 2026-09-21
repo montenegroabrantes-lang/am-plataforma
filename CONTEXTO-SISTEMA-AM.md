@@ -786,3 +786,24 @@ integrações ou produção. Não registrar segredos neste documento.
   código) e 1.7 (adoção de tarefa existente comparar vínculo/período, não só
   `cliente_produto_id` — está entrelaçado com a lógica de ciclo/re-protocolo já em produção,
   fica pra tratar junto da Fase 4, modelo de demanda).
+
+### 20-21/09/2026 — Fase 3 do cronograma (comando único de desfecho) — parcial
+
+- `src/services/camila.js` (novo): extraído o cliente HTTP da Camila de `estimativas.js` pra
+  ser reaproveitado por outros pontos (ex: um futuro worker de reprocessamento).
+- **`perdido` bloqueado com onboarding ativo** (`POST /leads/:contactId/desfecho`): antes de
+  encaminhar `perdido` pra Camila, checa se há onboarding não-cancelado no AM; se houver, 409
+  pedindo pra cancelar o onboarding primeiro. É exatamente o caso do Luã Henrique (19-20/09).
+- **Desfazer fechamento reordenado** (`DELETE /leads/:contactId/desfecho`): cancela o
+  onboarding local **antes** de avisar a Camila (era o contrário) — se a Camila falhar depois,
+  o pior cenário agora é ela ficar temporariamente desatualizada, nunca o oposto (ela reabordar
+  um cliente cujo onboarding no AM continua ativo).
+- **`etapa_no_fechamento`** nova coluna em `onboardings_contrato`, preenchida com a etapa do
+  lead no funil da Camila no momento da ativação (`lead.etapa`, ex: 'assinado',
+  'documentos_completos'...) — permite distinguir depois quantos contratos foram ativados após
+  assinatura confirmada vs. direto de outra etapa. Testado de ponta a ponta contra produção.
+- **Não feito nesta passada**: 3.3 (fila BullMQ de reprocessamento automático de
+  `camila_sync_status='erro'`) e 3.4 (badge/botão de sincronizar de novo na tela) — ficam pra
+  uma próxima sessão; 3.5 (data de assinatura obrigatória + campo de evidência ao marcar
+  "assinado") não foi implementado — mexe em `ContinuidadeCamila.jsx` na Camila e precisa de
+  decisão de produto sobre o formato da evidência (link vs. upload).
