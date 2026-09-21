@@ -835,3 +835,13 @@ integrações ou produção. Não registrar segredos neste documento.
   `operacao_id` inválido (não-UUID) retorna 400, não erro cru do Postgres.
   Testado de ponta a ponta contra produção: 2 chamadas com a mesma `operacao_id` → mesma linha;
   só 1 registro no banco; limpo depois.
+
+### 21/09/2026 — Correção dos 4 valores com erro de vírgula (item "fora do cronograma")
+
+- Corrigidos `onboardings_contrato.valor_fechado` (AM) e `leads_desfecho.valor_fechado`
+  (Camila) dos 4 clientes cadastrados em 20/09 que tinham valor sem separador decimal:
+  Vinícius Felix dos Santos (540614→5406.14), Jairo Janailton Alves dos Santos
+  (915246→9152.46), Gilcelia Telma de Holanda (1155459→11554.59), Iradira Juvino Pereira da
+  Silva (429256→4292.56). Autorizado pelo usuário — não é "editar o passado", é corrigir dado
+  que tinha acabado de entrar num cadastro novo. Cada UPDATE foi guardado por
+  `WHERE valor_fechado > 100000` + checagem de `rowCount` exato antes do COMMIT.
