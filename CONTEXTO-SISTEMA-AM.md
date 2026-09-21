@@ -33,7 +33,10 @@ integrações ou produção. Não registrar segredos neste documento.
 
 ### Camila
 
-- Assistente de WhatsApp sem cópia local neste Mac.
+- Assistente de WhatsApp — repositório local:
+  `/Users/ramonabrantes/Documents/Claude/Projects/camila-abrantes-montenegro` (correção de nota
+  antiga: a cópia local existe e foi usada diretamente nesta sessão para análise e correções).
+- GitHub: `montenegroabrantes-lang/camila-abrantes-montenegro`, branch `main`.
 - Produção: `https://camila-abrantes-montenegro-production.up.railway.app`
 - O backend se comunica por proxy usando `CAMILA_API_URL` e `CAMILA_API_KEY`.
 - Rota principal da integração: `src/routes/estimativas.js`.
@@ -845,3 +848,52 @@ integrações ou produção. Não registrar segredos neste documento.
   Silva (429256→4292.56). Autorizado pelo usuário — não é "editar o passado", é corrigir dado
   que tinha acabado de entrar num cadastro novo. Cada UPDATE foi guardado por
   `WHERE valor_fechado > 100000` + checagem de `rowCount` exato antes do COMMIT.
+
+### 21/09/2026 — Camila: correção do bug de retry de sincronização apagando quem fechou
+
+- Achado real de um agente revisor auditando (já em produção) o commit da Fase 3.3/3.4 (retry
+  automático de sincronização com a Camila a cada 15 min): `registrarDesfecho()` (Camila,
+  `leads.js`) usava um `ON CONFLICT (contact_id) DO UPDATE` incondicional — reenviar o MESMO
+  desfecho (o próprio retry, reconfirmando um contrato já fechado) sobrescrevia
+  `registrado_por`/`valor_fechado`/`motivo`/`telefone` com os dados da tentativa de retry,
+  apagando o registro de quem realmente fechou o contrato. Só `registrado_em` tinha proteção
+  condicional.
+- Corrigido na raiz: o `UPDATE` agora só acontece quando o desfecho de fato muda
+  (`WHERE leads_desfecho.desfecho IS DISTINCT FROM EXCLUDED.desfecho` no `ON CONFLICT`), e o
+  evento `lead_fechado`/`lead_perdido` só dispara quando há mudança real (`rowCount > 0`) — uma
+  reconfirmação por retry não gera evento nem toca a linha.
+  Testado: TESTE 9 novo em `teste-leads.js`, suíte completa (`test:safe` 14/14,
+  `test:continuidade` 207/207), revisão por agente com teste ao vivo contra produção (insere,
+  retry com dados diferentes não muda nada, mudança real de desfecho atualiza tudo — limpo
+  depois). Commit `230fe18` no repositório da Camila, deployado e confirmado rodando
+  (`/health` 200).
+
+### 21/09/2026 — Fase 1.7 (adoção de tarefa de protocolo por vínculo, não só produto)
+
+- `criarOnboardingContrato` "adotava" (sobrescrevia) qualquer tarefa `protocolar` aberta para o
+  mesmo `cliente_produto_id`, sem checar a qual vínculo/fechamento ela pertencia. Um índice
+  único antigo em produção, `uq_tarefa_protocolo_ativa (cliente_produto_id, tipo)` — criado por
+  um script `migrate.js` avulso, fora das migrações automáticas do `src/index.js` — reforçava
+  isso no banco: no máximo 1 tarefa `protocolar` ativa por produto, sem noção de vínculo. Com 2
+  vínculos elegíveis ao mesmo produto (ex.: 2 empregadores com FGTS), um 2º fechamento nem
+  conseguia criar sua própria tarefa — o `INSERT` caía num `ON CONFLICT DO NOTHING` silencioso e
+  o protocolo do 2º vínculo desaparecia sem erro nenhum. Reproduzido ao vivo antes da correção.
+- Índice trocado por `uq_tarefa_protocolo_ativa_vinculo (cliente_produto_id, tipo,
+  cliente_vinculo_id)` — como o Postgres nunca considera dois `NULL` iguais num índice único,
+  isso continua bloqueando duplicata exata quando o vínculo já é conhecido e passa a permitir
+  tarefas distintas quando o vínculo ainda é ambíguo (0 ou 2+ vínculos ativos). Relaxação pura,
+  sem risco de dado existente violar a troca.
+- `criarOnboardingContrato`: só adota uma tarefa que já pertence a ESTE onboarding (retry do
+  mesmo fechamento) ou que ainda não foi reivindicada por nenhum onboarding — nunca mais
+  sequestra a tarefa de um fechamento diferente.
+- `concluirCadastroOnboarding` (achado do próprio agente revisor do commit acima, mesma classe
+  de risco exposta pela relaxação do índice): a busca de tarefa "legado" pra fundir também
+  passou a checar vínculo — vínculo confirmado igual sempre funde (mesma demanda); vínculo
+  confirmado diferente nunca funde; vínculo ainda ambíguo só funde se esta conclusão não tiver
+  tarefa própria em disputa (nada a perder).
+- Testado ao vivo contra produção nos dois pontos (cliente de teste com 2 vínculos ativos, 2
+  fechamentos/conclusões distintas pro mesmo produto — antes: 2ª tarefa sumia ou 1ª era
+  sequestrada; depois: as duas coexistem, cada uma presa ao seu próprio onboarding), incluindo
+  os 3 ramos do guard de `concluirCadastroOnboarding` (igual/divergente/ambíguo). Limpeza
+  confirmada em todos os testes. `npm test`: 58/58. Commits `01c109d` e `41af708`, deployados e
+  confirmados `RUNNING` no Railway.
