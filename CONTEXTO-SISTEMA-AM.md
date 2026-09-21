@@ -737,3 +737,26 @@ integrações ou produção. Não registrar segredos neste documento.
   chama a rota nova `onboarding-manual`). Sem indicador novo no Dashboard — o cadastro já entra
   nos números existentes (`resumo.protocolar_inicial`, contadores de clientes) como qualquer
   outro onboarding.
+
+### 20/09/2026 — Fase 0 do cronograma de reconciliação executada
+
+- **Luã Henrique Nóbrega Lopes**: confirmado pela equipe que não assinou (a Camila já tinha
+  registrado `perdido`). Onboarding `ace6b566` cancelado + as 2 tarefas de protocolo canceladas,
+  com justificativa e auditoria. A tarefa de cadastro (já concluída antes) foi preservada.
+- **9 clientes fechados na Camila entre 21/08 e 08/09/2026 sem nenhum registro no AM** (achado
+  do cruzamento AM×Camila, ver `ANALISE-ESTIMATIVA-A-CONTRATO-AM-2026-09-20.md`) — cadastrados
+  via `criarOnboardingContrato` direto (mesmo motor da tela "+ Cadastrar cliente novo → vincular
+  lead"), tese FGTS, honorários 45% (decisão do usuário), responsável de cadastro e protocolo
+  João Gomes, período convertido de `MM/AAAA` (formato da Camila) para `AAAA-MM` manualmente
+  (a conversão automática do sistema ainda não faz isso — ver achado 1 da análise). Todos os 9
+  nasceram `cadastro_pendente`, com "Completar cadastro" e "Protocolar processo — FGTS" para
+  João. Nomes: Aberlandio dos Santos, Walber dos Santos Gomes, Evandro Arruda Silva Junior,
+  Edson Henrique, Edson Lima, Vinícius Felix dos Santos, Jairo Janailton Alves dos Santos,
+  Gilcelia Telma de Holanda, Iradira Juvino Pereira da Silva.
+- **Não corrigido** (decisão explícita: só editar pra frente, não mexer no histórico): 4 desses
+  9 têm `valor_fechado` com erro de vírgula/ponto na Camila (ex: `540614` em vez de algo como
+  `5.406,14`) — o valor foi herdado como está nos onboardings novos; correção de dado histórico
+  fica para decisão futura, e a correção da validação de entrada (pra não acontecer de novo)
+  é item pendente da Fase 1/2 do cronograma, não implementada ainda.
+- Cronograma completo: `CRONOGRAMA-EXECUCAO-AM-2026-09-20.md` (fora do repositório, pasta de
+  análise). Fases 1-7 seguem pendentes.
