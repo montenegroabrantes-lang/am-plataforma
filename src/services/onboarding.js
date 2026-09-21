@@ -290,14 +290,29 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
       // Com exatamente 1 vínculo ativo, já pré-associa a tarefa a ele; com 0 ou 2+, fica
       // vazio e a escolha do polo passivo é exigida no momento do protocolo.
       const vinculoAuto = cliente ? await vinculoUnicoAtivo(cliente.id, pg) : null;
+      // Fase 1.7 — cliente_produto_id sozinho não basta: é uma chave estável por PRODUTO,
+      // reaproveitada por todos os fechamentos e ciclos de um cliente ao longo do tempo (ex.:
+      // 2 vínculos elegíveis a FGTS, ou uma renovação futura). Adotar a 1ª tarefa aberta que
+      // achasse pelo produto sequestrava a tarefa de um fechamento anterior — um 2º fechamento
+      // "roubava" a tarefa do 1º, apagando a ligação dele com seu próprio onboarding/vínculo.
+      // Agora só é elegível pra adoção uma tarefa que já é DESTE onboarding (retry/edição do
+      // mesmo fechamento) ou que ainda não foi reivindicada por nenhum onboarding — e, quando
+      // o vínculo de ambos os lados é conhecido, eles precisam bater.
       let tarefaAdotada = null;
       if (clienteProdutoId) {
         const existenteResult = await pg.query(
-          `SELECT id FROM tarefas WHERE cliente_produto_id=$1 AND tipo='protocolar'
-            AND status NOT IN ('concluida','cancelada') LIMIT 1`,
-          [clienteProdutoId]
+          `SELECT id, cliente_vinculo_id, onboarding_id FROM tarefas
+             WHERE cliente_produto_id=$1 AND tipo='protocolar'
+               AND status NOT IN ('concluida','cancelada')
+               AND (onboarding_id IS NULL OR onboarding_id=$2)
+             ORDER BY (onboarding_id=$2) DESC, criado_em ASC LIMIT 1`,
+          [clienteProdutoId, registro.id]
         );
-        tarefaAdotada = existenteResult.rows[0];
+        const candidata = existenteResult.rows[0];
+        const vinculoDivergente = candidata && candidata.onboarding_id === null
+          && vinculoAuto?.id && candidata.cliente_vinculo_id
+          && candidata.cliente_vinculo_id !== vinculoAuto.id;
+        tarefaAdotada = vinculoDivergente ? null : candidata;
       }
       if (tarefaAdotada) {
         await pg.query(

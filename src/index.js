@@ -431,6 +431,19 @@ async function iniciar() {
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_tarefa_cadastro_onboarding ON tarefas (onboarding_id, tipo) WHERE onboarding_id IS NOT NULL AND tipo='cadastro_cliente' AND status NOT IN ('cancelada')`);
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_tarefa_protocolo_onboarding ON tarefas (onboarding_produto_id, tipo) WHERE onboarding_produto_id IS NOT NULL AND tipo='protocolar' AND status NOT IN ('cancelada')`);
 
+    // Fase 1.7 (21/09/2026) — a antiga uq_tarefa_protocolo_ativa (cliente_produto_id, tipo)
+    // permitia no máximo 1 tarefa 'protocolar' ativa por PRODUTO, período nenhum. Com 2
+    // vínculos elegíveis ao mesmo produto (ex.: 2 empregadores com FGTS), um 2º fechamento
+    // não conseguia nem criar sua própria tarefa — o INSERT caía num ON CONFLICT DO NOTHING
+    // silencioso, perdendo o protocolo do 2º vínculo por completo. A troca é uma pura
+    // relaxação: NULL nunca é igual a NULL num índice único do Postgres, então incluir
+    // cliente_vinculo_id continua bloqueando duplicata exata quando o vínculo já é conhecido,
+    // e passa a permitir 2+ tarefas legitimamente distintas quando o vínculo ainda é ambíguo
+    // (0 ou 2+ vínculos ativos) — nunca reduz o que já era permitido, então não há dado
+    // existente que viole a troca.
+    await db.query(`DROP INDEX IF EXISTS uq_tarefa_protocolo_ativa`).catch(() => {});
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_tarefa_protocolo_ativa_vinculo ON tarefas (cliente_produto_id, tipo, cliente_vinculo_id) WHERE status NOT IN ('concluida','cancelada')`).catch(() => {});
+
     // Ciclos recorrentes (ex: FGTS remanescente a cada 25 meses) são sinal de "novo período
     // acumulado", não protocolo pronto. Ganham subtipo próprio, o início do período acumulado
     // (fixo) e um adiamento opcional, para nunca se misturarem com a fila de protocolo inicial.
