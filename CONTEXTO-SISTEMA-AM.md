@@ -1109,3 +1109,32 @@ integrações ou produção. Não registrar segredos neste documento.
   Janela de restauração: últimos ~4 backups completos, algo em torno de 4 semanas. Agora o
   banco tem 2 camadas independentes de proteção (PITR nativo da Railway + o worker de backup
   pro Drive, já corrigido pra avisar de verdade se falhar).
+
+### 21/09/2026 (tarde) — Fase 5, fatia 1: Ficha única na aba Teses e Protocolos
+
+- Primeiro consumidor real dos dois recursos que já existiam no banco mas nenhuma tela lia:
+  a tabela `demandas` (Fase 4) e `produtos.documentos_exigidos` (checklist por tese). `GET
+  /api/clientes/:id` agora devolve `demandas` (1 linha por demanda do cliente, com vínculo e
+  a tarefa mais recente ligada) e `documentos_exigidos` dentro de cada tese.
+- Frontend: dentro de cada card de tese na aba "Teses e Protocolos"
+  (`clientes/[id]/page.js`), mostra — quando existir — os documentos exigidos configurados
+  (rótulos amigáveis, mesmo vocabulário de `ContinuidadeCamila.jsx`, conferido pelo revisor:
+  bate exatamente) e a(s) demanda(s) ligada(s) àquela tese (vínculo ou "Vínculo a definir",
+  período, status, e a tarefa mais recente ou "Sem tarefa ativa vinculada").
+- Testado ao vivo contra produção (queries novas rodadas direto, cliente com demanda real,
+  incluindo um cliente com `cliente_vinculo_id IS NULL` pra exercitar o caminho "Vínculo a
+  definir"). **Gap conhecido e assumido**: não foi possível verificar visualmente autenticado
+  no navegador — sem senha real de nenhum usuário e sem script de seed de usuário de teste
+  descartável no repo, a tentativa de simular uma sessão local (backend local com Redis
+  desligado de propósito, JWT assinado localmente) esbarrou numa proteção da própria
+  ferramenta de navegador contra gravar cookie chamado `am_token` (nomes genéricos de cookie
+  funcionam normalmente — parece deliberado, não foi contornado). Verificação: `node --check`
+  + parse via esbuild limpos, `npm test` 58/58, SQL conferida coluna a coluna contra o schema
+  real. Recomendado conferir visualmente uma vez em produção com login próprio. Commits
+  `bd93a30` (am-plataforma) e `d48e600` (am-plataforma-web), deployados e confirmados
+  `RUNNING`.
+- Pendente pra continuar a Fase 5: ligar `demanda_id` em `concluirCadastroOnboarding` (feito)
+  e ciclos (feito) já alimentam a ficha; falta decidir as 2 questões já registradas antes
+  (`[]` vs `null` no checklist; categorias duplicadas entre repos) e considerar uma view mais
+  completa (ex.: aba própria "Ficha" em vez de dentro de "Teses e Protocolos") se o uso real
+  mostrar que precisa de mais destaque.
