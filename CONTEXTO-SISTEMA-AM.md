@@ -1160,3 +1160,7 @@ integrações ou produção. Não registrar segredos neste documento.
   pré-existente e aceito no job da Camila, não é regressão nova.
 - Fase 6 segue com itens grandes em aberto (auditoria transacional, migrações versionadas,
   indicadores operacionais) — não abordados nesta fatia.
+- Fix pontual do mesmo dia: `[]` e `null` em `documentos_exigidos` normalizados pra sempre
+  gravar `null` quando o checklist fica vazio (achado de revisor, commit `eca6d77`, testado
+  via HTTP real de ponta a ponta). Frontend da Fase 5 já tratava os dois iguais na leitura —
+  agora a escrita também trata, sem inconsistência entre os dois lados.
