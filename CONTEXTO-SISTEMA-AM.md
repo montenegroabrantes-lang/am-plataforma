@@ -955,3 +955,26 @@ integrações ou produção. Não registrar segredos neste documento.
   teste elegível — demanda criada com `periodo_inicio` batendo exatamente com `ciclo_inicio`
   da tarefa). Limpeza confirmada, incluindo auditoria de possíveis resíduos de execuções
   anteriores (0 encontrados). `npm test`: 58/58.
+
+### 21/09/2026 (madrugada, cont.) — cadeia de correções: demandas órfãs
+
+- Padrão de bug encontrado e corrigido 4 vezes seguidas, em cadeia de revisão por agentes, nos
+  2 únicos pontos que criam/adotam tarefa 'protocolar' com `demanda_id`
+  (`criarOnboardingContrato` e `concluirCadastroOnboarding`, ambos em `onboarding.js`):
+  `resolverDemanda()` era chamada incondicionalmente, e o `UPDATE ... SET
+  demanda_id=COALESCE(demanda_id,$N)` descartava silenciosamente a demanda recém-criada sempre
+  que a tarefa alvo já tinha uma demanda de identidade diferente (ex.: vínculo que era
+  ambíguo quando a tarefa nasceu e virou confirmado depois) — a nova ficava órfã pra sempre
+  (`status='aberta'`, nenhuma tarefa apontando pra ela, invisível pra Fase 5).
+- Corrigido nos 2 pontos: só resolve/cria uma demanda nova quando a tarefa alvo AINDA não tem
+  `demanda_id` (`tarefaAdotada?.demanda_id || resolverDemanda(...)` /
+  `legado.demanda_id || resolverDemanda(...)` / `onboardingTask.demanda_id ||
+  resolverDemanda(...)`). Reproduzido ao vivo antes de cada correção (órfã real criada e
+  confirmada), e re-testado depois (0 órfãs). Auditoria final de todo o banco
+  (`demandas` sem nenhuma `tarefa.demanda_id` apontando pra ela): **0**. `npm test`: 58/58 em
+  cada etapa. Commits `904e3a4`, `72b07cd`, `d7e81a5`, `65fcb44` — todos deployados e
+  confirmados `RUNNING` no Railway.
+- Melhoria estrutural sugerida por um dos agentes revisores, não bloqueante, pra considerar
+  antes do próximo call-site que toque `demanda_id`: mover essa checagem "só resolve se ainda
+  não tem" pra dentro do próprio `resolverDemanda()` (ou um `vincularDemanda(tarefaId, ...)`
+  único), em vez de replicar o padrão em cada ponto novo.
