@@ -4,6 +4,7 @@ import { db }     from '../db/index.js';
 import { enviarAlerta } from '../services/digisac/index.js';
 import { verificarCiclosRecorrentes } from '../services/ciclosRecorrentes.js';
 import { verificarWatchdogSAC } from './sac.worker.js';
+import { reprocessarSincronizacaoCamila } from '../services/reprocessarSyncCamila.js';
 
 export function criarAlertasWorker() {
   return new Worker('alertas', async job => {
@@ -17,6 +18,10 @@ export function criarAlertasWorker() {
     }
     if (job.name === 'escalonamento-vespera') {
       await enviarEscalonamentoVespera();
+    }
+    if (job.name === 'reprocessar-sync-camila') {
+      const { tentadas, sincronizadas } = await reprocessarSincronizacaoCamila();
+      if (tentadas > 0) console.log(`[SyncCamila] ${sincronizadas}/${tentadas} onboarding(s) sincronizado(s) com sucesso.`);
     }
   }, { connection: redis, concurrency: 1 });
 }

@@ -137,7 +137,21 @@ export async function iniciarWorkers() {
     }
   );
 
-  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h), Alertas WhatsApp (08h), Ciclos Recorrentes (07h) e Escalonamento de Véspera (8h30/16h) iniciados.');
+  // Fase 3.3 do cronograma (20/09/2026) — reprocessa onboardings cuja sincronização com a
+  // Camila falhou (indisponibilidade externa); a cada 15 min é frequente o bastante sem
+  // martelar a API da Camila, e a operação já é idempotente (marcarSincronizacaoCamila).
+  await alertasQueue.add(
+    'reprocessar-sync-camila',
+    {},
+    {
+      repeat:           { pattern: '*/15 * * * *' },
+      jobId:            'reprocessar-sync-camila-recorrente',
+      removeOnComplete: 3,
+      removeOnFail:     3,
+    }
+  );
+
+  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h), Alertas WhatsApp (08h), Ciclos Recorrentes (07h), Escalonamento de Véspera (8h30/16h) e Reprocessamento de Sync Camila (15/15min) iniciados.');
 }
 
 // Dispara sync imediato de um processo — fila separada, não bloqueia pelo lote

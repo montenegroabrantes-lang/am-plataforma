@@ -18,6 +18,7 @@ import {
 } from '../services/remuneracaoEstadual.js';
 import { obterAcessoTribunal } from '../services/acessoTribunal.js';
 import { camila } from '../services/camila.js';
+import { sincronizarOnboardingComCamila } from '../services/reprocessarSyncCamila.js';
 
 export const estimativasRouter = Router();
 
@@ -442,6 +443,19 @@ estimativasRouter.post('/onboarding-manual', apenasMaster, async (req, res) => {
     res.status(201).json({ ok: true, onboarding: registro });
   } catch (err) {
     res.status(err.status || 500).json({ ok: false, erro: err.message, detalhes: err.detalhes });
+  }
+});
+
+// POST /api/estimativas/onboardings/:id/sincronizar-camila — botão "Sincronizar de novo" na
+// tela, pra quando camila_sync_status='erro' (indisponibilidade no momento do fechamento). O
+// worker já reprocessa a cada 15 min sozinho; isto é só pra não esperar quando alguém está
+// olhando na hora.
+estimativasRouter.post('/onboardings/:id/sincronizar-camila', apenasMaster, async (req, res) => {
+  try {
+    await sincronizarOnboardingComCamila(req.params.id, req.user?.nome || req.user?.email || req.user?.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(err.status || 500).json({ ok: false, erro: err.message });
   }
 });
 

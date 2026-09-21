@@ -807,3 +807,18 @@ integrações ou produção. Não registrar segredos neste documento.
   uma próxima sessão; 3.5 (data de assinatura obrigatória + campo de evidência ao marcar
   "assinado") não foi implementado — mexe em `ContinuidadeCamila.jsx` na Camila e precisa de
   decisão de produto sobre o formato da evidência (link vs. upload).
+
+### 21/09/2026 — Fase 3.3/3.4 (retry de sincronização com a Camila)
+
+- Novo `src/services/reprocessarSyncCamila.js`: `reprocessarSincronizacaoCamila()` (roda a cada
+  15 min via BullMQ, job `reprocessar-sync-camila` no worker `alertas`) reprocessa todo
+  onboarding com `camila_sync_status='erro'`, exceto cadastros manuais (`camila_contact_id`
+  começando com `manual-`, que não têm lead nenhum na Camila pra sincronizar).
+  `sincronizarOnboardingComCamila(id)` é a versão de um só, usada pelo botão manual.
+- `POST /api/estimativas/onboardings/:id/sincronizar-camila` (Master): botão "Sincronizar de
+  novo" na tela de Leads, visível só quando `camila_sync_status='erro'` — ao lado de um badge
+  vermelho "NÃO SINCRONIZADO COM A CAMILA".
+- Testado de ponta a ponta contra produção: forcei `camila_sync_status='erro'` num onboarding
+  real (Francisco Acioly), chamei a sincronização manual, confirmou volta pra 'sincronizado' e
+  o `registrado_em` do lado da Camila ficou intacto (a chamada é idempotente — reconfirma
+  'fechado', não duplica nem reseta a data).
