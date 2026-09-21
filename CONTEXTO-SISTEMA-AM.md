@@ -1138,3 +1138,25 @@ integrações ou produção. Não registrar segredos neste documento.
   (`[]` vs `null` no checklist; categorias duplicadas entre repos) e considerar uma view mais
   completa (ex.: aba própria "Ficha" em vez de dentro de "Teses e Protocolos") se o uso real
   mostrar que precisa de mais destaque.
+
+### 21/09/2026 (tarde) — Fase 6, fatia 1: retry automático de sincronização com o Drive
+
+- Peça que faltava depois do incidente do `GOOGLE_REFRESH_TOKEN`: mesmo padrão do retry da
+  Camila (Fase 3.3), agora pro Drive. Novo `src/services/reprocessarSyncDrive.js`
+  (`reprocessarSincronizacaoDrive()` em lote + `sincronizarDriveOnboarding(id)` pra retry
+  manual, ainda sem botão na tela) reaproveita `sincronizarDriveCliente` (agora exportada de
+  `onboarding.js`, antes privada) em vez de duplicar a lógica — o script avulso da correção
+  manual de hoje já tinha duplicado ela uma vez.
+- Cron novo a cada 30min (mais espaçado que os 15min da Camila — cota do Drive é mais
+  sensível, urgência é menor). Exclui onboardings `cancelado` (nunca viram cliente de fato).
+- Testado ao vivo contra produção (pelo próprio Claude, não por agente revisor): onboarding
+  de teste com `drive_sync_status='erro'` sincronizou de verdade (pasta real criada no Drive)
+  e o cancelado ficou intocado. Pasta de teste apagada do Drive depois, dado de teste
+  removido do banco, confirmado. `npm test`: 58/58. Commit `71286c5`, deployado e confirmado
+  `RUNNING` (log: "Reprocessamento de Sync Drive (30/30min)").
+- Observação não-bloqueante do revisor: a contagem de `sincronizadas` no log assume 1 réplica
+  do serviço (verdade hoje) — se algum dia o Railway escalar pra múltiplas réplicas, essa
+  métrica de log pode contar errado (o dado gravado no banco continua correto). Mesmo risco
+  pré-existente e aceito no job da Camila, não é regressão nova.
+- Fase 6 segue com itens grandes em aberto (auditoria transacional, migrações versionadas,
+  indicadores operacionais) — não abordados nesta fatia.
