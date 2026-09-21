@@ -978,3 +978,31 @@ integrações ou produção. Não registrar segredos neste documento.
   antes do próximo call-site que toque `demanda_id`: mover essa checagem "só resolve se ainda
   não tem" pra dentro do próprio `resolverDemanda()` (ou um `vincularDemanda(tarefaId, ...)`
   único), em vez de replicar o padrão em cada ponto novo.
+
+### 21/09/2026 (manhã) — Vínculo encerrado não bloqueia mais elegibilidade de ciclo recorrente
+
+- Achado do mesmo padrão de dinheiro deixado na mesa: `ciclosRecorrentes.js` (cron diário de
+  re-protocolo) e o painel `/ciclos/previsao` excluíam da varredura QUALQUER cliente com
+  `vinculo_ativo=false`, mesmo quando havia período acumulado ANTES do desligamento ainda não
+  cobrado — uma cobrança real e legítima ficava invisível pra sempre só porque o cliente já não
+  trabalha mais lá.
+- Corrigido como "warn, não block": vínculo encerrado com `vinculo_fim` registrado agora entra
+  na varredura, mas só até o período que começou antes do desligamento
+  (`cicloInicio <= vinculo_fim` — depois disso não há mais nada pendente, corretamente
+  ignorado, não é ambiguidade). E nunca entra sozinho direto em "Protocolar inicial"
+  (auto-aceito) mesmo com polo e responsável resolvidos — sempre cai em "Novos ciclos" com a
+  descrição marcada "(vínculo encerrado — revisar período)", pra passar por um humano antes
+  (pode ser a última cobrança antes de encerrar o relacionamento). Painel de previsão alinhado
+  com a mesma regra.
+- Testado ao vivo contra produção (2x, pelo implementador e por um agente revisor com CPFs
+  diferentes), cobrindo os 3 cenários: período pendente real → tarefa criada pra revisão;
+  já totalmente coberto → nada criado (correto); processo anterior + polo/responsável
+  resolvíveis mas vínculo encerrado → **não** auto-aceita (o cenário mais arriscado, confirmado
+  não regredir o comportamento de vínculo ativo). Limpeza confirmada nos dois testes.
+  `npm test`: 58/58. Commit `9064fef`, deployado e confirmado `RUNNING`.
+- Achados não-bloqueantes registrados pelos revisores, pendentes de decisão: (a)
+  `elegibilidade.js::verificarElegibilidadeProduto` tem o mesmo hard-filter mas é **código
+  morto** hoje (não é chamada por nenhuma rota) — candidato a remoção ou religação futura;
+  (b) a migração de restauração de ciclos cancelados (`src/index.js`, evento de 19/09/2026)
+  também tem `vinculo_ativo=true` hard-coded, mas é script de backfill histórico de escopo
+  bem mais estreito, não tocado.
