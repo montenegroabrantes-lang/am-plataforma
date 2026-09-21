@@ -1164,3 +1164,45 @@ integrações ou produção. Não registrar segredos neste documento.
   gravar `null` quando o checklist fica vazio (achado de revisor, commit `eca6d77`, testado
   via HTTP real de ponta a ponta). Frontend da Fase 5 já tratava os dois iguais na leitura —
   agora a escrita também trata, sem inconsistência entre os dois lados.
+
+### 21/09/2026 (tarde) — Cadastro de cliente novo: 3 pedidos + achados no caminho
+
+- Análise do fluxo pedida pelo usuário (cargo "Inspetor de Aluno" travado, contato do Digisac,
+  menos cliques), seguida de execução autorizada:
+  1. **Cargo**: `<select>` travado em 16 opções virou `<input>` de texto livre com sugestões
+     (lista padrão ∪ `cargos_elegiveis` de todas as teses ativas — "Equiparação salarial no
+     magistério" já lista INSPETOR DE ALUNO). As outras 2 telas de cadastro já eram texto
+     livre; só o modal clássico tinha essa trava, sem motivo no banco (cargo sempre foi TEXT).
+  2. **Contato do Digisac**: documentação oficial localizada (Postman, "Contatos → Cadastrar
+     contato") — `POST /api/v1/contacts` com `internalName/number/serviceId/
+     defaultDepartmentId`. Nova `criarOuBuscarContato()` em `digisac/index.js`, idempotente
+     (busca antes de criar), nova coluna `clientes.digisac_contact_id`, conectada nos 2 pontos
+     onde um cliente ganha WhatsApp pela primeira vez. Achado do revisor e corrigido no mesmo
+     dia: a busca inicial usava `$iLike` com wildcard (`%numero%`), que casa por substring —
+     um número de 13 dígitos pode ser prefixo/sufixo literal de outro (dado legado sem o 9º
+     dígito, por exemplo). Reproduzido ao vivo e corrigido pra igualdade exata (commit
+     `7176aaf`).
+  3. **Menos cliques**: as 2 telas separadas do wizard de cadastro (sugestão de teses → depois,
+     número do processo) viraram 1 só — vincula, cria tarefas e cadastra processo com número
+     informado num único clique.
+- **Achados no caminho, corrigidos com autorização explícita do usuário**:
+  - Produto "Equiparação salarial no magistério" duplicado (2 ativos idênticos) — migrados 6
+    processos reais + 1 vínculo de cliente pro que ficou, duplicado desativado. Verificado sem
+    colisão de cliente entre os dois antes de migrar.
+  - `dados_origem` marcava campo como "veio da calculadora" só por estar preenchido, sem
+    checar se o lead de fato veio de um `contactId` real — um cadastro 100% manual (nunca
+    passou pelo Digisac) era tratado como dado da calculadora, forçando checkbox de
+    confirmação e rótulos "· Calculadora" sem sentido. Corrigido: só marca quando
+    `contactId` existe de verdade.
+  - Fluxo clássico de cadastro só criava 4 subpastas no Drive (faltava "Contratos"), diferente
+    do fluxo de onboarding que já cria 5 — alinhado.
+- **Nota de processo, registrada a pedido do próprio revisor**: o commit `4ab7668` empacotou 3
+  mudanças (Digisac, subpasta do Drive, fix do `dados_origem`) na mesma mensagem, mas só as 2
+  primeiras foram descritas — o fix do `dados_origem` é logicamente independente e deveria ter
+  sido commit à parte. Evitar repetir esse padrão: achado no caminho que não tem relação com o
+  pedido original merece commit próprio, mesmo pequeno.
+- Testado ao vivo contra a API real do Digisac (criação, idempotência, cenário de colisão por
+  substring, limpeza confirmada nos dois lados) e contra o banco real (migração do produto
+  duplicado, `dados_origem` nos dois caminhos). `npm test`: 58/58. Commits `4ab7668`,
+  `7176aaf` (am-plataforma) e `64de81a` (am-plataforma-web), deployados e confirmados
+  `RUNNING`.
