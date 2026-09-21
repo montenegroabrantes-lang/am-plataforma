@@ -356,9 +356,14 @@ tarefasRouter.get('/ciclos/previsao', apenasMaster, async (req, res) => {
               pr.id AS produto_id, pr.nome AS produto_nome, pr.intervalo_meses,
               COALESCE(DATE_TRUNC('month', p.periodo_fim + INTERVAL '1 month')::date,
                        DATE_TRUNC('month', c.vinculo_inicio)::date) AS ciclo_inicio,
+              c.vinculo_ativo, c.vinculo_fim,
               vinc.polo_passivo
          FROM cliente_produtos cp
-         JOIN clientes c ON c.id = cp.cliente_id AND c.ativo IS NOT FALSE AND c.vinculo_ativo = true
+         -- Vínculo encerrado com vinculo_fim registrado também entra: o período acumulado
+         -- ANTES do desligamento é uma cobrança real, o cron cria a tarefa do mesmo jeito
+         -- (ver ciclosRecorrentes.js) — a previsão tem que mostrar o que de fato vai acontecer.
+         JOIN clientes c ON c.id = cp.cliente_id AND c.ativo IS NOT FALSE
+              AND (c.vinculo_ativo = true OR (c.vinculo_ativo = false AND c.vinculo_fim IS NOT NULL))
          JOIN produtos pr ON pr.id = cp.produto_id AND pr.ativo = true AND pr.intervalo_meses > 0
          LEFT JOIN LATERAL (
            SELECT periodo_fim FROM processos
@@ -373,8 +378,12 @@ tarefasRouter.get('/ciclos/previsao', apenasMaster, async (req, res) => {
      ), calc AS (
        SELECT b.*, (b.ciclo_inicio + ((b.intervalo_meses - 1) || ' months')::interval)::date AS vence_em
          FROM base b WHERE b.ciclo_inicio IS NOT NULL
+           -- Mesmo corte do cron: vínculo encerrado só é elegível se o período acumulado
+           -- começa antes (ou no mesmo mês) do desligamento; depois disso não sobra nada.
+           AND (b.vinculo_ativo = true OR b.ciclo_inicio <= b.vinculo_fim)
      )
      SELECT cliente_id, cliente_nome, cliente_cpf, produto_id, produto_nome, polo_passivo, ciclo_inicio, vence_em,
+            vinculo_ativo,
             ((DATE_PART('year', vence_em) - DATE_PART('year', CURRENT_DATE)) * 12
               + DATE_PART('month', vence_em) - DATE_PART('month', CURRENT_DATE))::int AS meses_para_vencer
        FROM calc k

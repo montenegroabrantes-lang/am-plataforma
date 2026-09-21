@@ -22,13 +22,19 @@ export async function verificarCiclosRecorrentes() {
   const hoje = new Date();
 
   for (const prod of produtos) {
-    // Buscar todos os clientes vinculados a este produto
+    // Buscar todos os clientes vinculados a este produto. Vínculo ATIVO sempre entra; vínculo
+    // ENCERRADO (vinculo_ativo=false) também entra quando há vinculo_fim registrado — o
+    // período acumulado ANTES do desligamento continua sendo uma cobrança legítima, só deixa
+    // de existir se já foi todo coberto por um processo anterior (checado abaixo). Antes,
+    // vinculo_ativo=false bloqueava a elegibilidade inteira, mesmo com período pendente real.
     const vinculos = await db.query(
       `SELECT cp.id AS cliente_produto_id, cp.cliente_id,
-              c.nome AS cliente_nome, c.cargo, c.orgao, c.vinculo_inicio, c.polo_passivo
+              c.nome AS cliente_nome, c.cargo, c.orgao, c.vinculo_inicio, c.vinculo_fim,
+              c.vinculo_ativo, c.polo_passivo
        FROM cliente_produtos cp
        JOIN clientes c ON c.id = cp.cliente_id
-       WHERE cp.produto_id = $1 AND c.ativo IS NOT FALSE AND c.vinculo_ativo = true`,
+       WHERE cp.produto_id = $1 AND c.ativo IS NOT FALSE
+         AND (c.vinculo_ativo = true OR (c.vinculo_ativo = false AND c.vinculo_fim IS NOT NULL))`,
       [prod.id]
     );
 
@@ -61,6 +67,16 @@ export async function verificarCiclosRecorrentes() {
       dataReferencia.setUTCMonth(dataReferencia.getUTCMonth() + prod.intervalo_meses - 1);
       if (dataReferencia > hoje) continue;
 
+      // Vínculo já encerrado: o período acumulado só é uma cobrança real se COMEÇA antes (ou
+      // no mesmo mês) do desligamento — se o último processo já cobriu até o desligamento ou
+      // depois, não sobrou nenhum período novo pra cobrar. Corta aqui, não silenciosamente:
+      // isso é "não há mais nada", diferente de "não sei se há" (que cai pra revisão humana
+      // abaixo, nunca bloqueado).
+      if (!v.vinculo_ativo && v.vinculo_fim) {
+        const vinculoFim = new Date(v.vinculo_fim);
+        if (cicloInicio > vinculoFim) continue;
+      }
+
       // Já existe processo cobrindo este ciclo?
       const processoAberto = await db.queryOne(
         `SELECT id FROM processos
@@ -83,12 +99,15 @@ export async function verificarCiclosRecorrentes() {
       );
       if (tarefaExistente) continue;
 
-      // Continuação de um processo anterior (re-protocolo) com polo sem ambiguidade e um
-      // responsável ativo entram direto em Protocolar inicial — sem passar por "Aceitar ciclo".
-      // Sem processo anterior (1ª elegibilidade), ou faltando polo/responsável, cai como antes
-      // em "Novos ciclos" para decisão humana.
+      // Continuação de um processo anterior (re-protocolo) com polo sem ambiguidade, um
+      // responsável ativo E vínculo ainda ativo entram direto em Protocolar inicial — sem
+      // passar por "Aceitar ciclo". Sem processo anterior (1ª elegibilidade), faltando
+      // polo/responsável, ou vínculo já encerrado, cai como antes em "Novos ciclos" para
+      // decisão humana — vínculo encerrado nunca bloqueia a tarefa (ela é criada do mesmo
+      // jeito, ver acima), só nunca entra sozinho em Protocolar inicial sem alguém olhar,
+      // já que pode ser o último período antes de encerrar o relacionamento com o cliente.
       let subtipo = 'ciclo', descricaoPrefixo = 'Novo ciclo', atribuidoA = null, prazoData = null, cicloVinculoId = null;
-      if (ultimoProcesso?.periodo_fim) {
+      if (ultimoProcesso?.periodo_fim && v.vinculo_ativo) {
         const vinculoAuto = await vinculoUnicoAtivo(v.cliente_id);
         const poloResolvido = vinculoAuto?.polo_passivo || v.polo_passivo || null;
         cicloVinculoId = vinculoAuto?.id || null;
@@ -106,6 +125,7 @@ export async function verificarCiclosRecorrentes() {
           prazoData = somarDiasUteis(hoje, prod.prazo_reprotocolo_dias_uteis || 10);
         }
       }
+      if (!v.vinculo_ativo) descricaoPrefixo += ' (vínculo encerrado — revisar período)';
 
       // Fase 4 — aqui, diferente do fluxo de fechamento (onboarding.js), o período de início
       // é real (o próprio início do ciclo acumulado), não NULL — a 1ª demanda com período de
@@ -119,7 +139,10 @@ export async function verificarCiclosRecorrentes() {
         [v.cliente_produto_id, subtipo, `${descricaoPrefixo} — ${prod.nome} — ${v.cliente_nome}`,
          atribuidoA ? 'ALTO' : 'MEDIO', cicloInicioIso, atribuidoA, prazoData, cicloVinculoId, demandaId]
       );
-      const periodoTexto = `${cicloInicio.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric', timeZone: 'UTC' })} até hoje`;
+      const fimTexto = !v.vinculo_ativo && v.vinculo_fim
+        ? new Date(v.vinculo_fim).toLocaleDateString('pt-BR', { timeZone: 'UTC' })
+        : 'hoje';
+      const periodoTexto = `${cicloInicio.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric', timeZone: 'UTC' })} até ${fimTexto}`;
 
       console.log(`[Ciclos] Tarefa criada (${subtipo}): ${prod.nome} — ${v.cliente_nome} | ${periodoTexto}${atribuidoA ? ' | auto-aceito' : ''}`);
       totalTarefas++;
