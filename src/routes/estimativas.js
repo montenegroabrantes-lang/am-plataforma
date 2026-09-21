@@ -415,6 +415,33 @@ estimativasRouter.post('/leads/:contactId/desfecho', apenasMaster, async (req, r
   }
 });
 
+// POST /api/estimativas/onboarding-manual — cadastro de cliente novo sem lead prévio no funil
+// (nunca passou pela Camila/Digisac). Mesmo motor de /leads/:contactId/desfecho, sem contactId
+// real e sem sincronizar com a Camila — não existe card de lead nenhum pra mover no Kanban.
+estimativasRouter.post('/onboarding-manual', apenasMaster, async (req, res) => {
+  const { onboarding, valorFechado } = req.body || {};
+  try {
+    const registro = await criarOnboardingContrato({
+      contactId: null,
+      lead: {
+        nome: onboarding?.nome,
+        telefone: onboarding?.telefone,
+        cargo: onboarding?.cargo,
+        orgao: onboarding?.orgao,
+        inicio: onboarding?.inicio,
+        fim: onboarding?.fim,
+        valor: valorFechado,
+      },
+      onboarding,
+      usuarioId: req.user.id,
+      ip: req._ip,
+    });
+    res.status(201).json({ ok: true, onboarding: registro });
+  } catch (err) {
+    res.status(err.status || 500).json({ ok: false, erro: err.message, detalhes: err.detalhes });
+  }
+});
+
 // DELETE /api/estimativas/leads/:contactId/desfecho — desfazer um desfecho marcado por engano
 estimativasRouter.delete('/leads/:contactId/desfecho', apenasMaster, async (req, res) => {
   const api = camila();

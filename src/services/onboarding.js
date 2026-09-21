@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { db } from '../db/index.js';
 import { cpfValido } from '../utils/cpf.js';
 import { uuidValido } from '../utils/validacao.js';
@@ -67,6 +68,10 @@ export function validarDadosFechamento(onboarding = {}) {
 }
 
 export async function buscarOnboardingPorContato(contactId) {
+  // Sem contactId (cadastro manual sem lead prévio) não há identidade estável pra buscar —
+  // e String(null) viraria a string literal "null", que colidiria com qualquer outro
+  // cadastro manual via o índice único de camila_contact_id. Sempre null aqui, nunca "null".
+  if (!contactId) return null;
   return db.queryOne(
     `SELECT o.*, uc.nome AS responsavel_cadastro_nome, up.nome AS responsavel_protocolo_nome
        FROM onboardings_contrato o
@@ -74,6 +79,17 @@ export async function buscarOnboardingPorContato(contactId) {
        LEFT JOIN usuarios up ON up.id = o.responsavel_protocolo_id
       WHERE o.camila_contact_id = $1`,
     [String(contactId)]
+  );
+}
+
+async function buscarOnboardingPorId(id) {
+  return db.queryOne(
+    `SELECT o.*, uc.nome AS responsavel_cadastro_nome, up.nome AS responsavel_protocolo_nome
+       FROM onboardings_contrato o
+       LEFT JOIN usuarios uc ON uc.id = o.responsavel_cadastro_id
+       LEFT JOIN usuarios up ON up.id = o.responsavel_protocolo_id
+      WHERE o.id = $1`,
+    [id]
   );
 }
 
@@ -90,6 +106,13 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
     erro.status = 400;
     throw erro;
   }
+
+  // camila_contact_id é NOT NULL + UNIQUE — um cadastro manual sem lead prévio (nunca passou
+  // pela Camila) não tem contactId real, então geramos um identificador sintético próprio,
+  // único por chamada. Sem isso: (a) NULL de verdade violaria o NOT NULL da coluna, e
+  // (b) String(null) viraria a string literal "null" e colidiria via UNIQUE com qualquer
+  // outro cadastro manual, sobrescrevendo um pelo outro no ON CONFLICT.
+  const contactIdEfetivo = contactId || `manual-${randomUUID()}`;
 
   // Repetir o fechamento (por exemplo, após falha da Camila) não recria nem altera o
   // fluxo local. A mesma chamada pode então ser usada com segurança para nova tentativa.
@@ -122,6 +145,10 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
   const idsProdutos = [...new Set(onboarding.produtos.map(p => p.produto_id))];
   const pg = await db.pool.connect();
   let registro;
+  // Declarado aqui (fora do try) porque é lido depois do COMMIT, na sincronização do Drive —
+  // dentro do try ele saía de escopo e todo fechamento bem-sucedido lançava ReferenceError
+  // depois de já ter gravado tudo no banco (a transação comitava antes do erro).
+  let cliente = null;
 
   try {
     await pg.query('BEGIN');
@@ -149,7 +176,6 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
       throw erro;
     }
 
-    let cliente = null;
     if (onboarding.cliente_id) {
       const clienteResult = await pg.query(
         `SELECT id, nome, cpf, drive_pasta_id, drive_pasta_url FROM clientes WHERE id = $1 AND ativo = true`,
@@ -190,7 +216,7 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
          registrado_por = EXCLUDED.registrado_por, atualizado_em = NOW()
        RETURNING *`,
       [
-        String(contactId), lead.estimativa_id ? String(lead.estimativa_id) : null,
+        String(contactIdEfetivo), lead.estimativa_id ? String(lead.estimativa_id) : null,
         cliente?.id || null, String(lead.nome || '').trim() || null,
         lead.telefone || lead.telefone_real || null, lead.cargo || null, lead.orgao || null,
         inicioInformado, fimInformado, JSON.stringify(dadosOrigem), JSON.stringify(cadastroRascunho),
@@ -317,7 +343,7 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
   await registrarAuditoria({
     usuarioId, acao: 'iniciar_onboarding', entidade: 'onboarding_contrato',
     entidadeId: registro.id,
-    valorDepois: { contact_id: String(contactId), status: registro.status, produtos: idsProdutos },
+    valorDepois: { contact_id: String(contactIdEfetivo), manual: !contactId, status: registro.status, produtos: idsProdutos },
     ip,
   });
 
@@ -325,7 +351,9 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
   // onboarding e também repara clientes antigos que ainda não tinham pasta.
   if (cliente) void sincronizarDriveCliente(cliente, registro.id);
 
-  return buscarOnboardingPorContato(contactId);
+  // Busca por id, não por contactId: sem lead (cadastro manual), contactId é null e uma
+  // busca por camila_contact_id sempre voltaria vazia mesmo com o registro recém-criado.
+  return buscarOnboardingPorId(registro.id);
 }
 
 export async function marcarSincronizacaoCamila(onboardingId, ok, mensagem = null) {

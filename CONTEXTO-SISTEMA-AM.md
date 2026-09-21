@@ -699,3 +699,41 @@ integrações ou produção. Não registrar segredos neste documento.
 - Frontend: aba "🔁 Re-protocolo" e card no cockpit, visíveis pra todos (não só Master, já que
   quem foi atribuído ao re-protocolo precisa achar a tarefa). Card/badge/ações não mudaram —
   já eram calculados por campo (`ciclo_inicio`), só a fila que lista passou a separar.
+
+### 19-20/09/2026 (noite) — Cadastro manual de cliente novo direto da fila de Tarefas
+
+- Pedido: cadastrar cliente novo (com ou sem lead prévio no Digisac) direto da aba
+  "Protocolar inicial · novos clientes", vinculando ao Kanban de Leads quando houver lead.
+- **Dois bugs pré-existentes achados e corrigidos em `src/services/onboarding.js`** (já em
+  produção desde o commit `3cfccc9` de hoje, sem relação com esta tarefa):
+  1. `let cliente = null` era declarado DENTRO do bloco `try` de `criarOnboardingContrato` mas
+     lido DEPOIS dele (na sincronização do Drive) — `ReferenceError` em toda chamada
+     bem-sucedida, sempre depois da transação já ter commitado. Corrigido: declarado antes do
+     `try`. Nenhum onboarding foi perdido (o erro só impedia o Drive de sincronizar e fazia a
+     tela mostrar "erro" mesmo com tudo já gravado), mas explica os 5 registros com
+     `drive_sync_status='erro'` vistos no banco — 3 deles com `invalid_grant` (credencial do
+     Google expirada, problema à parte, não corrigido aqui) e possivelmente mascarando outros.
+  2. `criarOnboardingContrato` fazia `String(contactId)` sem tratar `null` — viraria a string
+     literal `"null"`, e como `camila_contact_id` é `NOT NULL UNIQUE`, o segundo cadastro sem
+     lead sobrescreveria o primeiro via `ON CONFLICT`. Corrigido com um `contactId` sintético
+     único (`manual-<uuid>`) gerado dentro da função quando não há lead. `buscarOnboardingPorContato`
+     ganhou guarda pra `null`; o retorno final da função passou a buscar por `id` do registro
+     (novo helper `buscarOnboardingPorId`), não mais por `contactId` — o método antigo sempre
+     devolvia vazio pra cadastros sem lead. Testado de ponta a ponta contra produção (2 cadastros
+     seguidos sem lead, IDs diferentes, sem colisão) e limpo depois.
+- Nova rota `POST /api/estimativas/onboarding-manual` (Master): mesmo motor de
+  `POST /leads/:contactId/desfecho` (chama `criarOnboardingContrato`), sem contactId real e sem
+  chamar a Camila — não existe card de lead pra mover quando não há lead.
+- Frontend: `FormularioFechamento` (o formulário completo de fechar contrato — produtos,
+  honorários, responsáveis, prazos, busca de cliente já existente) foi extraído de
+  `(dashboard)/estimativas/page.js` para `src/components/FormularioFechamento.js`, self-contained,
+  **sem alterar uma linha da página de Estimativas** (arquivo de 2242 linhas, crítico pra receita
+  — risco zero de regressão ali). Reaproveitado agora também em Tarefas.
+- Botão **"+ Cadastrar cliente novo"** na aba "Protocolar inicial", com modal de duas entradas:
+  **vincular a lead existente** (busca em `GET /api/estimativas/leads?busca=`, mesma API do
+  Kanban; ao confirmar chama a rota já existente `/leads/:contactId/desfecho`, que também move o
+  card do lead pra "Fechado" no Kanban via Camila automaticamente — nenhuma mudança de backend
+  necessária pra isso) ou **cadastro direto sem lead** (campos nome/telefone/cargo/órgão/vínculo,
+  chama a rota nova `onboarding-manual`). Sem indicador novo no Dashboard — o cadastro já entra
+  nos números existentes (`resumo.protocolar_inicial`, contadores de clientes) como qualquer
+  outro onboarding.
