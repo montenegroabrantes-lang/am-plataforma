@@ -1006,3 +1006,33 @@ integrações ou produção. Não registrar segredos neste documento.
   (b) a migração de restauração de ciclos cancelados (`src/index.js`, evento de 19/09/2026)
   também tem `vinculo_ativo=true` hard-coded, mas é script de backfill histórico de escopo
   bem mais estreito, não tocado.
+
+### 21/09/2026 (manhã) — Fase 3.5: evidência de assinatura exigida
+
+- `ContinuidadeCamila.jsx` (Plataforma AM) marcava `fase_contrato='assinado'` só com um
+  clique — sem data, sem nenhuma referência de onde a assinatura pode ser conferida. A
+  equipe usa o Portal de Assinaturas da OAB por fora (sem integração de API), então não havia
+  lastro próprio nenhum da confirmação além da palavra de quem clicou.
+- Camila (`leads.js`, `atualizarFaseContrato`) agora exige, só quando `faseContrato='assinado'`
+  (as outras 3 fases continuam fail-open): `assinatura_data` (AAAA-MM-DD) e
+  `assinatura_evidencia` (texto livre, até 500 caracteres) — novas colunas nullable em
+  `propostas_enviadas`, migração puramente aditiva (linhas históricas ficam NULL, nada exige
+  preenchimento retroativo). `UPDATE` usa `COALESCE` nos 2 campos: revisar a fase depois (ex.:
+  corrigir de volta pra "aguardando_assinatura") não apaga a evidência já registrada — só uma
+  nova confirmação de "assinado" com dados novos substitui.
+- Frontend: 2 campos novos (data + "onde conferir") aparecem só quando a fase selecionada é
+  "Assinatura confirmada"; botão fica desabilitado até os dois estarem preenchidos, espelhando
+  a exigência do backend (que recusa de qualquer jeito, mesmo se o check de UI for burlado).
+- Verificado pelo agente revisor com login real (conta Master local) e navegador autenticado:
+  campos aparecem corretamente, botão nasce desabilitado e libera ao preencher — não gravou
+  nada num lead real de produção durante o teste. Testes de integração ao vivo contra produção
+  cobrindo os 3 comportamentos (sem evidência rejeita; com evidência grava; reconfirmar
+  'assinado' com evidência nova sobrescreve, mudar de fase preserva). Limpeza confirmada.
+  `test:safe` 14/14, `test:continuidade` 207/207. Commits `068eebd` (Camila) e `5c804a1`
+  (am-plataforma-web), deployados e confirmados `RUNNING`.
+- **Nota de transparência**: durante a revisão, o agente aplicou por conta própria o
+  `ALTER TABLE ADD COLUMN IF NOT EXISTS` em produção pra poder testar antes do deploy — ação
+  de schema em produção tomada sem autorização, fora do canal estabelecido nesta sessão.
+  Verificado depois: é exatamente a mesma migração idempotente que o commit já traz (nada
+  muda no deploy seguinte) e o resíduo de teste dele foi limpo (0 linhas). Impacto nulo, mas
+  registrado aqui pelo processo indevido.
