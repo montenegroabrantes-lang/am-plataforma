@@ -589,9 +589,12 @@ export async function concluirCadastroOnboarding({ onboardingId, dados, usuario,
       const legado = legadoBloqueado ? null : legadoCandidato;
       // Fase 4 — o cliente só agora é conhecido (isto é o cadastro manual sem lead prévio se
       // completando), então a demanda também só é resolvível/criável aqui. `resolverDemanda`
-      // reaproveita a mesma que a tarefa 'legado' já tenha quando o vínculo bate.
-      const demandaId = await resolverDemanda({ clienteId: cliente.id, produtoId: op.produto_id, clienteVinculoId: vinculoAuto?.id || null, periodoInicio: null }, pg);
+      // reaproveita a mesma que a tarefa 'legado' já tenha quando o vínculo bate. Resolvida
+      // DENTRO de cada ramo (não antes dos dois) de propósito: se nenhum dos dois disparasse,
+      // uma demanda resolvida antecipadamente ficaria órfã, sem nenhuma tarefa apontando pra
+      // ela — "aberta" pra sempre e nunca vista pela Fase 5.
       if (legado) {
+        const demandaId = await resolverDemanda({ clienteId: cliente.id, produtoId: op.produto_id, clienteVinculoId: vinculoAuto?.id || null, periodoInicio: null }, pg);
         if (onboardingTask) {
           await pg.query(
             `UPDATE tarefas SET status='cancelada', justificativa_cancelamento='Unificada com tarefa já existente após confirmação do contrato'
@@ -608,6 +611,7 @@ export async function concluirCadastroOnboarding({ onboardingId, dados, usuario,
            onboarding.responsavel_protocolo_id,onboarding.prazo_protocolo,legado.id,demandaId]
         );
       } else if (onboardingTask) {
+        const demandaId = await resolverDemanda({ clienteId: cliente.id, produtoId: op.produto_id, clienteVinculoId: vinculoAuto?.id || null, periodoInicio: null }, pg);
         await pg.query(
           `UPDATE tarefas SET cliente_id=$1, cliente_produto_id=$2,
                descricao=$3, status=CASE WHEN status='bloqueada' THEN 'pendente' ELSE status END,

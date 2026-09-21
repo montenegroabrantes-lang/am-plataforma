@@ -931,3 +931,27 @@ integrações ou produção. Não registrar segredos neste documento.
   e em `ciclosRecorrentes.js`; preencher `periodo_inicio`/`periodo_fim` de verdade (hoje sempre
   `NULL` nas demandas criadas por `criarOnboardingContrato`); e só então construir a ficha
   única (Fase 5) sobre `demandas` em vez de inferir tudo via `tarefas`.
+
+### 21/09/2026 (madrugada) — Fase 4 continuação: demanda_id nos 2 pontos restantes
+
+- `concluirCadastroOnboarding` (cliente só é conhecido aqui, no cadastro manual sem lead
+  prévio se completando) e `ciclosRecorrentes.js` (cron diário de re-protocolo recorrente,
+  ex.: FGTS a cada 25 meses) agora resolvem/criam `demanda_id` também — os 2 pontos que
+  `criarOnboardingContrato` (fatia 1) tinha deixado de fora. `ciclosRecorrentes.js` é o
+  primeiro lugar onde uma demanda nasce com `periodo_inicio` de verdade (o próprio início do
+  ciclo acumulado), em vez de `NULL`.
+- Achado do agente revisor, corrigido no mesmo commit: em `concluirCadastroOnboarding`, a
+  resolução da demanda rodava ANTES de saber se algum dos 2 ramos (fundir com legado / manter
+  a tarefa própria) ia de fato disparar — se nenhum disparasse, a demanda ficava órfã (sem
+  nenhuma tarefa apontando pra ela, "aberta" pra sempre, invisível pra Fase 5). Movida pra
+  dentro de cada ramo, só resolvida quando de fato vai ser usada.
+- **Gap conhecido, registrado aqui a pedido do próprio revisor** (a mensagem do commit
+  anterior dizia que isso já estava documentado, e não estava): `ciclosRecorrentes.js` ainda
+  só considera os campos legados de vínculo único em `clientes` (`cargo`/`orgao`/
+  `vinculo_inicio`/`polo_passivo`), não a tabela `cliente_vinculos` — não é vínculo-aware pra
+  clientes com 2+ vínculos. É um gap maior, de escopo próprio, não corrigido nesta sessão.
+- Testado ao vivo contra produção (cliente novo em `concluirCadastroOnboarding`; e
+  `verificarCiclosRecorrentes()` rodado de ponta a ponta sobre a base real com 1 cliente de
+  teste elegível — demanda criada com `periodo_inicio` batendo exatamente com `ciclo_inicio`
+  da tarefa). Limpeza confirmada, incluindo auditoria de possíveis resíduos de execuções
+  anteriores (0 encontrados). `npm test`: 58/58.
