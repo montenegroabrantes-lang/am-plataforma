@@ -59,7 +59,11 @@ produtosRouter.patch('/:id', apenasMaster, async (req, res) => {
     if (!Array.isArray(req.body.documentos_exigidos) || req.body.documentos_exigidos.some(c => !CATEGORIAS_DOCUMENTO_VALIDAS.includes(c))) {
       return res.status(400).json({ ok: false, erro: `documentos_exigidos deve ser uma lista com valores entre: ${CATEGORIAS_DOCUMENTO_VALIDAS.join(', ')}.` });
     }
-    req.body.documentos_exigidos = [...new Set(req.body.documentos_exigidos)];
+    // [] e null significam a mesma coisa ("sem checklist configurado") — normaliza aqui pra
+    // nunca gravar os dois valores como se fossem estados diferentes (achado do revisor da
+    // Fase 5, fatia 1).
+    const dedup = [...new Set(req.body.documentos_exigidos)];
+    req.body.documentos_exigidos = dedup.length > 0 ? dedup : null;
   }
   if (req.body.responsavel_reprotocolo_id) {
     if (!uuidValido(req.body.responsavel_reprotocolo_id)) {
