@@ -6,6 +6,7 @@ import { somarDiasUteis, dataCalendarioValida } from '../utils/diasUteis.js';
 import { criarPastaCliente, criarSubpasta } from './drive/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { vinculoUnicoAtivo } from '../utils/vinculos.js';
+import { resolverDemanda } from '../utils/demandas.js';
 
 function numeroPercentual(valor, padrao = 20) {
   const n = Number(valor);
@@ -295,47 +296,58 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
       // 2 vínculos elegíveis a FGTS, ou uma renovação futura). Adotar a 1ª tarefa aberta que
       // achasse pelo produto sequestrava a tarefa de um fechamento anterior — um 2º fechamento
       // "roubava" a tarefa do 1º, apagando a ligação dele com seu próprio onboarding/vínculo.
-      // Agora só é elegível pra adoção uma tarefa que já é DESTE onboarding (retry/edição do
-      // mesmo fechamento) ou que ainda não foi reivindicada por nenhum onboarding — e, quando
-      // o vínculo de ambos os lados é conhecido, eles precisam bater.
+      // Elegível pra adoção: tarefa já DESTE onboarding (retry/edição do mesmo fechamento),
+      // OU ainda não reivindicada por nenhum onboarding (com vínculo compatível), OU — achado
+      // ao testar a Fase 4 — de OUTRO onboarding cujo vínculo já é CONFIRMADO IGUAL ao de agora
+      // (mesma demanda de verdade; sem este caso, a 2ª tarefa batia no índice único do produto+
+      // vínculo e sumia num ON CONFLICT DO NOTHING silencioso, o mesmo tipo de perda que esta
+      // fase inteira existe pra evitar).
       let tarefaAdotada = null;
       if (clienteProdutoId) {
         const existenteResult = await pg.query(
           `SELECT id, cliente_vinculo_id, onboarding_id FROM tarefas
              WHERE cliente_produto_id=$1 AND tipo='protocolar'
                AND status NOT IN ('concluida','cancelada')
-               AND (onboarding_id IS NULL OR onboarding_id=$2)
-             ORDER BY (onboarding_id=$2) DESC, criado_em ASC LIMIT 1`,
-          [clienteProdutoId, registro.id]
+               AND (onboarding_id IS NULL OR onboarding_id=$2 OR cliente_vinculo_id=$3)
+             ORDER BY (onboarding_id=$2) DESC, (cliente_vinculo_id=$3) DESC, criado_em ASC LIMIT 1`,
+          [clienteProdutoId, registro.id, vinculoAuto?.id || null]
         );
         const candidata = existenteResult.rows[0];
-        const vinculoDivergente = candidata && candidata.onboarding_id === null
+        const vinculoDivergente = candidata
           && vinculoAuto?.id && candidata.cliente_vinculo_id
           && candidata.cliente_vinculo_id !== vinculoAuto.id;
         tarefaAdotada = vinculoDivergente ? null : candidata;
       }
+      // Fase 4 — mesma identidade (cliente+produto+vínculo+período) que hoje só existe
+      // implícita na tarefa passa a ter uma linha própria em `demandas`. Só é resolvível
+      // quando já existe cliente_produto_id (isto é, cliente conhecido); sem cliente, fica
+      // NULL aqui e é resolvida depois, em concluirCadastroOnboarding.
+      const demandaId = (cliente && clienteProdutoId)
+        ? await resolverDemanda({ clienteId: cliente.id, produtoId: produto.id, clienteVinculoId: vinculoAuto?.id || null, periodoInicio: null }, pg)
+        : null;
       if (tarefaAdotada) {
         await pg.query(
           `UPDATE tarefas SET cliente_id=$1,onboarding_id=$2,onboarding_produto_id=$3,
              descricao=$4,instrucao=$5,atribuido_a=$6,validado_por=$7,urgencia='ALTO',
              prazo_data=$8,status='pendente',precisa_triagem=false,
-             cliente_vinculo_id=COALESCE(cliente_vinculo_id,$9) WHERE id=$10`,
+             cliente_vinculo_id=COALESCE(cliente_vinculo_id,$9),
+             demanda_id=COALESCE(demanda_id,$11) WHERE id=$10`,
           [cliente.id,registro.id,op.id,descricaoProtocolo,
            'Confirmar documentos e protocolar a ação contratada. Ao concluir, informe o número CNJ.',
-           onboarding.responsavel_protocolo_id,usuarioId,prazoProtocolo,vinculoAuto?.id || null,tarefaAdotada.id]
+           onboarding.responsavel_protocolo_id,usuarioId,prazoProtocolo,vinculoAuto?.id || null,tarefaAdotada.id,demandaId]
         );
       } else {
         await pg.query(
           `INSERT INTO tarefas
              (cliente_id, cliente_produto_id, onboarding_id, onboarding_produto_id, tipo,
-              descricao, instrucao, atribuido_a, validado_por, urgencia, prazo_data, status, precisa_triagem, cliente_vinculo_id)
-           VALUES ($1,$2,$3,$4,'protocolar',$5,$6,$7,$8,'ALTO',$9,$10,false,$11)
+              descricao, instrucao, atribuido_a, validado_por, urgencia, prazo_data, status, precisa_triagem, cliente_vinculo_id, demanda_id)
+           VALUES ($1,$2,$3,$4,'protocolar',$5,$6,$7,$8,'ALTO',$9,$10,false,$11,$12)
            ON CONFLICT DO NOTHING`,
           [
             cliente?.id || null, clienteProdutoId, registro.id, op.id, descricaoProtocolo,
             'Confirmar documentos e protocolar a ação contratada. Ao concluir, informe o número CNJ.',
             onboarding.responsavel_protocolo_id, usuarioId, prazoProtocolo,
-            cliente ? 'pendente' : 'bloqueada', vinculoAuto?.id || null,
+            cliente ? 'pendente' : 'bloqueada', vinculoAuto?.id || null, demandaId,
           ]
         );
       }
@@ -344,10 +356,11 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
              cliente_id=COALESCE($3,cliente_id), cliente_produto_id=COALESCE($4,cliente_produto_id),
              status=CASE WHEN $3::uuid IS NOT NULL AND status='bloqueada' THEN 'pendente' ELSE status END,
              precisa_triagem=false,
-             cliente_vinculo_id=COALESCE(cliente_vinculo_id,$6)
+             cliente_vinculo_id=COALESCE(cliente_vinculo_id,$6),
+             demanda_id=COALESCE(demanda_id,$7)
           WHERE onboarding_produto_id=$5 AND tipo='protocolar'
             AND status NOT IN ('concluida','cancelada')`,
-        [onboarding.responsavel_protocolo_id, prazoProtocolo, cliente?.id || null, clienteProdutoId, op.id, vinculoAuto?.id || null]
+        [onboarding.responsavel_protocolo_id, prazoProtocolo, cliente?.id || null, clienteProdutoId, op.id, vinculoAuto?.id || null, demandaId]
       );
     }
 

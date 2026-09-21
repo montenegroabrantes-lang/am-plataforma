@@ -6,6 +6,7 @@ import cookieParser       from 'cookie-parser';
 import rateLimit          from 'express-rate-limit';
 import { db }             from './db/index.js';
 import { conectarRedis }  from './cache/redis.js';
+import { resolverDemanda } from './utils/demandas.js';
 
 // Rotas
 import { authRouter }          from './routes/auth.js';
@@ -443,6 +444,55 @@ async function iniciar() {
     // existente que viole a troca.
     await db.query(`DROP INDEX IF EXISTS uq_tarefa_protocolo_ativa`).catch(() => {});
     await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_tarefa_protocolo_ativa_vinculo ON tarefas (cliente_produto_id, tipo, cliente_vinculo_id) WHERE status NOT IN ('concluida','cancelada')`).catch(() => {});
+
+    // Fase 4 (21/09/2026) — tabela `demandas`: identifica de forma explícita e única a demanda
+    // jurídica por trás de uma tarefa de protocolo (cliente + produto + vínculo + período), em
+    // vez de inferir isso por convenção a partir de campos espalhados na própria tarefa. É a
+    // base da Fase 5 (ficha única) e evita remendar, um por um, cada ponto que hoje decide
+    // "essa tarefa é a mesma demanda de outra?" (como a Fase 1.7 teve que fazer). Nasce aqui só
+    // com a tabela + coluna em tarefas + backfill do que já existe; a ligação em cada rota que
+    // cria/atualiza tarefa entra em commits seguintes, um de cada vez.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS demandas (
+        id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        cliente_id         UUID NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+        produto_id         UUID NOT NULL REFERENCES produtos(id),
+        cliente_vinculo_id UUID REFERENCES cliente_vinculos(id) ON DELETE SET NULL,
+        periodo_inicio     DATE,
+        periodo_fim        DATE,
+        status             TEXT NOT NULL DEFAULT 'aberta' CHECK (status IN ('aberta','protocolada','concluida','cancelada')),
+        processo_id        UUID REFERENCES processos(id) ON DELETE SET NULL,
+        criado_em          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        atualizado_em      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `).catch(() => {});
+    // Mesma lógica da Fase 1.7: NULL nunca é igual a NULL num índice único do Postgres, então
+    // isto só bloqueia duplicata exata quando vínculo E período já são conhecidos — quando
+    // ambíguo, cada demanda fica isolada (mais seguro que fundir demandas diferentes).
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_demandas_identidade ON demandas (cliente_id, produto_id, cliente_vinculo_id, periodo_inicio) WHERE status NOT IN ('concluida','cancelada')`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_demandas_cliente ON demandas (cliente_id)`).catch(() => {});
+    await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS demanda_id UUID REFERENCES demandas(id) ON DELETE SET NULL`).catch(() => {});
+    await db.query(`CREATE INDEX IF NOT EXISTS idx_tarefas_demanda ON tarefas (demanda_id) WHERE demanda_id IS NOT NULL`).catch(() => {});
+
+    // Backfill idempotente: 1 demanda por tarefa 'protocolar' aberta que ainda não tem
+    // demanda_id. Processado tarefa por tarefa (não em lote via SQL) de propósito: um lote via
+    // SELECT DISTINCT + JOIN de correlação colapsaria 2 tarefas com vínculo ambíguo (NULL) na
+    // MESMA demanda — exatamente o bug que a Fase 1.7 acabou de corrigir no índice de tarefas.
+    await db.query(`
+      SELECT t.id AS tarefa_id, cp.cliente_id, cp.produto_id, t.cliente_vinculo_id, t.ciclo_inicio AS periodo_inicio
+        FROM tarefas t JOIN cliente_produtos cp ON cp.id = t.cliente_produto_id
+       WHERE t.tipo='protocolar' AND t.status NOT IN ('concluida','cancelada')
+         AND t.demanda_id IS NULL AND t.cliente_produto_id IS NOT NULL
+    `).then(async pendentes => {
+      for (const p of pendentes) {
+        const demandaId = await resolverDemanda({
+          clienteId: p.cliente_id, produtoId: p.produto_id,
+          clienteVinculoId: p.cliente_vinculo_id, periodoInicio: p.periodo_inicio,
+        });
+        await db.query(`UPDATE tarefas SET demanda_id=$1 WHERE id=$2`, [demandaId, p.tarefa_id]);
+      }
+      if (pendentes.length > 0) console.log(`[Migration] Backfill de demandas: ${pendentes.length} tarefa(s) vinculada(s).`);
+    }).catch(e => console.warn('[Migration] Backfill de demandas:', e.message));
 
     // Ciclos recorrentes (ex: FGTS remanescente a cada 25 meses) são sinal de "novo período
     // acumulado", não protocolo pronto. Ganham subtipo próprio, o início do período acumulado
