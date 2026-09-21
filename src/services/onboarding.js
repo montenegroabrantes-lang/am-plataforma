@@ -305,7 +305,7 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
       let tarefaAdotada = null;
       if (clienteProdutoId) {
         const existenteResult = await pg.query(
-          `SELECT id, cliente_vinculo_id, onboarding_id FROM tarefas
+          `SELECT id, cliente_vinculo_id, onboarding_id, demanda_id FROM tarefas
              WHERE cliente_produto_id=$1 AND tipo='protocolar'
                AND status NOT IN ('concluida','cancelada')
                AND (onboarding_id IS NULL OR onboarding_id=$2 OR cliente_vinculo_id=$3)
@@ -321,10 +321,15 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
       // Fase 4 — mesma identidade (cliente+produto+vínculo+período) que hoje só existe
       // implícita na tarefa passa a ter uma linha própria em `demandas`. Só é resolvível
       // quando já existe cliente_produto_id (isto é, cliente conhecido); sem cliente, fica
-      // NULL aqui e é resolvida depois, em concluirCadastroOnboarding.
-      const demandaId = (cliente && clienteProdutoId)
-        ? await resolverDemanda({ clienteId: cliente.id, produtoId: produto.id, clienteVinculoId: vinculoAuto?.id || null, periodoInicio: null }, pg)
-        : null;
+      // NULL aqui e é resolvida depois, em concluirCadastroOnboarding. Reaproveita a
+      // demanda que a tarefa adotada já tenha, em vez de resolver incondicionalmente — achado
+      // real de teste ao vivo em concluirCadastroOnboarding (d7e81a5): resolver de novo mesmo
+      // quando já existe uma demanda diferente na tarefa cria uma demanda NOVA que o
+      // COALESCE do UPDATE descarta, órfã pra sempre. Mesmo risco existia aqui.
+      const demandaId = tarefaAdotada?.demanda_id
+        || ((cliente && clienteProdutoId)
+          ? await resolverDemanda({ clienteId: cliente.id, produtoId: produto.id, clienteVinculoId: vinculoAuto?.id || null, periodoInicio: null }, pg)
+          : null);
       if (tarefaAdotada) {
         await pg.query(
           `UPDATE tarefas SET cliente_id=$1,onboarding_id=$2,onboarding_produto_id=$3,
