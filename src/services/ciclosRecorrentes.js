@@ -7,6 +7,7 @@
 import { db } from '../db/index.js';
 import { somarDiasUteis } from '../utils/diasUteis.js';
 import { vinculoUnicoAtivo } from '../utils/vinculos.js';
+import { resolverDemanda } from '../utils/demandas.js';
 
 export async function verificarCiclosRecorrentes() {
   const produtos = await db.query(
@@ -106,11 +107,17 @@ export async function verificarCiclosRecorrentes() {
         }
       }
 
+      // Fase 4 — aqui, diferente do fluxo de fechamento (onboarding.js), o período de início
+      // é real (o próprio início do ciclo acumulado), não NULL — a 1ª demanda com período de
+      // verdade nasce por este caminho.
+      const demandaId = await resolverDemanda({
+        clienteId: v.cliente_id, produtoId: prod.id, clienteVinculoId: cicloVinculoId, periodoInicio: cicloInicioIso,
+      });
       await db.execute(
-        `INSERT INTO tarefas (cliente_produto_id, tipo, subtipo, descricao, urgencia, status, ciclo_inicio, atribuido_a, prazo_data, cliente_vinculo_id)
-         VALUES ($1, 'protocolar', $2, $3, $4, 'pendente', $5::date, $6, $7, $8)`,
+        `INSERT INTO tarefas (cliente_produto_id, tipo, subtipo, descricao, urgencia, status, ciclo_inicio, atribuido_a, prazo_data, cliente_vinculo_id, demanda_id)
+         VALUES ($1, 'protocolar', $2, $3, $4, 'pendente', $5::date, $6, $7, $8, $9)`,
         [v.cliente_produto_id, subtipo, `${descricaoPrefixo} — ${prod.nome} — ${v.cliente_nome}`,
-         atribuidoA ? 'ALTO' : 'MEDIO', cicloInicioIso, atribuidoA, prazoData, cicloVinculoId]
+         atribuidoA ? 'ALTO' : 'MEDIO', cicloInicioIso, atribuidoA, prazoData, cicloVinculoId, demandaId]
       );
       const periodoTexto = `${cicloInicio.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric', timeZone: 'UTC' })} até hoje`;
 

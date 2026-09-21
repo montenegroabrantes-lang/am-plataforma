@@ -587,6 +587,10 @@ export async function concluirCadastroOnboarding({ onboardingId, dados, usuario,
       const legadoBloqueado = legadoCandidato && !legadoVinculoIgual
         && (legadoVinculoDivergente || onboardingTask);
       const legado = legadoBloqueado ? null : legadoCandidato;
+      // Fase 4 — o cliente só agora é conhecido (isto é o cadastro manual sem lead prévio se
+      // completando), então a demanda também só é resolvível/criável aqui. `resolverDemanda`
+      // reaproveita a mesma que a tarefa 'legado' já tenha quando o vínculo bate.
+      const demandaId = await resolverDemanda({ clienteId: cliente.id, produtoId: op.produto_id, clienteVinculoId: vinculoAuto?.id || null, periodoInicio: null }, pg);
       if (legado) {
         if (onboardingTask) {
           await pg.query(
@@ -597,18 +601,19 @@ export async function concluirCadastroOnboarding({ onboardingId, dados, usuario,
         }
         await pg.query(
           `UPDATE tarefas SET cliente_id=$1,onboarding_id=$2,onboarding_produto_id=$3,
-             descricao=$4,atribuido_a=$5,prazo_data=$6,status='pendente',precisa_triagem=false
+             descricao=$4,atribuido_a=$5,prazo_data=$6,status='pendente',precisa_triagem=false,
+             demanda_id=COALESCE(demanda_id,$8)
             WHERE id=$7`,
           [cliente.id,onboarding.id,op.id,`Protocolar processo — ${op.produto_nome} — ${cliente.nome}`,
-           onboarding.responsavel_protocolo_id,onboarding.prazo_protocolo,legado.id]
+           onboarding.responsavel_protocolo_id,onboarding.prazo_protocolo,legado.id,demandaId]
         );
       } else if (onboardingTask) {
         await pg.query(
           `UPDATE tarefas SET cliente_id=$1, cliente_produto_id=$2,
                descricao=$3, status=CASE WHEN status='bloqueada' THEN 'pendente' ELSE status END,
-               precisa_triagem=false
+               precisa_triagem=false, demanda_id=COALESCE(demanda_id,$5)
             WHERE id=$4`,
-          [cliente.id, cpId, `Protocolar processo — ${op.produto_nome} — ${cliente.nome}`, onboardingTask.id]
+          [cliente.id, cpId, `Protocolar processo — ${op.produto_nome} — ${cliente.nome}`, onboardingTask.id, demandaId]
         );
       }
     }
