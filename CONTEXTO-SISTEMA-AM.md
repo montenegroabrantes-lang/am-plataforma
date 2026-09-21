@@ -1036,3 +1036,30 @@ integrações ou produção. Não registrar segredos neste documento.
   Verificado depois: é exatamente a mesma migração idempotente que o commit já traz (nada
   muda no deploy seguinte) e o resíduo de teste dele foi limpo (0 linhas). Impacto nulo, mas
   registrado aqui pelo processo indevido.
+
+### 21/09/2026 (manhã, cont.) — Checklist por tese (produtos.documentos_exigidos)
+
+- Nova coluna `produtos.documentos_exigidos` (JSONB) — lista de categorias de documento
+  exigidas por tese, base pra Fase 5 (ficha única) mostrar o que falta coletar por cliente.
+  Fail-open: `NULL` não bloqueia nada, é só ausência de configuração. Só FGTS já nasce
+  preenchido com as 4 categorias que a Camila já usa (`identidade`, `cpf`, `residencia`,
+  `contracheque` — mesmo vocabulário de `campos` em `ContinuidadeCamila.jsx`); as demais teses
+  ficam sem checklist até configuração manual via `PATCH /api/produtos/:id`.
+- Achado ao testar: o driver `pg` serializa array/objeto JS passado cru como parâmetro usando
+  literal de ARRAY do Postgres (`{a,b}`), não JSON — gravar direto numa coluna JSONB falhava
+  com `invalid input syntax for type json`. Corrigido com `JSON.stringify()` + cast `::jsonb`
+  explícito, só pra este campo (as colunas `TEXT[]` do mesmo loop dinâmico de `PATCH
+  /api/produtos/:id` continuam recebendo o array cru, que é o formato certo pra elas).
+  É o mesmo tipo de bug de serialização de tipo que já apareceu nesta sessão em outros
+  contextos — vale lembrar disso ao adicionar qualquer coluna JSONB nova.
+- Testado ao vivo contra produção pela rota HTTP real (Express + stub de auth, não só a
+  lógica isolada): categoria inválida rejeitada (400); array válido com duplicata grava como
+  JSONB de verdade, deduplicado; `null` limpa; `POST /api/produtos` sem o campo continua
+  criando normalmente com `documentos_exigidos=NULL`. Limpeza confirmada. `npm test`: 58/58.
+  Commit `9178cc5`, deployado e confirmado `RUNNING`.
+- Decisões pendentes pra quando a Fase 5 for ler esta coluna: (a) hoje `[]` (array vazio) e
+  `NULL` são valores distintos no banco, mas semanticamente deveriam significar a mesma coisa
+  ("sem checklist") — decidir se normaliza na escrita ou trata como equivalente na leitura;
+  (b) a lista de categorias válidas está duplicada à mão entre este backend e
+  `ContinuidadeCamila.jsx` (repo `am-plataforma-web`) — funciona porque são só 4 categorias
+  hoje, mas é risco de dessincronia se qualquer um dos dois lados mudar sozinho.
