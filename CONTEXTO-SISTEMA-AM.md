@@ -1063,3 +1063,42 @@ integrações ou produção. Não registrar segredos neste documento.
   (b) a lista de categorias válidas está duplicada à mão entre este backend e
   `ContinuidadeCamila.jsx` (repo `am-plataforma-web`) — funciona porque são só 4 categorias
   hoje, mas é risco de dessincronia se qualquer um dos dois lados mudar sozinho.
+
+### 21/09/2026 (tarde) — Incidente: GOOGLE_REFRESH_TOKEN morto há 11 dias, backup silenciosamente não chegava ao Drive
+
+- Ao investigar `[Onboarding/Drive] Falha ao preparar pasta: invalid_grant` (aparecia em
+  todo teste ao vivo do dia), confirmado direto contra o Google que o `GOOGLE_REFRESH_TOKEN`
+  estava morto de verdade — não intermitente. O erro mais antigo registrado
+  (`onboardings_contrato.drive_sync_erro='invalid_grant'`) é de **10/09/2026**: quebrado há
+  pelo menos 11 dias antes da correção.
+- **Achado mais grave, encontrado no processo**: o worker de backup diário (`0 2 * * *`,
+  `src/workers/backup.worker.js`) usa a mesma credencial pra subir o dump do banco (`pg_dump`
+  + gzip) pro Google Drive — e capturava a falha de upload só com `console.error`, sem marcar
+  o job como falho no BullMQ nem apagar/manter o arquivo de forma sinalizada. Resultado real,
+  confirmado no histórico do BullMQ: os backups de 19, 20 e 21/09 apareciam como
+  "completados" — mas o `pg_dump` rodava, o upload falhava em silêncio, e o arquivo local era
+  apagado de qualquer jeito (`/tmp` não é persistente no Railway). Backup diário
+  provavelmente não chegou a lugar nenhum fora do próprio Postgres por pelo menos 11 dias,
+  sem nenhum sinal disso em lugar nenhum do sistema. Corrigido (commit `9aabe6b`, já
+  deployado): falha no upload agora relança o erro (job aparece como FALHOU de verdade) e
+  tenta alertar os masters por WhatsApp — só que **nenhum dos 5 masters ativos tem WhatsApp
+  cadastrado**, então o alerta (e o recurso já existente de "lembretes diários" de tarefas,
+  que provavelmente nunca funcionou pelo mesmo motivo) segue sem destinatário até alguém
+  cadastrar pelo menos um número.
+- **Resolvido**: usuário reautorizou a conta Google (script de uso único
+  `obter-novo-refresh-token.mjs`, commit `fe4e387` — gera a URL de consentimento, escuta o
+  callback local, imprime o novo `GOOGLE_REFRESH_TOKEN`). Variável atualizada no Railway via
+  `railway variable set --stdin`, redeploy automático confirmado. Testado direto com a
+  configuração real do Railway (`railway run`): token renova, pasta raiz do Drive acessível.
+- Reprocessados os 4 onboardings reais que tinham ficado com `drive_sync_status='erro'`
+  durante a janela quebrada (Francisco Acioly de Lucena Neto, Marcela Ribeiro, Gabriela Borba
+  de Lima, Hudison Cleber de Brito Ferreira) — cada um ganhou pasta + as 5 subpastas padrão no
+  Drive, script de uso único (não commitado, apagado depois de rodar). O 5º caso da janela
+  (Luã Henrique Nóbrega Lopes) foi **excluído de propósito** — onboarding dele já está
+  `cancelado` desde a reconciliação de 20/09 (nunca assinou), não faz sentido criar pasta.
+  Conferido no fim: 0 onboardings ativos sem pasta no Drive.
+- **Pendente de decisão da equipe**: cadastrar o número de WhatsApp de pelo menos 1 usuário
+  `perfil='master'` — sem isso, tanto o alerta de falha de backup quanto os lembretes diários
+  de tarefas continuam mudos. Também vale checar diretamente no painel do Railway se o
+  Postgres tem snapshot/backup próprio da plataforma (independente deste worker), como rede
+  de segurança adicional.
