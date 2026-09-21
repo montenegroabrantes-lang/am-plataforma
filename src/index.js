@@ -505,6 +505,18 @@ async function iniciar() {
     // como hoje. Sem configuração nenhuma, o fallback (1b) usa o responsável do processo anterior.
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS responsavel_reprotocolo_id UUID REFERENCES usuarios(id) ON DELETE SET NULL`).catch(() => {});
     await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS prazo_reprotocolo_dias_uteis INTEGER NOT NULL DEFAULT 10`).catch(() => {});
+
+    // Checklist por tese (21/09/2026) — lista de categorias de documento exigidas por
+    // produto, pra Fase 5 (ficha única) mostrar o que falta coletar. Fail-open por design:
+    // NULL/vazio não bloqueia nada, é só ausência de configuração — só FGTS já nasce
+    // preenchido, reaproveitando as 4 categorias que a Camila já usa há tempos
+    // (identidade/cpf/residencia/contracheque, ver campos em ContinuidadeCamila.jsx). Demais
+    // teses ficam sem checklist até alguém configurar manualmente via PATCH /api/produtos/:id.
+    await db.query(`ALTER TABLE produtos ADD COLUMN IF NOT EXISTS documentos_exigidos JSONB`).catch(() => {});
+    await db.query(`
+      UPDATE produtos SET documentos_exigidos = '["identidade","cpf","residencia","contracheque"]'::jsonb
+       WHERE nome = 'FGTS' AND documentos_exigidos IS NULL
+    `).catch(() => {});
     // Backfill dos ciclos criados antes do subtipo existir: o texto antigo "Período a solicitar"
     // trazia uma janela futura errada; o início real é o mês seguinte ao fim do último processo.
     await db.query(`

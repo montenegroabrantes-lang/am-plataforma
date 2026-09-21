@@ -45,11 +45,22 @@ produtosRouter.post('/', apenasMaster, async (req, res) => {
   res.status(201).json({ ok: true, produto: novo });
 });
 
+// Categorias de documento reconhecidas pelo checklist por tese — mesmo vocabulário que a
+// Camila já usa em ContinuidadeCamila.jsx (campos), pra não inventar um segundo dicionário.
+const CATEGORIAS_DOCUMENTO_VALIDAS = ['identidade', 'cpf', 'residencia', 'contracheque'];
+
 // PATCH /api/produtos/:id — atualizar produto
 produtosRouter.patch('/:id', apenasMaster, async (req, res) => {
   const campos = ['nome', 'polos_passivos_padrao', 'codigo_assunto_pje',
                   'tribunais_padrao', 'cargos_elegiveis', 'orgaos_elegiveis', 'ativo', 'intervalo_meses',
-                  'honorarios_padrao', 'descricao', 'responsavel_reprotocolo_id', 'prazo_reprotocolo_dias_uteis'];
+                  'honorarios_padrao', 'descricao', 'responsavel_reprotocolo_id', 'prazo_reprotocolo_dias_uteis',
+                  'documentos_exigidos'];
+  if (req.body.documentos_exigidos !== undefined && req.body.documentos_exigidos !== null) {
+    if (!Array.isArray(req.body.documentos_exigidos) || req.body.documentos_exigidos.some(c => !CATEGORIAS_DOCUMENTO_VALIDAS.includes(c))) {
+      return res.status(400).json({ ok: false, erro: `documentos_exigidos deve ser uma lista com valores entre: ${CATEGORIAS_DOCUMENTO_VALIDAS.join(', ')}.` });
+    }
+    req.body.documentos_exigidos = [...new Set(req.body.documentos_exigidos)];
+  }
   if (req.body.responsavel_reprotocolo_id) {
     if (!uuidValido(req.body.responsavel_reprotocolo_id)) {
       return res.status(400).json({ ok: false, erro: 'Responsável de re-protocolo inválido.' });
@@ -72,8 +83,16 @@ produtosRouter.patch('/:id', apenasMaster, async (req, res) => {
       // Só o responsável de re-protocolo é opcional o suficiente pra aceitar string vazia
       // como "limpar seleção"; nome/ativo/etc. são NOT NULL e não podem virar null aqui.
       const valor = campo === 'responsavel_reprotocolo_id' && req.body[campo] === '' ? null : req.body[campo];
-      params.push(valor);
-      updates.push(`${campo} = $${params.length}`);
+      // documentos_exigidos é JSONB: o driver serializa array/objeto JS como literal de ARRAY
+      // do Postgres (ex.: {a,b}), não como JSON — precisa de JSON.stringify + cast explícito,
+      // diferente das colunas TEXT[] deste mesmo loop (essas sim querem o array cru).
+      if (campo === 'documentos_exigidos') {
+        params.push(valor === null ? null : JSON.stringify(valor));
+        updates.push(`${campo} = $${params.length}::jsonb`);
+      } else {
+        params.push(valor);
+        updates.push(`${campo} = $${params.length}`);
+      }
     }
   }
 
