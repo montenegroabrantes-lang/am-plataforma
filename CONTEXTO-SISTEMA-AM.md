@@ -1,11 +1,16 @@
 # Contexto permanente — Sistema AM
 
-**Última atualização:** 14/09/2026
+**Última atualização:** 21/09/2026
 **Finalidade:** continuidade segura do desenvolvimento em outros chats e sessões.
 
 Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
 qualquer alteração e atualizado depois de mudanças materiais no código, banco,
 integrações ou produção. Não registrar segredos neste documento.
+
+> **PENDENTE — autorizado por Ramon em 21/09/2026 pra executar na mesma noite:** o restante da
+> Fase 6 do cronograma de resiliência (auditoria transacional, migrações versionadas,
+> indicadores operacionais — ver "Registro de alterações" no fim deste arquivo pra detalhe e
+> ordem sugerida). Só a fatia 1 (retry automático de sync com o Drive) foi feita até agora.
 
 ## Estrutura do sistema
 
