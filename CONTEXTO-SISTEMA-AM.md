@@ -1097,8 +1097,15 @@ integrações ou produção. Não registrar segredos neste documento.
   (Luã Henrique Nóbrega Lopes) foi **excluído de propósito** — onboarding dele já está
   `cancelado` desde a reconciliação de 20/09 (nunca assinou), não faz sentido criar pasta.
   Conferido no fim: 0 onboardings ativos sem pasta no Drive.
-- **Pendente de decisão da equipe**: cadastrar o número de WhatsApp de pelo menos 1 usuário
-  `perfil='master'` — sem isso, tanto o alerta de falha de backup quanto os lembretes diários
-  de tarefas continuam mudos. Também vale checar diretamente no painel do Railway se o
-  Postgres tem snapshot/backup próprio da plataforma (independente deste worker), como rede
-  de segurança adicional.
+- **Resolvido no mesmo dia**: WhatsApp cadastrado pra 3 dos 5 masters (Ramona `83986163288`,
+  Luciano Montenegro `83981401515`, João Gomes `81993368440`) — Caio e a conta técnica
+  "Integração Claude" ficaram de fora por decisão do usuário ("depois"). E o achado mais
+  sério: `railway postgres pitr status` mostrou PITR e alta disponibilidade **desligados** —
+  o Postgres de produção não tinha NENHUMA proteção própria da Railway, só o worker de backup
+  (que ficou quebrado 11 dias sem avisar ninguém, ver acima). Ativado via
+  `railway postgres pitr enable --service postgres` — confirmado `status: enabled`,
+  `bucket wired: yes`. Sem taxa própria (cobra por armazenamento do bucket + egress, ambos
+  comprimidos com zstd; banco de escritório de advocacia com pouca atividade arquiva pouco).
+  Janela de restauração: últimos ~4 backups completos, algo em torno de 4 semanas. Agora o
+  banco tem 2 camadas independentes de proteção (PITR nativo da Railway + o worker de backup
+  pro Drive, já corrigido pra avisar de verdade se falhar).
