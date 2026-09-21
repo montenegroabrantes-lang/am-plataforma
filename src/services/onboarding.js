@@ -551,13 +551,29 @@ export async function concluirCadastroOnboarding({ onboardingId, dados, usuario,
         [op.id]
       );
       const onboardingTask = onboardingTaskResult.rows[0];
+      // Fase 1.7 — mesma ressalva de criarOnboardingContrato: com a uq_tarefa_protocolo_ativa
+      // relaxada para incluir cliente_vinculo_id, um cliente com 2 vínculos elegíveis ao mesmo
+      // produto pode legitimamente ter 2 tarefas 'protocolar' abertas. Sem checar vínculo aqui,
+      // o LIMIT 1 podia "fundir" a tarefa desta conclusão com a tarefa de um OUTRO vínculo,
+      // cancelando esta e roubando a do vizinho.
+      const vinculoAuto = await vinculoUnicoAtivo(cliente.id, pg);
       const legadoResult = await pg.query(
-        `SELECT id FROM tarefas WHERE cliente_produto_id=$1 AND tipo='protocolar'
+        `SELECT id, cliente_vinculo_id FROM tarefas WHERE cliente_produto_id=$1 AND tipo='protocolar'
           AND status NOT IN ('concluida','cancelada') AND id<>COALESCE($2::uuid,'00000000-0000-0000-0000-000000000000')
-          LIMIT 1`,
+          ORDER BY criado_em ASC LIMIT 1`,
         [cpId, onboardingTask?.id || null]
       );
-      const legado = legadoResult.rows[0];
+      const legadoCandidato = legadoResult.rows[0];
+      const legadoVinculoIgual = legadoCandidato && vinculoAuto?.id && legadoCandidato.cliente_vinculo_id === vinculoAuto.id;
+      const legadoVinculoDivergente = legadoCandidato && vinculoAuto?.id && legadoCandidato.cliente_vinculo_id
+        && legadoCandidato.cliente_vinculo_id !== vinculoAuto.id;
+      // Vínculo confirmado igual: sempre funde (é a mesma demanda). Vínculo confirmado
+      // diferente: nunca funde. Vínculo ainda ambíguo (0 ou 2+ ativos, dos dois lados ou de
+      // um só): só funde se esta conclusão NÃO tiver tarefa própria em disputa — havendo
+      // onboardingTask, é mais seguro preservá-la do que arriscar fundir com a tarefa errada.
+      const legadoBloqueado = legadoCandidato && !legadoVinculoIgual
+        && (legadoVinculoDivergente || onboardingTask);
+      const legado = legadoBloqueado ? null : legadoCandidato;
       if (legado) {
         if (onboardingTask) {
           await pg.query(
