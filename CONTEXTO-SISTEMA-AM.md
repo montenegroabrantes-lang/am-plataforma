@@ -897,3 +897,37 @@ integrações ou produção. Não registrar segredos neste documento.
   os 3 ramos do guard de `concluirCadastroOnboarding` (igual/divergente/ambíguo). Limpeza
   confirmada em todos os testes. `npm test`: 58/58. Commits `01c109d` e `41af708`, deployados e
   confirmados `RUNNING` no Railway.
+
+### 21/09/2026 (noite) — Fase 4, fatia 1 (tabela `demandas`)
+
+- Nova tabela `demandas (cliente_id, produto_id, cliente_vinculo_id, periodo_inicio,
+  periodo_fim, status, processo_id)` — passa a ser a identidade explícita da demanda jurídica
+  por trás de uma tarefa de protocolo, em vez de inferida por convenção a partir de campos
+  espalhados na própria tarefa (`cliente_produto_id`/`cliente_vinculo_id`/`ciclo_inicio`). Base
+  da Fase 5 (ficha única); evita remendar, um por um, cada ponto que hoje decide "essa tarefa é
+  a mesma demanda de outra?" — como a Fase 1.7 teve que fazer em 2 lugares diferentes.
+- Índice único `uq_demandas_identidade` usa a mesma lógica da Fase 1.7 (NULL nunca é igual a
+  NULL num índice único do Postgres): bloqueia duplicata exata só quando vínculo e período já
+  são conhecidos; demandas com vínculo ambíguo ficam isoladas, nunca fundidas por engano.
+  Coluna `tarefas.demanda_id` + backfill idempotente (processado tarefa por tarefa, não em lote
+  via SQL, pra não colapsar 2 tarefas de vínculo ambíguo na mesma demanda). Aplicado em
+  produção: 372 tarefas vinculadas, 0 pendentes ao final, spot-check sem divergências.
+- Novo helper compartilhado `src/utils/demandas.js` (`resolverDemanda`) — usado por
+  `criarOnboardingContrato`, que agora grava `demanda_id` em toda tarefa 'protocolar' que cria
+  ou adota.
+- Achado ao testar: a checagem de adoção da Fase 1.7 (`onboarding_id IS NULL OR
+  onboarding_id=$2`) era estrita demais — quando o vínculo de um 2º fechamento era CONFIRMADO
+  IGUAL ao de uma tarefa de OUTRO onboarding, ela não era mais adotada por pertencer a outro
+  onboarding_id, e a nova tarefa batia no índice único (produto+vínculo) e sumia num
+  `ON CONFLICT DO NOTHING` silencioso — o mesmo tipo de perda que a Fase 1.7 existe pra evitar,
+  disfarçado atrás de uma condição mais rara. Corrigido: a adoção agora também aceita uma
+  tarefa de outro onboarding quando o vínculo bate de fato.
+- Testado ao vivo contra produção: vínculo ambíguo entre 2 onboardings continua gerando 2
+  tarefas distintas (não regrediu); vínculo confirmado igual entre 2 onboardings agora funde
+  corretamente na mesma tarefa e mesma demanda; vínculo confirmado diferente nunca funde
+  (testado por um agente revisor com cenário próprio). Limpeza confirmada em todos os testes.
+  `npm test`: 58/58. Commit `b7f4b79`, deployado e confirmado `RUNNING` no Railway.
+- Pendente pra continuar a Fase 4/5: ligar `demanda_id` também em `concluirCadastroOnboarding`
+  e em `ciclosRecorrentes.js`; preencher `periodo_inicio`/`periodo_fim` de verdade (hoje sempre
+  `NULL` nas demandas criadas por `criarOnboardingContrato`); e só então construir a ficha
+  única (Fase 5) sobre `demandas` em vez de inferir tudo via `tarefas`.
