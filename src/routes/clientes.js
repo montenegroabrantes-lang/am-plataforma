@@ -91,7 +91,7 @@ clientesRouter.get('/:id', async (req, res) => {
     catch (e) { console.warn(`[Clientes] Falha ao decifrar anotações ${req.params.id}:`, e.message); }
   }
 
-  const [processos, documentos, teses, vinculos] = await Promise.all([
+  const [processos, documentos, teses, vinculos, demandas] = await Promise.all([
     db.query(
       `SELECT id, numero, tribunal, status, produto_id FROM processos WHERE cliente_id = $1`,
       [req.params.id]
@@ -102,7 +102,7 @@ clientesRouter.get('/:id', async (req, res) => {
     ),
     db.query(
       `SELECT cp.id, cp.honorarios_pct, cp.criado_em,
-              pr.id AS produto_id, pr.nome AS produto_nome, pr.polo_passivo_padrao
+              pr.id AS produto_id, pr.nome AS produto_nome, pr.polo_passivo_padrao, pr.documentos_exigidos
        FROM cliente_produtos cp
        JOIN produtos pr ON pr.id = cp.produto_id
        WHERE cp.cliente_id = $1
@@ -113,9 +113,27 @@ clientesRouter.get('/:id', async (req, res) => {
       `SELECT * FROM cliente_vinculos WHERE cliente_id = $1 ORDER BY ordem`,
       [req.params.id]
     ),
+    // Fase 5 (ficha única) — 1 linha por demanda (cliente+produto+vínculo+período, Fase 4),
+    // com a tarefa mais recente ligada a ela. LATERAL porque uma demanda pode, em tese, ter
+    // mais de uma tarefa ao longo do tempo (histórico); só a mais recente importa pra ficha.
+    db.query(
+      `SELECT d.id, d.produto_id, d.cliente_vinculo_id, d.periodo_inicio, d.periodo_fim, d.status,
+              cv.cargo AS vinculo_cargo, cv.orgao AS vinculo_orgao, cv.polo_passivo AS vinculo_polo_passivo,
+              t.id AS tarefa_id, t.status AS tarefa_status, t.urgencia AS tarefa_urgencia,
+              t.descricao AS tarefa_descricao, t.prazo_data AS tarefa_prazo_data
+         FROM demandas d
+         LEFT JOIN cliente_vinculos cv ON cv.id = d.cliente_vinculo_id
+         LEFT JOIN LATERAL (
+           SELECT id, status, urgencia, descricao, prazo_data FROM tarefas
+            WHERE demanda_id = d.id ORDER BY criado_em DESC LIMIT 1
+         ) t ON true
+        WHERE d.cliente_id = $1
+        ORDER BY d.criado_em DESC`,
+      [req.params.id]
+    ),
   ]);
 
-  res.json({ ok: true, cliente, processos, documentos, teses, vinculos });
+  res.json({ ok: true, cliente, processos, documentos, teses, vinculos, demandas });
 });
 
 // POST /api/clientes/:id/criar-tarefas-protocolo
