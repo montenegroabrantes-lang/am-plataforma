@@ -6,6 +6,7 @@ import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { dataCalendarioValida } from '../utils/diasUteis.js';
 import { vinculoUnicoAtivo } from '../utils/vinculos.js';
+import { resolverTribunalCnj } from '../utils/cnj.js';
 
 export const tarefasRouter = Router();
 
@@ -583,9 +584,19 @@ tarefasRouter.patch('/lote', apenasMaster, async (req, res) => {
   const result = await db.query(
     `UPDATE tarefas SET ${updates.join(', ')}
       WHERE id=ANY($${params.length}::uuid[]) AND status NOT IN ('concluida','cancelada','bloqueada')
-      RETURNING id`,
+      RETURNING id, tipo, onboarding_id`,
     params
   );
+
+  // Mesma sincronização do responsável no onboarding feita em /:id/responsavel — em lote
+  // também não pode deixar quem recebeu a tarefa sem autorização de agir no cadastro.
+  if (atribuido_a) {
+    const cadastro = result.filter(r => r.tipo === 'cadastro_cliente' && r.onboarding_id).map(r => r.onboarding_id);
+    const protocolo = result.filter(r => r.tipo === 'protocolar' && r.onboarding_id).map(r => r.onboarding_id);
+    if (cadastro.length) await db.execute(`UPDATE onboardings_contrato SET responsavel_cadastro_id=$1 WHERE id=ANY($2::uuid[])`, [atribuido_a, cadastro]);
+    if (protocolo.length) await db.execute(`UPDATE onboardings_contrato SET responsavel_protocolo_id=$1 WHERE id=ANY($2::uuid[])`, [atribuido_a, protocolo]);
+  }
+
   await registrarAuditoria({
     usuarioId: req.user.id, acao: 'editar_lote', entidade: 'tarefa',
     valorDepois: { ids: result.map(r => r.id), atribuido_a, prazo_data, precisa_triagem, status, justificativa },
@@ -724,20 +735,24 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
   const poloFinal = vinculoEscolhido?.polo_passivo || tarefa.cliente_polo_passivo || null;
   const clienteVinculoId = vinculoEscolhido?.id || tarefa.cliente_vinculo_id || null;
 
-  // Detecta tribunal pelo segmento CNJ (NNNNNNN-DD.AAAA.J.TT.OOOO)
+  // Detecta tribunal pelo par de segmentos do CNJ (NNNNNNN-DD.AAAA.J.TT.OOOO), pela tabela
+  // oficial da Res. CNJ 65/2008 — nunca presume TJPB nem TRF5 pra tudo que não é reconhecido.
   const segmentos = numeroLimpo.split(/[-.]/).filter(Boolean);
   // posições: 0=7dig, 1=2dig, 2=ano, 3=J, 4=TT, 5=OOOO
   const J  = segmentos[3];
   const TT = segmentos[4];
-  let tribunal = 'TJPB', sistema = 'pje';
-  if (J === '4') { tribunal = 'TRF5'; sistema = 'pje'; }
-  else if (J === '8' && TT === '15') { tribunal = 'TJPB'; sistema = 'pje'; }
+  const TRIBUNAL_POR_SEGMENTO = resolverTribunalCnj(J, TT);
+  if (!TRIBUNAL_POR_SEGMENTO) {
+    return res.status(400).json({ ok: false, erro: `Não foi possível identificar o tribunal pelo número informado (segmento ${J}.${TT}). Confira o número CNJ.` });
+  }
+  const { tribunal, sistema } = TRIBUNAL_POR_SEGMENTO;
 
   const masterId = req.user.perfil === 'master' ? req.user.id : req.user.master_id;
 
   const pgClient = await db.pool.connect();
   let processoId;
   let jaConcluida = false;
+  let cnjDeOutroAtendimento = false;
   try {
     await pgClient.query('BEGIN');
 
@@ -752,10 +767,16 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
       jaConcluida = true;
     } else {
 
-    // Verifica duplicidade
-    const existente = await pgClient.query('SELECT id FROM processos WHERE numero = $1', [numeroLimpo]);
-    if (existente.rows[0]) {
-      processoId = existente.rows[0].id;
+    // Verifica duplicidade — mas reaproveitar o ID só é seguro quando é o MESMO
+    // cliente e a MESMA tese. Um CNJ colado errado (de outro atendimento) nunca pode
+    // associar a tarefa a autos de terceiro, mesmo que o número já exista na base.
+    const existente = await pgClient.query('SELECT id, cliente_id, produto_id FROM processos WHERE numero = $1', [numeroLimpo]);
+    if (existente.rows[0] && (existente.rows[0].cliente_id !== tarefa.cliente_id || existente.rows[0].produto_id !== tarefa.produto_id)) {
+      await pgClient.query('ROLLBACK');
+      cnjDeOutroAtendimento = true;
+    } else if (existente.rows[0]) {
+      const p = existente.rows[0];
+      processoId = p.id;
       // Copia o polo escolhido também para um processo pré-existente, sem sobrescrever
       // um valor que já tenha sido preenchido por outra fonte (ex: sincronização do tribunal).
       if (poloFinal) {
@@ -776,28 +797,30 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
       processoId = r.rows[0].id;
     }
 
-    await pgClient.query(
-      `UPDATE tarefas SET status='concluida', numero_processo_inserido=$1,
-       processo_id=$2, concluida_em=NOW(), cliente_vinculo_id=$4 WHERE id=$3`,
-      [numeroLimpo, processoId, req.params.id, clienteVinculoId]
-    );
-
-    if (tarefa.onboarding_id) {
-      const restantes = await pgClient.query(
-        `SELECT COUNT(*)::int total FROM tarefas
-          WHERE onboarding_id=$1 AND tipo='protocolar' AND id<>$2
-            AND status NOT IN ('concluida','cancelada')`,
-        [tarefa.onboarding_id, req.params.id]
+    if (!cnjDeOutroAtendimento) {
+      await pgClient.query(
+        `UPDATE tarefas SET status='concluida', numero_processo_inserido=$1,
+         processo_id=$2, concluida_em=NOW(), cliente_vinculo_id=$4 WHERE id=$3`,
+        [numeroLimpo, processoId, req.params.id, clienteVinculoId]
       );
-      if (restantes.rows[0].total === 0) {
-        await pgClient.query(
-          `UPDATE onboardings_contrato SET status='concluido', atualizado_em=NOW() WHERE id=$1`,
-          [tarefa.onboarding_id]
-        );
-      }
-    }
 
-    await pgClient.query('COMMIT');
+      if (tarefa.onboarding_id) {
+        const restantes = await pgClient.query(
+          `SELECT COUNT(*)::int total FROM tarefas
+            WHERE onboarding_id=$1 AND tipo='protocolar' AND id<>$2
+              AND status NOT IN ('concluida','cancelada')`,
+          [tarefa.onboarding_id, req.params.id]
+        );
+        if (restantes.rows[0].total === 0) {
+          await pgClient.query(
+            `UPDATE onboardings_contrato SET status='concluido', atualizado_em=NOW() WHERE id=$1`,
+            [tarefa.onboarding_id]
+          );
+        }
+      }
+
+      await pgClient.query('COMMIT');
+    }
     }
   } catch (e) {
     await pgClient.query('ROLLBACK').catch(() => {});
@@ -808,6 +831,12 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
 
   if (jaConcluida) {
     return res.status(409).json({ ok: false, erro: 'Tarefa já concluída.' });
+  }
+  if (cnjDeOutroAtendimento) {
+    return res.status(409).json({
+      ok: false,
+      erro: 'Este número CNJ já está cadastrado para outro cliente ou outra tese. Confira o número antes de protocolar.',
+    });
   }
 
   // Enfileira sync (fora da transação)
@@ -954,7 +983,7 @@ tarefasRouter.patch('/:id/responsavel', apenasMaster, async (req, res) => {
     const responsavelAtivo = await db.queryOne(`SELECT id FROM usuarios WHERE id=$1 AND ativo=true`, [atribuido_a]);
     if (!responsavelAtivo) return res.status(400).json({ ok: false, erro: 'O responsável selecionado não está ativo.' });
   }
-  const antes = await db.queryOne(`SELECT atribuido_a,prazo_data FROM tarefas WHERE id=$1`, [req.params.id]);
+  const antes = await db.queryOne(`SELECT atribuido_a,prazo_data,tipo,onboarding_id FROM tarefas WHERE id=$1`, [req.params.id]);
   if (!antes) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
   const [tarefa] = await db.query(
     `UPDATE tarefas SET atribuido_a = $1, prazo_data = COALESCE($2::date, prazo_data),
@@ -965,6 +994,18 @@ tarefasRouter.patch('/:id/responsavel', apenasMaster, async (req, res) => {
      WHERE id = $3 RETURNING *`,
     [atribuido_a || null, prazo_data || null, req.params.id]
   );
+
+  // Quem executa a tarefa de cadastro/protocolo precisa ser a mesma pessoa autorizada a agir
+  // no onboarding (onboardings.js/onboarding.js checam responsavel_cadastro_id/protocolo_id) —
+  // sem isso, reatribuir a tarefa dava a alguém uma tarefa que ele não conseguia abrir/concluir.
+  if (atribuido_a && antes.onboarding_id) {
+    const campo = antes.tipo === 'cadastro_cliente' ? 'responsavel_cadastro_id'
+                : antes.tipo === 'protocolar' ? 'responsavel_protocolo_id'
+                : null;
+    if (campo) {
+      await db.execute(`UPDATE onboardings_contrato SET ${campo} = $1 WHERE id = $2`, [atribuido_a, antes.onboarding_id]);
+    }
+  }
 
   // Mantém o evento do Calendar em dia quando o prazo muda
   if (prazo_data && tarefa) {
@@ -1051,6 +1092,12 @@ tarefasRouter.patch('/:id/status', async (req, res, next) => {
     };
     if (!transicoes[tarefa.status]?.includes(status)) {
       return res.status(409).json({ ok: false, erro: `A transição de ${tarefa.status} para ${status} não é permitida.` });
+    }
+    // 'bloqueada' significa "cadastro do cliente ainda não concluído" — o desbloqueio real
+    // (em onboarding.js) sempre grava cliente_id junto com o status. Sem essa checagem, esta
+    // rota genérica liberava a tarefa mesmo sem cadastro nenhum por trás.
+    if (tarefa.status === 'bloqueada' && status === 'pendente' && !tarefa.cliente_id) {
+      return res.status(409).json({ ok: false, erro: 'Esta tarefa segue bloqueada até o cadastro do cliente ser concluído.' });
     }
 
     if (status === 'cancelada' && !justificativa_cancelamento?.trim()) {

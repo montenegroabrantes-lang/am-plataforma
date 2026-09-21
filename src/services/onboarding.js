@@ -368,20 +368,38 @@ export async function marcarSincronizacaoCamila(onboardingId, ok, mensagem = nul
 export async function cancelarOnboardingPendente(contactId, usuarioId, ip) {
   const onboarding = await buscarOnboardingPorContato(contactId);
   if (!onboarding) return null;
-  if (onboarding.status !== 'cadastro_pendente' || onboarding.cliente_id) {
-    const erro = new Error('O onboarding já avançou. Cancele as tarefas e vínculos pelo fluxo operacional antes de desfazer o fechamento.');
-    erro.status = 409;
-    throw erro;
+
+  const pg = await db.pool.connect();
+  try {
+    await pg.query('BEGIN');
+    // Trava e revalida sob a trava: sem isso, dois "desfazer" concorrentes (ou um
+    // "desfazer" cruzando com o cadastro sendo concluído) podiam passar os dois pela
+    // checagem e cancelar um onboarding que já tinha avançado.
+    const trava = await pg.query(`SELECT status, cliente_id FROM onboardings_contrato WHERE id=$1 FOR UPDATE`, [onboarding.id]);
+    const atual = trava.rows[0];
+    if (!atual || atual.status !== 'cadastro_pendente' || atual.cliente_id) {
+      await pg.query('ROLLBACK');
+      const erro = new Error('O onboarding já avançou. Cancele as tarefas e vínculos pelo fluxo operacional antes de desfazer o fechamento.');
+      erro.status = 409;
+      throw erro;
+    }
+    await pg.query(
+      `UPDATE onboardings_contrato SET status='cancelado', atualizado_em=NOW() WHERE id=$1`,
+      [onboarding.id]
+    );
+    await pg.query(
+      `UPDATE tarefas SET status='cancelada', justificativa_cancelamento='Fechamento desfeito'
+        WHERE onboarding_id=$1 AND status NOT IN ('concluida','cancelada')`,
+      [onboarding.id]
+    );
+    await pg.query('COMMIT');
+  } catch (e) {
+    await pg.query('ROLLBACK').catch(() => {});
+    throw e;
+  } finally {
+    pg.release();
   }
-  await db.execute(
-    `UPDATE onboardings_contrato SET status='cancelado', atualizado_em=NOW() WHERE id=$1`,
-    [onboarding.id]
-  );
-  await db.execute(
-    `UPDATE tarefas SET status='cancelada', justificativa_cancelamento='Fechamento desfeito'
-      WHERE onboarding_id=$1 AND status NOT IN ('concluida','cancelada')`,
-    [onboarding.id]
-  );
+
   await registrarAuditoria({
     usuarioId, acao: 'cancelar', entidade: 'onboarding_contrato', entidadeId: onboarding.id,
     valorAntes: { status: onboarding.status }, valorDepois: { status: 'cancelado' }, ip,

@@ -760,3 +760,29 @@ integrações ou produção. Não registrar segredos neste documento.
   é item pendente da Fase 1/2 do cronograma, não implementada ainda.
 - Cronograma completo: `CRONOGRAMA-EXECUCAO-AM-2026-09-20.md` (fora do repositório, pasta de
   análise). Fases 1-7 seguem pendentes.
+
+### 20/09/2026 — Fase 1 do cronograma (integridade imediata) — parcial
+
+- **CNJ de outro atendimento não é mais reaproveitado** (`tarefas.js`, `concluir-com-numero`):
+  ao encontrar um processo já cadastrado com o mesmo número, agora só reutiliza o ID se for
+  do MESMO cliente e da MESMA tese; caso contrário, 409 "já está cadastrado para outro
+  cliente ou outra tese". Testado contra dado real (processo + tarefa de clientes diferentes).
+- **Tribunal resolvido pela tabela oficial do CNJ** (novo `src/utils/cnj.js`,
+  `resolverTribunalCnj`): os 27 TJs (Res. CNJ 65/2008) e os 6 TRFs, não mais só
+  TJPB/TRF5 com tudo mais caindo em TJPB por padrão. Combinação não reconhecida → 400 pedindo
+  conferência do número, em vez de inventar destino.
+- **Reatribuir tarefa de cadastro/protocolo agora sincroniza o responsável no onboarding**
+  (`PATCH /:id/responsavel` e `/lote`): sem isso, quem recebia a tarefa não conseguia abrir o
+  cadastro nem concluir o protocolo (a autorização em `onboardings.js`/`onboarding.js` olha
+  `responsavel_cadastro_id`/`responsavel_protocolo_id`, não `tarefas.atribuido_a`).
+- **`bloqueada → pendente` na rota genérica de status exige `cliente_id` preenchido** — antes
+  liberava a tarefa mesmo sem cadastro nenhum por trás; agora espelha a condição real que o
+  desbloqueio automático usa.
+- **`cancelarOnboardingPendente` agora é atômico e revalida sob trava** (`SELECT...FOR UPDATE`)
+  — antes eram 2 UPDATEs soltos, sem proteção contra corrida com o cadastro sendo concluído
+  ao mesmo tempo.
+- **Não feito nesta passada** (ficam pendentes do cronograma): 1.3 (identificador estável/
+  idempotência de criação de contrato manual/lead — precisa de decisão de produto, não só
+  código) e 1.7 (adoção de tarefa existente comparar vínculo/período, não só
+  `cliente_produto_id` — está entrelaçado com a lógica de ciclo/re-protocolo já em produção,
+  fica pra tratar junto da Fase 4, modelo de demanda).
