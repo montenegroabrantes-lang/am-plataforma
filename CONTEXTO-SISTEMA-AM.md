@@ -822,3 +822,16 @@ integrações ou produção. Não registrar segredos neste documento.
   real (Francisco Acioly), chamei a sincronização manual, confirmou volta pra 'sincronizado' e
   o `registrado_em` do lado da Camila ficou intacto (a chamada é idempotente — reconfirma
   'fechado', não duplica nem reseta a data).
+
+### 21/09/2026 — Fase 1.3 (idempotência de criação de contrato)
+
+- Nova coluna `onboardings_contrato.operacao_id UUID` (índice único parcial, permite múltiplos
+  NULL) — identificador gerado uma vez pelo formulário (`FormularioFechamento.js`,
+  `crypto.randomUUID()` por montagem) e reenviado em toda tentativa da mesma sessão de
+  fechamento. Fecha a lacuna que o dedupe por `camila_contact_id` não cobria: cadastro manual
+  sem lead gera um `contactId` sintético novo a cada chamada, então repetir depois de um
+  timeout criava um segundo onboarding — agora `criarOnboardingContrato` devolve o registro já
+  existente quando a `operacao_id` bate, antes mesmo de gerar um novo `contactId`.
+  `operacao_id` inválido (não-UUID) retorna 400, não erro cru do Postgres.
+  Testado de ponta a ponta contra produção: 2 chamadas com a mesma `operacao_id` → mesma linha;
+  só 1 registro no banco; limpo depois.

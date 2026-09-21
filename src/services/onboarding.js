@@ -119,6 +119,23 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
   const existente = await buscarOnboardingPorContato(contactId);
   if (existente && existente.status !== 'cancelado') return existente;
 
+  // Fase 1.3: identificador da OPERAÇÃO (não do contato) — gerado uma vez pelo formulário e
+  // reenviado em retries. Fecha a lacuna que a checagem por contactId não cobre: cadastro
+  // manual sem lead gera um contactId sintético NOVO a cada chamada (não dá pra deduplicar por
+  // ele), então repetir depois de um timeout, sem isto, criava um segundo onboarding.
+  if (onboarding.operacao_id && !uuidValido(onboarding.operacao_id)) {
+    const erro = new Error('Identificador de operação inválido.');
+    erro.status = 400;
+    throw erro;
+  }
+  if (onboarding.operacao_id) {
+    const porOperacao = await db.queryOne(
+      `SELECT * FROM onboardings_contrato WHERE operacao_id = $1`,
+      [onboarding.operacao_id]
+    );
+    if (porOperacao) return porOperacao;
+  }
+
   const prazoCadastro = onboarding.prazo_cadastro || somarDiasUteis(new Date(), 1);
   const prazoProtocolo = onboarding.prazo_protocolo || somarDiasUteis(new Date(), 3);
   const periodoSeguro = valor => {
@@ -196,8 +213,8 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
           vinculo_inicio_informado, vinculo_fim_informado, dados_origem, cadastro_rascunho,
           valor_fechado, contrato_assinado, contrato_data, status,
           responsavel_cadastro_id, responsavel_protocolo_id, prazo_cadastro, prazo_protocolo,
-          registrado_por, etapa_no_fechamento, fechado_em, atualizado_em)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,true,$13,$14,$15,$16,$17,$18,$19,$20,NOW(),NOW())
+          registrado_por, etapa_no_fechamento, operacao_id, fechado_em, atualizado_em)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12,true,$13,$14,$15,$16,$17,$18,$19,$20,$21,NOW(),NOW())
        ON CONFLICT (camila_contact_id) DO UPDATE SET
          estimativa_id = COALESCE(EXCLUDED.estimativa_id, onboardings_contrato.estimativa_id),
          cliente_id = COALESCE(EXCLUDED.cliente_id, onboardings_contrato.cliente_id),
@@ -224,6 +241,7 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
         onboarding.contrato_data, status,
         onboarding.responsavel_cadastro_id || null, onboarding.responsavel_protocolo_id,
         prazoCadastro, prazoProtocolo, usuarioId, onboarding.etapa_no_fechamento || null,
+        onboarding.operacao_id || null,
       ]
     );
     registro = onboardingResult.rows[0];

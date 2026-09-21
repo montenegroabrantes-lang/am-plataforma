@@ -413,6 +413,13 @@ async function iniciar() {
     // no AM" não é o mesmo que "peticionar no tribunal", e essa etapa deixa rastreável se o
     // contrato passou por assinatura confirmada ou foi ativado direto de outra etapa.
     await db.query(`ALTER TABLE onboardings_contrato ADD COLUMN IF NOT EXISTS etapa_no_fechamento TEXT`).catch(() => {});
+    // Fase 1.3 do cronograma (21/09/2026): identificador estável da operação de fechamento,
+    // gerado uma vez pelo formulário e reenviado em retries (timeout, duplo clique entre
+    // montagens do mesmo modal). Sem isso, repetir a chamada de cadastro MANUAL (sem lead —
+    // camila_contact_id é sintético e diferente a cada tentativa) criava um segundo onboarding.
+    // Único parcial (permite múltiplos NULL) porque nem toda chamada antiga/futura manda isso.
+    await db.query(`ALTER TABLE onboardings_contrato ADD COLUMN IF NOT EXISTS operacao_id UUID`).catch(() => {});
+    await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS uq_onboardings_operacao_id ON onboardings_contrato (operacao_id) WHERE operacao_id IS NOT NULL`).catch(() => {});
     // Rascunho do cadastro: permite interromper o atendimento sem perder dados já
     // conferidos. Só é lido pelos responsáveis do próprio onboarding.
     await db.query(`ALTER TABLE onboardings_contrato ADD COLUMN IF NOT EXISTS cadastro_rascunho JSONB NOT NULL DEFAULT '{}'::jsonb`).catch(() => {});
