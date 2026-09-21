@@ -151,7 +151,23 @@ export async function iniciarWorkers() {
     }
   );
 
-  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h), Alertas WhatsApp (08h), Ciclos Recorrentes (07h), Escalonamento de Véspera (8h30/16h) e Reprocessamento de Sync Camila (15/15min) iniciados.');
+  // Fase 6 (21/09/2026) — mesmo raciocínio do retry da Camila, pro Google Drive: achado real
+  // desta sessão, o GOOGLE_REFRESH_TOKEN ficou morto por 11 dias e nenhum cliente novo ganhava
+  // pasta, sem nenhum retry automático quando a credencial voltasse. 30 min (mais espaçado que
+  // a Camila) porque a API do Drive tem cota mais sensível e a urgência é menor — cadastro em
+  // si já é concluído sem a pasta, ela só chega depois.
+  await alertasQueue.add(
+    'reprocessar-sync-drive',
+    {},
+    {
+      repeat:           { pattern: '*/30 * * * *' },
+      jobId:            'reprocessar-sync-drive-recorrente',
+      removeOnComplete: 3,
+      removeOnFail:     3,
+    }
+  );
+
+  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h), Alertas WhatsApp (08h), Ciclos Recorrentes (07h), Escalonamento de Véspera (8h30/16h), Reprocessamento de Sync Camila (15/15min) e Reprocessamento de Sync Drive (30/30min) iniciados.');
 }
 
 // Dispara sync imediato de um processo — fila separada, não bloqueia pelo lote

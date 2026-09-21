@@ -13,7 +13,10 @@ function numeroPercentual(valor, padrao = 20) {
   return Number.isFinite(n) && n >= 0 && n <= 100 ? n : padrao;
 }
 
-async function sincronizarDriveCliente(cliente, onboardingId) {
+// Exportada pra Fase 6 (reprocessarSyncDrive.js) — retry em lote reaproveita a mesma lógica
+// em vez de duplicá-la, evitando o mesmo tipo de divergência que já aconteceu 1x nesta sessão
+// (script avulso de correção manual replicando esta função à mão).
+export async function sincronizarDriveCliente(cliente, onboardingId) {
   try {
     if (cliente.drive_pasta_id) {
       await db.execute(
