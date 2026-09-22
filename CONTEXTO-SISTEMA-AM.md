@@ -1211,3 +1211,72 @@ integrações ou produção. Não registrar segredos neste documento.
   duplicado, `dados_origem` nos dois caminhos). `npm test`: 58/58. Commits `4ab7668`,
   `7176aaf` (am-plataforma) e `64de81a` (am-plataforma-web), deployados e confirmados
   `RUNNING`.
+
+### 22/09/2026 — Re-auditoria dos achados de 12/08 + Fase 6 (parcial)
+
+- Verificação pedida pelo usuário: dos 6 achados críticos da auditoria de 12/08, só 1 tinha
+  causa contornada por acaso (masters ganharam WhatsApp em 21/09, então o alerta que dependia
+  disso passou a funcionar na prática) e 1 estava parcialmente mitigado (guarda contra tese
+  com 0 critérios já existia fora da função `corresponde()`, simétrica nos dois lugares que
+  a chamam — nada a corrigir aí). Os outros 4 seguiam intocados. Corrigidos, testados
+  (`npm test` 58/58) e publicados em produção:
+  1. `PATCH /usuarios/:id/senha` — qualquer master podia redefinir a senha de outro master,
+     inclusive escalar pro Master 01. Agora exige `pode_marcar_restrito` quando o alvo também
+     é master.
+  2. `PATCH /tarefas/:id/concluir-com-numero` — única rota de conclusão de tarefa sem
+     `apenasMaster` no arquivo inteiro. Alinhada.
+  3. Sync do DataJud (`sync.js`) — quando `consultarAtualizados()` falhava pra um tribunal
+     inteiro (API fora do ar), o catch só logava e seguia: nenhum processo daquele tribunal
+     tinha falha registrada, "API não respondeu" e "nada mudou" gravavam a mesma linha em
+     `sync_execucoes`. Agora cada processo do tribunal que falhou conta como falha real e
+     `registrarFalhaSyncProcesso()` é chamado — depois de 3 falhas seguidas o processo vira
+     `sync_status='erro_sync'`.
+  4. Logout (frontend) — botão "Sair" só limpava `localStorage`, nunca chamava
+     `POST /api/auth/logout` (que já existia no backend) — cookie httpOnly de sessão
+     continuava válido depois do "logout" em máquina compartilhada. Corrigido.
+  - **Deixados de fora, com justificativa**: `honorarios_pct=0` em 1073 vínculos
+    (`cliente_produtos`) — causa real é `produtos.js:139-140` usar `honorarios_padrao ?? 0`
+    quando o produto não tem percentual configurado; exige decisão de negócio (qual
+    percentual usar), não é bug de código — aguardando o usuário definir a regra.
+    `PATCH /processos/:id` e `/:id/urgente` seguem abertos a qualquer perfil — sem evidência
+    de que juniors não devam editar esses campos no dia a dia, não restringido por segurança.
+- **Fase 6 (resiliência), autorizada em 21/09, retomada e parcialmente concluída**:
+  1. **Auditoria transacional**: novo `db.transaction(fn)` em `src/db/index.js` (client
+     dedicado do pool, BEGIN/COMMIT/ROLLBACK, sempre libera o client mesmo se BEGIN falhar).
+     `registrarAuditoria()` ganhou 2º parâmetro opcional (a conexão) pra gravar dentro da
+     mesma transação da ação que audita — chamadas existentes continuam funcionando sem
+     mudança (default é o `db` de sempre). Aplicado no caso de maior risco real:
+     `DELETE /usuarios/:id` fazia 18 UPDATEs/DELETEs em paralelo + o DELETE final + a
+     auditoria, tudo fora de transação — agora cai tudo junto ou nada cai. Testado com um
+     `INSERT` forçado a falhar direto no banco de produção: confirmado que reverte de
+     verdade (0 linhas remanescentes). **Só esse ponto foi migrado** — os demais usos de
+     `registrarAuditoria()` espalhados pelo código continuam fora de transação; ficam pra
+     uma próxima passada.
+  2. **Indicadores operacionais**: novo `GET /api/dashboard/indicadores-operacionais` —
+     tempo médio/mediana/pior-caso entre `cliente_produtos.criado_em` (vínculo confirmado) e
+     a conclusão da tarefa `protocolar` correspondente (últimos 180 dias), e quantidade de
+     `demandas` abertas há 30/90/180 dias, por produto e lista das 50 mais antigas. Testado
+     com as queries rodando direto contra produção antes de subir a rota (33 amostras de
+     protocolo, média 6.1 dias; 387 demandas abertas na captura do dia). Cache Redis 5min.
+  3. **Migrações versionadas — só o ponto de partida, não o retrofit completo**: `iniciar()`
+     em `src/index.js` tem ~700 linhas e ~50 blocos de DDL/migração de dados acumulados desde
+     o início do projeto, sem registro de execução (só `IF NOT EXISTS` como guarda). Ao ler o
+     arquivo inteiro pra fazer esse item, ficou claro que não é um "mover 71 ALTER TABLE pra
+     outro lugar": tem migração de dado one-time com regra de negócio específica (ex.:
+     restauração de ciclos cancelados por engano, datada "a pedido do usuário em
+     19/09/2026"), blocos que chamam outros serviços no meio (`deletarEventoCalendar`), e
+     dependência de ordem real entre blocos (um cria tabela, o próximo já assume que ela
+     existe). Retrofitar isso tudo de uma vez, sem ambiente de staging, tem risco real de
+     corromper dado de caso jurídico de forma silenciosa — não é só "o boot quebra". Decisão:
+     **não reescrever os blocos existentes nesta sessão**. Em vez disso, criado
+     `src/db/migrations.js` com `garantirTabelaMigrations()` + `migrar(nome, fn)` — roda `fn`
+     uma única vez, registra em `schema_migrations`, só marca como feito se `fn` não lançar
+     (diferente do `.catch(() => {})` de antes, que engolia erro pra sempre). Conectado no
+     boot logo após a conexão com o banco, antes dos ~50 blocos antigos (que continuam
+     intocados). Testado: `migrar()` roda 1x e não repete (verificado com contador),
+     `schema_migrations` criada em produção, e **o boot inteiro rodado de ponta a ponta**
+     localmente contra o banco de produção (`node src/index.js` por 50s) — chegou até
+     `[BOOT] Inicialização concluída.` sem erro, todos os workers subiram normal. `npm test`:
+     58/58. **Toda migração nova a partir de agora deve usar `migrar()`** — os blocos
+     anteriores a 22/09/2026 só devem ser retrofitted numa sessão dedicada, um bloco de cada
+     vez, com o mesmo nível de verificação.

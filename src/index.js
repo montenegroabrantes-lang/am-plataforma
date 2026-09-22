@@ -7,6 +7,7 @@ import rateLimit          from 'express-rate-limit';
 import { db }             from './db/index.js';
 import { conectarRedis }  from './cache/redis.js';
 import { resolverDemanda } from './utils/demandas.js';
+import { garantirTabelaMigrations } from './db/migrations.js';
 
 // Rotas
 import { authRouter }          from './routes/auth.js';
@@ -177,6 +178,11 @@ async function iniciar() {
     await db.query('SELECT 1');
     dbJaConectouUmaVez = true;
     console.log('[DB] PostgreSQL conectado.');
+    await garantirTabelaMigrations();
+    // A partir daqui, migração NOVA usa migrar('AAAA_MM_DD_nome', async () => {...}) de
+    // ./db/migrations.js -- registra no schema_migrations o que já rodou. Os blocos abaixo
+    // (anteriores a 22/09/2026) não foram retrofitted por segurança: dependem de ordem entre
+    // si e alguns chamam outros serviços (ex.: Calendar) -- ver CONTEXTO-SISTEMA-AM.md, Fase 6.
     await db.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS senha_temporaria BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
     await db.query(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS data_conclusao_bloqueio DATE`).catch(() => {});
     await db.query(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS justificativa_cancelamento TEXT`).catch(() => {});
