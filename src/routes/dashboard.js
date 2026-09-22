@@ -235,3 +235,84 @@ dashboardRouter.get('/', async (req, res) => {
 
   res.json({ ok: true, ...payload });
 });
+
+const CACHE_KEY_INDICADORES = 'dashboard:indicadores-operacionais';
+
+// GET /api/dashboard/indicadores-operacionais — Fase 6 (resiliência): visibilidade
+// sobre gargalos que hoje só apareciam numa auditoria manual pontual — tempo entre
+// contrato e protocolo, e demandas abertas há muito tempo sem sair do lugar.
+dashboardRouter.get('/indicadores-operacionais', async (req, res) => {
+  try {
+    const cached = await redis.get(CACHE_KEY_INDICADORES);
+    if (cached) return res.json({ ok: true, ...JSON.parse(cached), _cache: true });
+  } catch { /* Redis indisponível — segue sem cache */ }
+
+  const [tempoContratoProtocolo, demandasPeriodo, demandasParadasPorProduto, demandasParadasLista] = await Promise.all([
+    // Contrato = cliente_produtos.criado_em (vínculo confirmado). Protocolo = conclusão
+    // da tarefa 'protocolar' ligada àquele vínculo. Só considera o caminho completo.
+    db.queryOne(`
+      SELECT
+        COUNT(*) AS amostras,
+        ROUND(AVG(EXTRACT(EPOCH FROM (t.concluida_em - cp.criado_em)) / 86400)::numeric, 1) AS media_dias,
+        ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (t.concluida_em - cp.criado_em)) / 86400))::numeric, 1) AS mediana_dias,
+        ROUND(MAX(EXTRACT(EPOCH FROM (t.concluida_em - cp.criado_em)) / 86400)::numeric, 1) AS pior_caso_dias
+      FROM tarefas t
+      JOIN cliente_produtos cp ON cp.id = t.cliente_produto_id
+      WHERE t.tipo = 'protocolar' AND t.status = 'concluida' AND t.concluida_em IS NOT NULL
+        AND t.concluida_em > cp.criado_em
+        AND t.concluida_em > NOW() - INTERVAL '180 days'
+    `),
+
+    // Faixas de idade das demandas ainda abertas — mostra se o estoque parado é
+    // coisa recente (operação normal) ou acumulado antigo (gargalo real).
+    db.queryOne(`
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'aberta')                                                AS total_abertas,
+        COUNT(*) FILTER (WHERE status = 'aberta' AND criado_em < NOW() - INTERVAL '30 days')      AS paradas_30d,
+        COUNT(*) FILTER (WHERE status = 'aberta' AND criado_em < NOW() - INTERVAL '90 days')      AS paradas_90d,
+        COUNT(*) FILTER (WHERE status = 'aberta' AND criado_em < NOW() - INTERVAL '180 days')     AS paradas_180d
+      FROM demandas
+    `),
+
+    db.query(`
+      SELECT pr.nome AS produto, COUNT(*) AS quantidade
+      FROM demandas d
+      JOIN produtos pr ON pr.id = d.produto_id
+      WHERE d.status = 'aberta' AND d.criado_em < NOW() - INTERVAL '30 days'
+      GROUP BY pr.nome
+      ORDER BY quantidade DESC
+      LIMIT 15
+    `),
+
+    db.query(`
+      SELECT d.id, cl.nome AS cliente, pr.nome AS produto, d.criado_em,
+             EXTRACT(DAY FROM NOW() - d.criado_em)::int AS dias_parada
+      FROM demandas d
+      JOIN clientes cl ON cl.id = d.cliente_id
+      JOIN produtos pr ON pr.id = d.produto_id
+      WHERE d.status = 'aberta' AND d.criado_em < NOW() - INTERVAL '90 days'
+      ORDER BY d.criado_em ASC
+      LIMIT 50
+    `),
+  ]);
+
+  const payload = {
+    tempo_contrato_protocolo: {
+      amostras:     Number(tempoContratoProtocolo?.amostras || 0),
+      media_dias:   tempoContratoProtocolo?.media_dias   != null ? Number(tempoContratoProtocolo.media_dias)   : null,
+      mediana_dias: tempoContratoProtocolo?.mediana_dias != null ? Number(tempoContratoProtocolo.mediana_dias) : null,
+      pior_caso_dias: tempoContratoProtocolo?.pior_caso_dias != null ? Number(tempoContratoProtocolo.pior_caso_dias) : null,
+    },
+    demandas_paradas: {
+      total_abertas: Number(demandasPeriodo?.total_abertas || 0),
+      paradas_30d:   Number(demandasPeriodo?.paradas_30d   || 0),
+      paradas_90d:   Number(demandasPeriodo?.paradas_90d   || 0),
+      paradas_180d:  Number(demandasPeriodo?.paradas_180d  || 0),
+      por_produto:   demandasParadasPorProduto.map(r => ({ produto: r.produto, quantidade: Number(r.quantidade) })),
+      mais_antigas:  demandasParadasLista,
+    },
+  };
+
+  redis.set(CACHE_KEY_INDICADORES, JSON.stringify(payload), 'EX', 300).catch(() => {});
+  res.json({ ok: true, ...payload });
+});
