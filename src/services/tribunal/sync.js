@@ -299,6 +299,13 @@ export async function sincronizarTodos() {
         console.log(`[Sync DataJud] ${tribunal}: ${atualizadosMap.size} processos com novidades no DataJud`);
       } catch (err) {
         console.warn(`[Sync DataJud] ${tribunal}: falha —`, err.message);
+        // A API caiu pra este tribunal inteiro -- isso não é "nada mudou", é falha real.
+        // Sem isto, sync_execucoes registrava 0 falhas e os processos ficavam com
+        // sync_status='ok' indefinidamente mesmo com o DataJud fora do ar.
+        for (const proc of nossosDesteTribunal.values()) {
+          resultados.push({ processoId: proc.id, numero: proc.numero, ok: false, erro: `${tribunal}: ${err.message}` });
+          await registrarFalhaSyncProcesso(proc.id);
+        }
         continue;
       }
 
