@@ -6,9 +6,13 @@ export function auditar(req, _res, next) {
   next();
 }
 
-export async function registrarAuditoria({ usuarioId, acao, entidade, entidadeId, valorAntes, valorDepois, ip }) {
+// `conexao` opcional: passe o `tx` de um db.transaction() pra gravar o log na
+// MESMA transação da ação que ele audita -- se a ação for revertida (ROLLBACK),
+// o log também é, em vez de sobrar um registro de auditoria "órfão" de uma ação
+// que na prática nunca aconteceu.
+export async function registrarAuditoria({ usuarioId, acao, entidade, entidadeId, valorAntes, valorDepois, ip }, conexao = db) {
   try {
-    await db.execute(
+    await conexao.execute(
       `INSERT INTO logs_auditoria (usuario_id, acao, entidade, entidade_id, valor_antes, valor_depois, ip)
        VALUES ($1, $2, $3, $4, $5, $6, $7)`,
       [

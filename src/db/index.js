@@ -35,5 +35,37 @@ export const db = {
     const result = await pool.query(sql, params);
     return result;
   },
+  // Roda `fn` numa única transação com um client dedicado do pool, expondo os
+  // mesmos métodos (query/queryOne/execute) mas presos a esse client -- assim a
+  // ação principal e o log de auditoria caem juntos ou nenhum dos dois cai.
+  // BEGIN falha e o client trava? `release(err)` (não `release()`) descarta a
+  // conexão em vez de devolvê-la ao pool num estado inconsistente.
+  async transaction(fn) {
+    const client = await pool.connect();
+    const tx = {
+      async query(sql, params = []) {
+        const result = await client.query(sql, params);
+        return result.rows;
+      },
+      async queryOne(sql, params = []) {
+        const result = await client.query(sql, params);
+        return result.rows[0] ?? null;
+      },
+      async execute(sql, params = []) {
+        return client.query(sql, params);
+      },
+    };
+    try {
+      await client.query('BEGIN');
+      const resultado = await fn(tx);
+      await client.query('COMMIT');
+      return resultado;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
   pool,
 };
