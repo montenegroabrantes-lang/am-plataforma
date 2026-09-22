@@ -116,6 +116,14 @@ usuariosRouter.patch('/:id', apenasMaster, async (req, res) => {
 usuariosRouter.patch('/:id/senha', apenasMaster, async (req, res) => {
   const { senha } = req.body;
   if (!senha || senha.length < 8) return res.status(400).json({ ok: false, erro: 'Senha mínima 8 caracteres.' });
+
+  if (req.params.id !== req.user.id && !req.user.pode_marcar_restrito) {
+    const alvo = await db.queryOne('SELECT perfil FROM usuarios WHERE id = $1', [req.params.id]);
+    if (alvo?.perfil === 'master') {
+      return res.status(403).json({ ok: false, erro: 'Apenas o Master principal pode redefinir a senha de outro master.' });
+    }
+  }
+
   const hash = await bcrypt.hash(senha, 12);
   await db.execute('UPDATE usuarios SET senha_hash = $1 WHERE id = $2', [hash, req.params.id]);
   res.json({ ok: true });

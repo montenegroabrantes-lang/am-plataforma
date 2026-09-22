@@ -684,7 +684,7 @@ tarefasRouter.post('/lote/restaurar', apenasMaster, async (req, res) => {
 });
 
 // PATCH /api/tarefas/:id/concluir-com-numero — conclui tarefa de protocolo inserindo número CNJ
-tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
+tarefasRouter.patch('/:id/concluir-com-numero', apenasMaster, async (req, res) => {
   const { numero_processo, periodo_fim, vinculo_id } = req.body;
 
   const CNJ_RE = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
