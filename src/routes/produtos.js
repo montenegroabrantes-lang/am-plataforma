@@ -135,9 +135,17 @@ produtosRouter.post('/clientes/:clienteId', apenasMaster, async (req, res) => {
   if (!cliente) return res.status(404).json({ ok: false, erro: 'Cliente não encontrado ou inativo.' });
   if (!produto) return res.status(404).json({ ok: false, erro: 'Tese jurídica não encontrada ou inativa.' });
 
-  // Se não informou honorarios_pct, busca o padrão do produto
+  // Se não informou honorarios_pct, busca o padrão do produto -- mas SEM padrão nenhum
+  // configurado, exige que seja informado. Antes disso caía silenciosamente em 0%, e o
+  // Financeiro nunca gerava lançamento pra 1073 vínculos sem que ninguém percebesse
+  // (achado da auditoria de 12/08/2026). O escritório decidiu cadastrar o percentual
+  // individualmente por vínculo, não por tese -- então aqui é exigência, não um valor
+  // inventado.
   if (honorarios_pct === undefined || honorarios_pct === null || honorarios_pct === '') {
-    honorarios_pct = produto.honorarios_padrao ?? 0;
+    if (produto.honorarios_padrao == null) {
+      return res.status(400).json({ ok: false, erro: 'Informe o percentual de honorários deste vínculo (a tese não tem um padrão configurado).' });
+    }
+    honorarios_pct = produto.honorarios_padrao;
   }
 
   const percentual = Number(honorarios_pct);
