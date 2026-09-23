@@ -1412,3 +1412,52 @@ integrações ou produção. Não registrar segredos neste documento.
 - **Pendente:** distinguir Camila × humano nas mensagens do escritório (exigiria expor
   `mensagens_atendimento.origem` da Camila por HTTP e cruzar por id/horário); anexos de
   áudio/imagem dependem do `url` que o Digisac devolve (assinado/temporário — abrir na hora).
+
+### 23/09/2026 (noite) — Quadro de Leads: coluna "Em reabordagem" + reorganização das colunas
+
+- Pedido do usuário: "organizar quais estão em reabordagem mudando apenas de coluna" — depois
+  confirmado que precisava ser mais que visual (a coluna refletindo o estado real da fila da
+  Camila, e o arraste executando Pausar/Liberar/Antecipar de verdade, não uma etiqueta manual).
+  Analisado antes de codar (ver decisão em [[camila.md]]): a API agregada `/reabordagens/status`
+  não diz *quais* leads estão na fila, e o `funil-leads` só trazia `retomadas_disparadas`
+  (quantas já foram enviadas) — "está na fila agora?" era inferência do painel.
+- **Camila** (`camila-abrantes-montenegro`, commit `9b4b5ae`): `listar()` em `leads.js` ganhou
+  3 subqueries (`proxima_abordagem`, `ultima_abordagem_cancelada`, `abordagens_pendentes`) e
+  `montarReabordagem(r, {etapa, aguardandoNos})` deriva um estado único por lead —
+  `na_fila | agendada | aguardando_nos | pausada | encerrada | fora` — cruzando isso com
+  `contatos_comerciais.suspenso/encerrado`, `leads_desfecho` e idade da proposta (>30 dias =
+  ciclo encerrado). 7 cenários testados em `teste-leads.js`. **Achado no caminho**: a API
+  agregada mostrava `proxima_prevista_em` uma semana no passado — investigado e corrigido em
+  `retomada-contextual.js`: níveis de um mesmo ciclo podem ficar fora de ordem quando um nível
+  é adiado 24h por `atendente_responsavel` enquanto os níveis seguintes já venceram, e a
+  reserva de envio bloqueia nos dois sentidos ("não existe pendência de nível menor" E "não
+  existe pendência mais cedo") — ninguém saía, o contato ficava parado pra sempre.
+  `planejar()` agora empurra cada nível pro mínimo do maior nível anterior ainda pendente do
+  mesmo ciclo. `npm run test:safe` completo passou; leitura ao vivo (só leitura) contra a
+  produção antes do deploy confirmou 32 `na_fila` (bate exatamente com `contatos_pendentes` do
+  agregado), 6 `aguardando_nos`, 3 `pausada` (motivos reais: `erro_valor_proposta`,
+  `pedido_cliente`), 1 `agendada`, 60 `fora`. Publicado no Railway (deploy `362646b9`,
+  `SUCCESS`).
+- **AM** (`am-plataforma-web`): nova coluna **"Em reabordagem"** entre Proposta e Documentos,
+  recebendo leads de Novo/Em conversa/Proposta cujo `reabordagem.estado==='na_fila'` (o card
+  mostra a etapa real num selo + chip "🔁 próximo toque · nível N de 4 · tipo"). Nas colunas de
+  etapa, leads fora da fila ganham chip do motivo: pausada (com o motivo real), "esfriou" (ciclo
+  encerrado), ou retorno combinado. **Arraste com ação real** (`ModalAcaoArraste`, sempre com
+  confirmação, só Master): pra dentro de "Em reabordagem" = Liberar (se pausado) ou Antecipar;
+  de volta pra coluna da etapa = Pausar. Reaproveita os endpoints que já existiam
+  (`POST leads/:id/reabordar`, `PATCH leads/:id/continuidade` — nenhuma rota nova no AM). O
+  aviso "cliente falou por último, a Camila não vai reabordar" aparece no modal de Antecipar
+  quando aplicável. Também nesta rodada: **Documentos** separada de **Contrato** (coletar
+  documento é operacional, preparar/assinar é do advogado); **Fechado/Perdido** nascem
+  recolhidas (só contagem, expande ao clicar) — liberam espaço horizontal; colunas de trabalho
+  ordenadas por "aguardando nós" primeiro, depois mais parado; cabeçalho com contador
+  "⏳ N" de quem está esperando resposta nossa.
+- **Verificado ao vivo**, sem tocar em lead real: com a Camila já publicada, o Quadro renderizou
+  os 102 leads reais, a ordenação por próxima data bateu com o agregado ("próxima prevista:
+  23/09 às 15:05" = topo da coluna), e os dois sentidos do arraste foram testados disparando os
+  eventos HTML5 de drag via JS diretamente no navegador (o gesto sintético de mouse da
+  automação não aciona drag nativo — limitação da ferramenta, não do código): abriu o modal
+  "Pausar reabordagens" ao soltar um card da fila de volta em Proposta enviada, e "Colocar na
+  frente da fila" com o aviso de "cliente falou por último" ao soltar um card de Proposta
+  enviada em "Em reabordagem". **Cancelado nos dois casos** — nenhuma ação real foi confirmada,
+  nenhuma mensagem enviada. `next build` OK.
