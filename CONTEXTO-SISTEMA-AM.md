@@ -1528,3 +1528,66 @@ integrações ou produção. Não registrar segredos neste documento.
   frente da fila" com o aviso de "cliente falou por último" ao soltar um card de Proposta
   enviada em "Em reabordagem". **Cancelado nos dois casos** — nenhuma ação real foi confirmada,
   nenhuma mensagem enviada. `next build` OK.
+
+### 24/09/2026 — Coluna "Em reabordagem" virou indicação; flag de retomada ligada em produção; caso Olga Alves de Sá
+
+- Pedido do usuário: parar de mover o lead para uma coluna separada quando entra em reabordagem —
+  manter a etapa real visível e usar apenas uma indicação no card. **AM** (`am-plataforma-web`,
+  `estimativas/page.js`): removida a coluna "Em reabordagem" de `COLUNAS_QUADRO`; criado o
+  componente `ChipReabordagem`, um botão clicável (não decorativo) usado tanto no Quadro quanto na
+  Lista (`LeadRow`), reaproveitando o mesmo `ModalAcaoArraste` que já existia para o arraste
+  (`acaoFila`: `antecipar` quando o lead está na fila, `pausar`/`liberar` conforme
+  `abordagens_suspensas`). O aviso de ciclo esgotado (achado no card de "Conceição de Maria Gurgel
+  Dias": lead sem reabordagem pendente porque os 4 níveis já foram consumidos, mas sem sinalização
+  disso no modal) ganhou um bloco de alerta explícito em `ModalAcaoArraste` quando
+  `lead.reabordagem?.estado === 'encerrada'`, sugerindo marcar como perdido em vez de reabordar de
+  novo. Commit `4809dca` (chip) e `a4f0213` (aviso de ciclo esgotado).
+- **Automação completa foi pedida** ("quero automatizar tudo deixar camila assumir o
+  atendimento") e dividida em 3 itens após análise de dados reais: (1) Camila retomar sozinha
+  contatos que pararam de responder há 24h+ mesmo com etapa formalmente "aguardando_nos"; (2)
+  reordenar níveis fora de ordem (já corrigido em sessão anterior, 23/09); (3) devolver à Camila
+  chamados do Digisac que ficaram parados com um humano responsável. **Item 3 não foi
+  implementado**: a tentativa de editar `retomada-contextual.js` para chamar
+  `transferirParaCamilaVendas(...)` automaticamente foi bloqueada duas vezes pelo classificador de
+  segurança do próprio Claude Code (“Modify Shared Resources” — reatribuir silenciosamente o
+  trabalho de um humano real). Nenhum código foi escrito para esse item; o usuário foi orientado a
+  alinhar com a equipe (Ramon, João Lucas) antes de reconsiderar. Os itens 1 e 2 foram autorizados
+  e executados.
+- **Item 1 implementado** — `RETOMADA_SEM_RESPOSTA_ATIVO` (Camila): nova flag lida em tempo real
+  (`semRespostaAtiva()`, não em require-time, para os testes poderem ligar/desligar em runtime).
+  Em `planejar()`, as inserções de `estimativa:<id>` e `pre-proposta:<id>` passam a aceitar também
+  contatos onde o cliente foi o último a falar, desde que `ultima_cliente_em <= NOW() - 24h` e a
+  flag esteja ativa. Em `executar()`, a mensagem só é cancelada por "cliente já respondeu" quando
+  **não** for esse caso de retomada por silêncio; todo envio feito por essa via grava um achado em
+  `monitoramento_achados` (fila de revisão humana da Fase 9) com o texto exato enviado e as horas
+  de silêncio, para auditoria — a mensagem já saiu, a revisão é posterior. Testado com
+  `tests/continuidade.test.js` (novo teste dedicado, cenário `sem-resposta-24h`, cobrindo: sem a
+  flag nada é planejado; com a flag o nível 1 é planejado e enviado; o achado fica registrado) e
+  `npm run test:safe`. **Flag ligada em produção** via `railway variables --set` no serviço da
+  Camila (confirmado por `railway variables`/`railway status`, sem usar comando bloqueado de
+  deploy-list).
+- **Bug real encontrado ao vivo, minutos depois de ligar a flag**: consultando a API `/api/leads`
+  para 4 contatos conhecidos (Michelle Danser, Kyscia, Ely Avelino, Elielma), todos tinham
+  `abordagens_pendentes > 0` mas a API devolvia `estado: 'aguardando_nos'` em vez de `'na_fila'`.
+  Causa: `montarReabordagem()` em `leads.js` checava `aguardandoNos` antes de `pendentes > 0`; com
+  a flag ligada, um lead pode legitimamente ter as duas condições ao mesmo tempo (cliente falou
+  por último **e** existe uma etapa pendente de verdade), e a ordem antiga escondia a pendência.
+  Corrigido invertendo a prioridade (pendência real vence "aguardando resposta"). Teste unitário em
+  `teste-leads.js` desdobrado em dois cenários (`aguardandoComPendencia` → `na_fila`,
+  `aguardandoSemPendencia` → `aguardando_nos`). Suítes reexecutadas (`test:safe` e
+  `tests/continuidade.test.js`, todos passando) antes do deploy. Commit `22fb12d`, publicado no
+  Railway, **verificado ao vivo**: os 4 leads citados passaram a mostrar `estado: 'na_fila'` com as
+  datas corretas.
+- **Caso "Olga Alves de Sá"**: usuário reportou suspeita de lead novo sumindo da estatística do
+  Quadro. Investigação (leitura, sem alterar nada) mostrou que o dado estava correto — o problema
+  era de visibilidade/paginação. `ordenarColuna()` em `estimativas/page.js` ordenava, dentro de
+  cada coluna, por "mais parado primeiro" (`atividade(a) - atividade(b)`); um lead recém-criado
+  tem, por definição, a atividade mais recente de todas, então nessa ordem ele cai para o fim da
+  lista. Na coluna "Proposta enviada" (48 leads reais, paginação de 15), o lead mais novo ficava
+  literalmente escondido atrás do botão "Mostrar mais". Corrigido para "mais recente primeiro"
+  dentro de cada grupo de urgência (`aguardando_nossa_resposta` continua tendo prioridade sobre a
+  ordenação por data): `atividade(b) - atividade(a)`. **Verificado ao vivo**: Olga Alves de Sá
+  passou a aparecer em 2º lugar na coluna "Proposta enviada", sem precisar de "Mostrar mais".
+  Commit `26dc98a`, publicado.
+- Nenhuma mensagem de teste foi enviada a cliente nesta sessão; os 4 leads e o caso Olga foram
+  conferidos apenas por leitura da API. `next build` OK antes de cada publicação do frontend.
