@@ -1280,3 +1280,59 @@ integrações ou produção. Não registrar segredos neste documento.
      58/58. **Toda migração nova a partir de agora deve usar `migrar()`** — os blocos
      anteriores a 22/09/2026 só devem ser retrofitted numa sessão dedicada, um bloco de cada
      vez, com o mesmo nível de verificação.
+
+### 23/09/2026 — Aba Estimativas: análise + melhorias de eficiência (menos cliques)
+
+- Pedido do usuário: analisar a aba Estimativas inteira e melhorar a produção com menos
+  cliques. Método: 2 agentes de inventário (frontend 2.278 linhas + 7 componentes; backend
+  `estimativas.js` + workers) → 2 agentes de **verificação adversarial** de cada achado contra o
+  código e contra este CONTEXTO (consonância com regras de negócio). Placar: 19 confirmados,
+  2 refutados (erros de banco "fora de try/catch" — `express-async-errors` já cobre; "não
+  existe parado há X" — a Camila já manda `alerta` acima de 24/48h), 3 parciais.
+- **Decisões de consonância (NÃO feitas de propósito):** lote de "Aprovar" conflita com "a
+  aprovação continua manual" (`page.js`) e com o precedente de lote em tarefas sensíveis
+  (§17/09); retry automático em envio de WhatsApp (`entrega-manual`, `mensagem`, `reabordar`)
+  pode duplicar mensagem ao cliente — só faria sentido em GET; unificar o match de cliente por
+  nome com `clienteCamila.js` muda o resultado do cruzamento (subconjunto vs igualdade), não é
+  refactor neutro. "passar-atendente marca antes de enviar" é proxy puro aqui — o achado
+  pertence ao repositório da Camila (não está nesta máquina).
+- **Backend (`src/routes/estimativas.js`):** `encodeURIComponent` nas 12 rotas que
+  interpolavam `:id`/`:contactId` na URL da Camila (um `%2F` permitia apontar pra outro path
+  da API usando a chave; `GET /:id` é acessível a qualquer usuário logado); `registradoPor`
+  em `reabordar`, `mensagem` e `PATCH dados` (antes não ficava quem fez); `GET /leads` ganhou
+  `onboarding_status: ok|indisponivel` — se a consulta de onboardings falhar, o painel deixa
+  de mostrar lead fechado como "assinado · ativar" (mesmo padrão de `processos_status`).
+  `npm test` 58/58.
+- **Frontend (`estimativas/page.js`) — menos cliques:** (1) aprovar/descartar na Revisão abre
+  sozinho a próxima pendência da fila (fila já vem da mais antiga) e rola até ela; (2) toda
+  ação pequena recarrega em silêncio (`carregar(true)`) — a lista não some mais em
+  "Carregando…" nem perde o scroll (10 pontos); (3) badge **"⏳ cliente aguarda resposta · há
+  Xd Yh"** na linha da Lista e no card do Quadro, calculado de `aguardando_nossa_resposta` +
+  `ultima_cliente_em` — é o achado central do estudo "onde a venda morre" (03/09), que antes só
+  aparecia dentro da Continuidade; (4) aba e visão na URL (`?aba=leads&view=quadro`, hook
+  `useParametroUrl`) — recarregar não volta pra Revisão, dá pra mandar link; (5) filtro que
+  troca os dias da lista abre o primeiro dia sozinho (marcar "Aguardando nossa resposta"
+  trazia 9 dias fechados = 9 cliques); (6) Esc fecha card/lead/modal; Enter envia mensagem
+  livre; (7) busca com debounce de 300ms em Leads e Processual (antes: 1 GET por tecla +
+  polling reiniciado); (8) `/api/polos-passivos` carregado 1x na Revisão em vez de 1x por card
+  (até 100). **Correções de bug confirmadas:** trava de duplo clique em Aprovar e em
+  entrega/transferência/mensagem (`acaoEmCurso`); Aprovar bloqueado com correção de dados não
+  salva; parser de moeda único (`parseValorBR`) na entrega manual e no modal do Quadro, com
+  campo pré-preenchido já em pt-BR — `String(lead.valor)` ("9565.98") virava 956598 no parser
+  antigo (família do incidente Ruana, prioridade 1 de 04/09 nunca corrigida); mensagem livre só
+  limpa depois do envio dar certo; modal de arraste "Proposta" fica aberto se cancelar/falhar;
+  arrastar pra "Proposta" aplica a mesma regra da Lista (lead com a Camila + valor > 0);
+  painéis Mensagem/Fechar/Perder fecham o de Entrega; `desfazerDesfecho` mostra o erro real do
+  backend (409 explicado). **Cópia local do `FormularioFechamento` removida** (156 linhas):
+  era idêntica ao componente menos `operacao_id`/`etapa_no_fechamento` — toda ativação vinda
+  de Leads/Quadro chegava sem os dois (o dedupe por contato já cobria duplicata; a etapa no
+  fechamento ficava NULL, contra o propósito documentado da coluna).
+- **Verificado:** `next build` OK; ao vivo (login real, `localhost:3050` + backend local com a
+  mesma chave da Camila): `?aba=leads`/`&view=quadro` abrem certo, 102 leads renderizam, badge
+  aparece nas linhas (ex.: "há 4d 18h"), filtro abre o 1º dia sozinho, `onboarding_status='ok'`
+  chegando no JSON. **Nenhuma ação real (aprovar/enviar/transferir) executada em lead de
+  verdade** — Revisão estava com 0 pendentes; "abrir próxima" foi verificado só por código.
+- **Ficou pra depois (não feito):** polling único pausado com aba oculta (6 intervalos de
+  60s hoje); paginação da Lista/Quadro/Revisão (backend já aceita `limite`/`offset`); match de
+  cliente por trigram no SQL; fechamento em painel lateral sem sair da fila; leituras
+  comerciais (dashboard/funil) abertas a júnior — decisão de acesso é do usuário.

@@ -164,13 +164,17 @@ estimativasRouter.get('/leads', async (req, res) => {
       // e a tabela de clientes é pequena o bastante (centenas de linhas) pra isso ser rápido.
       const clientes = await db.query(`SELECT id, nome, criado_em FROM clientes WHERE nome IS NOT NULL AND ativo=true`).catch(() => []);
       const contactIds = data.leads.map(l => String(l.contact_id || '')).filter(Boolean);
+      // Se esta consulta falhar, `onboarding` fica null em todo lead e a tela passaria a
+      // mostrar lead já fechado como "assinado · ativar". A flag deixa o painel distinguir
+      // "não tem onboarding" de "não deu pra saber" — mesmo padrão de processos_status.
+      let onboardingsDisponiveis = true;
       const onboardings = contactIds.length
         ? await db.query(
             `SELECT id, camila_contact_id, cliente_id, status, prazo_cadastro, prazo_protocolo,
                     camila_sync_status, drive_sync_status
                FROM onboardings_contrato WHERE camila_contact_id = ANY($1::text[])`,
             [contactIds]
-          ).catch(() => [])
+          ).catch(() => { onboardingsDisponiveis = false; return []; })
         : [];
       const onboardingPorContato = new Map(onboardings.map(o => [o.camila_contact_id, o]));
       const clientesConfirmados = [...new Set(onboardings.map(o => o.cliente_id).filter(Boolean))];
@@ -207,6 +211,7 @@ estimativasRouter.get('/leads', async (req, res) => {
           ? (processosPorCliente.get(onboarding.cliente_id) || [])
           : [];
         lead.processos_status = processosDisponiveis ? 'ok' : 'indisponivel';
+        lead.onboarding_status = onboardingsDisponiveis ? 'ok' : 'indisponivel';
       }
     }
     res.json(data);
@@ -255,7 +260,7 @@ estimativasRouter.get('/:id', async (req, res) => {
   const api = camila();
   if (!api) return semConfig(res);
   try {
-    const { data } = await api.get(`/api/estimativas/${req.params.id}`);
+    const { data } = await api.get(`/api/estimativas/${encodeURIComponent(req.params.id)}`);
     res.json(data);
   } catch (err) {
     res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
@@ -267,7 +272,7 @@ estimativasRouter.post('/:id/aprovar', apenasMaster, async (req, res) => {
   const api = camila();
   if (!api) return semConfig(res);
   try {
-    const { data } = await api.post(`/api/estimativas/${req.params.id}/aprovar`, {
+    const { data } = await api.post(`/api/estimativas/${encodeURIComponent(req.params.id)}/aprovar`, {
       ...req.body,
       aprovado_por: req.user?.nome || req.user?.email || req.user?.id,
     });
@@ -303,7 +308,7 @@ estimativasRouter.post('/:id/recusar', apenasMaster, async (req, res) => {
   const api = camila();
   if (!api) return semConfig(res);
   try {
-    const { data } = await api.post(`/api/estimativas/${req.params.id}/recusar`, {
+    const { data } = await api.post(`/api/estimativas/${encodeURIComponent(req.params.id)}/recusar`, {
       ...req.body,
       aprovado_por: req.user?.nome || req.user?.email || req.user?.id,
     });
@@ -318,7 +323,7 @@ estimativasRouter.post('/:id/restaurar-descarte', apenasMaster, async (req, res)
   const api = camila();
   if (!api) return semConfig(res);
   try {
-    const { data } = await api.post(`/api/estimativas/${req.params.id}/restaurar-descarte`, {
+    const { data } = await api.post(`/api/estimativas/${encodeURIComponent(req.params.id)}/restaurar-descarte`, {
       registrado_por: req.user?.nome || req.user?.email || req.user?.id,
     });
     res.json(data);
@@ -333,7 +338,10 @@ estimativasRouter.patch('/:id/dados', apenasMaster, async (req, res) => {
   const api = camila();
   if (!api) return semConfig(res);
   try {
-    const { data } = await api.patch(`/api/estimativas/${req.params.id}/dados`, req.body);
+    const { data } = await api.patch(`/api/estimativas/${encodeURIComponent(req.params.id)}/dados`, {
+      ...req.body,
+      registradoPor: req.user?.nome || req.user?.email || req.user?.id,
+    });
     res.json(data);
   } catch (err) {
     res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
@@ -378,7 +386,7 @@ estimativasRouter.post('/leads/:contactId/desfecho', apenasMaster, async (req, r
     }
 
     try {
-      const { data } = await api.post(`/api/funil-leads/${req.params.contactId}/desfecho`, {
+      const { data } = await api.post(`/api/funil-leads/${encodeURIComponent(req.params.contactId)}/desfecho`, {
         ...desfecho,
         registradoPor: req.user?.nome || req.user?.email || req.user?.id,
       });
@@ -409,7 +417,7 @@ estimativasRouter.post('/leads/:contactId/desfecho', apenasMaster, async (req, r
   }
 
   try {
-    const { data } = await api.post(`/api/funil-leads/${req.params.contactId}/desfecho`, {
+    const { data } = await api.post(`/api/funil-leads/${encodeURIComponent(req.params.contactId)}/desfecho`, {
       ...desfecho,
       registradoPor: req.user?.nome || req.user?.email || req.user?.id,
     });
@@ -483,7 +491,7 @@ estimativasRouter.delete('/leads/:contactId/desfecho', apenasMaster, async (req,
     }
   }
   try {
-    const { data } = await api.delete(`/api/funil-leads/${req.params.contactId}/desfecho`);
+    const { data } = await api.delete(`/api/funil-leads/${encodeURIComponent(req.params.contactId)}/desfecho`);
     res.json(data);
   } catch (err) {
     if (onboarding) {
@@ -501,7 +509,10 @@ estimativasRouter.post('/leads/:contactId/reabordar', apenasMaster, async (req, 
   const api = camila();
   if (!api) return semConfig(res);
   try {
-    const { data } = await api.post(`/api/funil-leads/${req.params.contactId}/reabordar`, req.body);
+    const { data } = await api.post(`/api/funil-leads/${encodeURIComponent(req.params.contactId)}/reabordar`, {
+      ...req.body,
+      registradoPor: req.user?.nome || req.user?.email || req.user?.id,
+    });
     res.json(data);
   } catch (err) {
     res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
@@ -516,7 +527,7 @@ estimativasRouter.post('/leads/:contactId/entrega-manual', apenasMaster, async (
   const api = camila();
   if (!api) return semConfig(res);
   try {
-    const { data } = await api.post(`/api/funil-leads/${req.params.contactId}/entrega-manual`, {
+    const { data } = await api.post(`/api/funil-leads/${encodeURIComponent(req.params.contactId)}/entrega-manual`, {
       ...req.body,
       registradoPor: req.user?.nome || req.user?.email || req.user?.id,
     });
@@ -534,7 +545,7 @@ estimativasRouter.post('/leads/:contactId/passar-atendente', apenasMaster, async
   const api = camila();
   if (!api) return semConfig(res);
   try {
-    const { data } = await api.post(`/api/funil-leads/${req.params.contactId}/passar-atendente`, {
+    const { data } = await api.post(`/api/funil-leads/${encodeURIComponent(req.params.contactId)}/passar-atendente`, {
       ...req.body,
       registradoPor: req.user?.nome || req.user?.email || req.user?.id,
     });
@@ -549,7 +560,10 @@ estimativasRouter.post('/leads/:contactId/mensagem', apenasMaster, async (req, r
   const api = camila();
   if (!api) return semConfig(res);
   try {
-    const { data } = await api.post(`/api/funil-leads/${req.params.contactId}/mensagem`, req.body);
+    const { data } = await api.post(`/api/funil-leads/${encodeURIComponent(req.params.contactId)}/mensagem`, {
+      ...req.body,
+      registradoPor: req.user?.nome || req.user?.email || req.user?.id,
+    });
     res.json(data);
   } catch (err) {
     res.status(err.response?.status || 502).json(err.response?.data || { ok: false, erro: err.message });
