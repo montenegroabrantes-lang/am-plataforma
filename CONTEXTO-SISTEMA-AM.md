@@ -1333,6 +1333,35 @@ integrações ou produção. Não registrar segredos neste documento.
   chegando no JSON. **Nenhuma ação real (aprovar/enviar/transferir) executada em lead de
   verdade** — Revisão estava com 0 pendentes; "abrir próxima" foi verificado só por código.
 - **Ficou pra depois (não feito):** polling único pausado com aba oculta (6 intervalos de
-  60s hoje); paginação da Lista/Quadro/Revisão (backend já aceita `limite`/`offset`); match de
-  cliente por trigram no SQL; fechamento em painel lateral sem sair da fila; leituras
-  comerciais (dashboard/funil) abertas a júnior — decisão de acesso é do usuário.
+  60s hoje); match de cliente por trigram no SQL; fechamento em painel lateral sem sair da
+  fila; leituras comerciais (dashboard/funil) abertas a júnior — decisão de acesso é do usuário.
+
+### 23/09/2026 (tarde) — Paginação de Estimativas: achado que muda a premissa + client-side
+
+- Pedido do usuário: implementar a paginação da lista anterior ("o backend já aceita
+  limite/offset"). Antes de mexer, testei **direto contra a API real da Camila** (não só lendo
+  código, que foi o que gerou a premissa errada da rodada anterior):
+  - `/api/funil-leads` (Lista/Quadro de Leads) **ignora todos** os parâmetros testados
+    (`limite`, `limit`, `pageSize`, `page`, `offset`) — sempre devolve os 102 leads inteiros.
+  - `/api/estimativas` (Revisão): `limite` funciona de verdade (75 → 3 confirmado), mas
+    `offset`/`page` são **ignorados** — pedir "página 2" devolve os mesmos primeiros itens.
+  - Conclusão: **paginação de servidor não é possível** nem em Leads nem em Revisão sem mudar
+    o repositório da Camila (não está nesta máquina). "Ligar o que o backend já aceita" era
+    premissa falsa — reportado ao usuário antes de implementar qualquer coisa.
+- Como os dados já chegam inteiros numa única resposta, implementada **paginação client-side**
+  (melhora leitura/rolagem, não reduz tráfego nem resolve um eventual backlog além do que a
+  Camila manda de uma vez):
+  - **Revisão**: 20 por página, com "Anterior/Próxima" e "Página X de Y · N no total".
+    `abrirProxima()` (que já pulava pra próxima pendência após aprovar/descartar) agora também
+    muda de página quando a próxima está fora da página atual. Reseta pra página 1 ao trocar de
+    status ou ao abrir uma estimativa recém-criada (ela entra no topo do array). A quantidade
+    de páginas é *clampada* no render (não guardada em estado) pra nunca sobrar numa página
+    vazia quando a lista encolhe (ex.: aprovar o último item da última página).
+  - **Quadro**: "Mostrar mais N" por coluna (corta em 15, sem limite de expansão) — evita
+    renderizar 45+ cards de uma coluna cheia de cara. Estado de expansão por coluna, não reseta
+    ao trocar filtro (fica expandido se o usuário já pediu).
+- **Verificado ao vivo** (login real, backend local com a chave real da Camila):
+  status "Aprovadas — entregues" com 75 itens reais → "Página 1 de 4 · 75 no total"; clicar
+  "Próxima" trouxe leads diferentes de verdade (não repetiu). Quadro: coluna "Proposta
+  enviada" com 45 leads mostrava 15 + "Mostrar mais 30"; clicar expandiu e o botão sumiu.
+  `next build` OK. Nenhuma ação real executada em lead.
