@@ -1413,6 +1413,73 @@ integrações ou produção. Não registrar segredos neste documento.
   `mensagens_atendimento.origem` da Camila por HTTP e cruzar por id/horário); anexos de
   áudio/imagem dependem do `url` que o Digisac devolve (assinado/temporário — abrir na hora).
 
+### 24/09/2026 — Camila ganha "modo retomada"; coluna "Em reabordagem" virou indicação no card
+
+- Continuação da conversa sobre a coluna "Em reabordagem" (23/09 à noite): usando o caso real
+  da Thaides (21 dias parada — cliente pediu "só mais tarde" depois de pedir atendimento
+  presencial, humano nunca respondeu) o usuário definiu a regra que faltava: **lead que não
+  fechou, sem resposta NOSSA há mais de 24h, deve ser retomado pela Camila sozinha**, no
+  horário em que aquele lead mais costuma responder (`alinharHorarios` já faz isso pra
+  qualquer etapa pendente, sem distinguir tipo — não precisou mudar). Com isso, o usuário
+  percebeu sozinho que a coluna deixava de fazer sentido: reabordagem vira algo que quase todo
+  lead aberto passa em algum momento, não mais uma etapa própria do funil — confirmado por
+  ele e movido pra ser **indicação + ação no próprio card**.
+- **Camila (`retomada-contextual.js`, `monitoramento.js`)**: nova flag
+  `RETOMADA_SEM_RESPOSTA_ATIVO` (env, **desligada por padrão** — decisão consciente de não
+  mudar comportamento sozinho). A exclusão de hoje ("cliente falou por último = ciclo INTEIRO
+  para pra sempre, mesmo 21 dias depois") virou uma janela de graça de 24h: com a flag ligada,
+  depois de 24h sem resposta da equipe o ciclo `estimativa:<id>`/`pre-proposta:<id>` volta a
+  ser planejado normalmente (a fórmula `GREATEST(entregue_em, enviada_em, ultima_cliente_em) +
+  n.horas` já calculava certo pro nível 1 — só a cláusula de exclusão no `WHERE` do INSERT
+  bloqueava). Ajustado em 2 lugares: o `INSERT` de `planejar()` (ambos os ciclos) e o guard de
+  envio em `executar()` (senão a etapa recém-planejada seria cancelada de novo no mesmo
+  instante do envio). Trava que **continua valendo sempre**: atendente humano ativo nas
+  últimas 48h ainda adia 24h (`atendente_responsavel`) — a flag nunca faz a Camila falar por
+  cima de um humano ativo. Toda mensagem enviada por esse caminho grava um achado em
+  `monitoramento_achados` (Fase 9 — fila de revisão humana pós-hoc, o mesmo padrão já usado
+  pros outros achados de qualidade; a mensagem já foi enviada, a fila é pra auditar/ajustar
+  prompt, não pra aprovar antes). Sem mudança na geração de mensagem: a `INSTRUCAO` do
+  `gerar-abordagem.js` já proíbe citar/reproduzir fala antiga do cliente, então o ciclo normal
+  (proposta/documentos/assinatura) já produz uma mensagem segura sem precisar saber o que o
+  cliente disse.
+  - **Testado**: `teste-leads.js` e `test:safe` completos passam. Novo teste em
+    `tests/continuidade.test.js` (Postgres embarcado via PGlite, sem depender de banco
+    externo) cobre os dois lados — sem a flag nada é planejado mesmo 48h depois; com a flag,
+    o nível 1 é planejado e enviado, e fica registrado em `monitoramento_achados`. Achado ao
+    escrever o teste: a suíte usa contadores globais absolutos (`enviado.length`) cumulativos
+    entre testes — o teste novo precisou ir pro fim do arquivo e checar a linha específica do
+    contato de teste, não o contador global (ligar a flag no fim da suíte varre também
+    contatos de testes anteriores com estado "aguardando resposta" há mais de 24h, o que é
+    esperado — prova que a flag vale pra qualquer contato elegível — mas contamina contagens
+    absolutas).
+  - **Leitura ao vivo antes do deploy** (só leitura, sem tocar produção): 5 leads entrariam na
+    retomada hoje se a flag fosse ligada — Thaides (503h), Michelle Danser (213h), Kyscia
+    (175h), Ely Avelino (122h), Elielma (117h), nenhum com humano ativo no chamado.
+  - Publicado no Railway com a flag **desligada**. Pra ligar: `RETOMADA_SEM_RESPOSTA_ATIVO=true`
+    na env do serviço `camila-abrantes-montenegro`. Recomendação registrada ao usuário: revisar
+    esses 5 nomes antes de ligar, e acompanhar `monitoramento_achados` na primeira semana.
+- **AM (`estimativas/page.js`)**: coluna `reabordagem` removida de `COLUNAS_QUADRO`;
+  `grupoQuadroLead` voltou a ser só por etapa (a bifurcação por `reabordagem.estado==='na_fila'`
+  foi revertida). `ChipReabordagem` virou um `<button>` clicável (não mais um `<div>` de
+  leitura), presente tanto no card do Quadro quanto na linha da Lista (antes só existia
+  informação equivalente no Quadro): mostra "🔁 próximo toque" (na fila/agendada — clique
+  Pausa), "⏸ pausada" (clique Libera), "esfriou" ou "🔁 antecipar reabordagem" (fora do ciclo,
+  ação manual) — sempre abrindo o mesmo `ModalAcaoArraste` de confirmação que o arraste já
+  usava (`onDropCard(lead, 'reabordagem'|'pausar')`), sem lógica nova de aprovação. O modal
+  deixou de estar preso à visão Quadro — renderizado uma vez, fora do `if (view==='quadro')`,
+  pra funcionar a partir de qualquer visão. Toda a lógica de arraste específica da coluna
+  (`COLUNAS_ENTRAM_EM_REABORDAGEM`, o branch de soltar-pra-dentro/soltar-pra-fora, o estado
+  `arrastando`) foi removida — só sobrou o arraste original de Proposta/Fechado/Perdido.
+  `podeMexerNaFila(lead)` (mesma regra do `podeReabordar` que a Lista já tinha) decide quando
+  mostrar o chip.
+  - **Verificado ao vivo** (mesmo ambiente, Camila e AM publicados): a coluna sumiu, Fernando
+    Henrique (antes isolado em "Em reabordagem") apareceu de volta em "Novo" com o chip
+    "🔁 próximo toque 24/09, 14:55 · 1 de 4 · apresentar valor"; clicar no chip da Thaides no
+    Quadro abriu o modal "Colocar na frente da fila" com o aviso de "cliente falou por
+    último" (mesmo texto de antes, agora em 1 clique em vez de arrastar); o mesmo chip
+    apareceu na Lista, confirmando paridade entre as duas visões. `next build` OK, `npm test`
+    58/58 (AM). Nenhuma ação real confirmada nos testes ao vivo.
+
 ### 23/09/2026 (noite) — Quadro de Leads: coluna "Em reabordagem" + reorganização das colunas
 
 - Pedido do usuário: "organizar quais estão em reabordagem mudando apenas de coluna" — depois
