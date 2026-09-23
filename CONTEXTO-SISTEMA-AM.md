@@ -1365,3 +1365,50 @@ integrações ou produção. Não registrar segredos neste documento.
   "Próxima" trouxe leads diferentes de verdade (não repetiu). Quadro: coluna "Proposta
   enviada" com 45 leads mostrava 15 + "Mostrar mais 30"; clicar expandiu e o botão sumiu.
   `next build` OK. Nenhuma ação real executada em lead.
+
+### 23/09/2026 (noite) — Quadro de Leads: conversa em painel lateral nativo, sem iframe e sem login
+
+- Pedido do usuário: "demora grande para verificar todos" os leads do Quadro, e a sugestão
+  de abrir o Digisac "apenas na lateral, sem ficar fazendo login sempre".
+- **Diagnóstico:** `ConversaLead` abria a conversa num `<iframe>` do Digisac recriado a cada
+  lead (`key={contactId:recarga}` em `DigisacFrame.jsx`) — o app do Digisac, como terceiro
+  dentro do AM, não herda sessão entre esses iframes no navegador, daí o login repetido. O
+  `DigisacFrame` persistente da rota `/atendimento` continua existindo e intocado. Medido:
+  `/api/funil-leads` leva 1,2–3,2 s por carga de 102 leads.
+- **Solução (alternativa "nativa"):** a conversa passa a ser lida pela **API do Digisac** via
+  backend do AM e renderizada num painel lateral do próprio AM. Sondagem somente-leitura na
+  API real (23/09): `GET /messages?where[contactId]=…&page=N&limit=100&include=file` responde
+  `{ data, total, limit, skip, currentPage, lastPage }`; sem `include=file` a lista vem sem o
+  objeto `file` (url/nome/mimetype do anexo); a armadilha documentada (sem `where[...]` vêm
+  mensagens de outros contatos) é coberta pelo `where` **e** por conferência de `m.contactId`
+  em JS. Mensagens do escritório vêm com `isFromMe=true` e `userId` do usuário do Digisac —
+  as da Camila chegam com o `userId` da conta de integração, então o painel rotula pelo nome
+  do usuário do Digisac e **não consegue distinguir Camila de humano** quando ambos usam a
+  mesma conta (limitação conhecida). Eventos de chamado (`type='ticket'`, `data.ticketOpen/
+  ticketTransfer/...`) viram separadores discretos.
+  - Backend: `buscarConversaContato(contactId, {paginas, limite})` e `mapaUsuariosDigisac()`
+    (cache 10 min) em `src/services/digisac/index.js` — substituem o `buscarMensagens()`
+    antigo, que nunca era chamado e usava um caminho (`/tickets/:id/messages`) não
+    verificado. Rota nova `GET /api/estimativas/leads/:contactId/mensagens?paginas=1..10`
+    (`autenticar`, UUID validado; mesmo alcance que o iframe tinha). Responder continua por
+    `POST …/mensagem` (Master).
+  - Frontend: novo `components/PainelConversa.jsx` (painel fixo à direita, 560px): mensagens
+    por dia, bolhas cliente/escritório com nome do autor, anexos com link, "carregar mais
+    antigas", cache de 2 min por contato, **← → navega pro lead anterior/próximo na mesma
+    ordem da tela** (Lista: dia a dia; Quadro: coluna a coluna), contador "N de M", Esc fecha,
+    "Dados e ações", "Abrir no Digisac ↗" (nova aba, pra áudio/anexo/assumir chamado), e
+    caixa de mensagem (Master, com chamado aberto; Enter envia). Usado em Leads (Lista, Quadro,
+    Dashboard) e em Processual. `ConversaLead.jsx` removido.
+  - Card do Quadro ganhou linha "conferir sem abrir": quem falou por último e há quanto
+    tempo (`ultima_cliente_em`/`ultima_equipe_em`), documentos recebidos, fase do contrato e
+    retorno combinado — campos que o funil já mandava e o card não mostrava.
+- **Verificado ao vivo** (login real no AM, backend local com credenciais do Digisac de
+  produção injetadas via `railway variables`, nunca impressas): painel abriu com conversa real
+  (separadores por dia, "Chamado transferido", autores, "📎 Documento"), "5 de 102", seta →
+  foi pro 6º lead sem sair do Quadro e sem login. `npm test` 58/58, `next build` OK. Nenhuma
+  mensagem enviada. Achado lateral: o `.env` local tem `DIGISAC_API_URL`/`DIGISAC_TOKEN`
+  diferentes dos de produção (host antigo `api.digisac.com.br` e token inválido) — só afeta
+  testes locais; produção usa os do Railway.
+- **Pendente:** distinguir Camila × humano nas mensagens do escritório (exigiria expor
+  `mensagens_atendimento.origem` da Camila por HTTP e cruzar por id/horário); anexos de
+  áudio/imagem dependem do `url` que o Digisac devolve (assinado/temporário — abrir na hora).

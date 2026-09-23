@@ -32,20 +32,51 @@ export async function buscarAtendimentos(horas = 24) {
   }
 }
 
-// Busca mensagens de um atendimento específico (para painel lateral)
-export async function buscarMensagens(ticketId, limite = 20) {
+// Histórico completo de um contato (todos os tickets), pro painel de conversa do AM.
+// Verificado ao vivo em 23/09/2026: GET /messages?where[contactId]=…&page=N responde com
+// { data, total, limit, skip, currentPage, lastPage }. A armadilha documentada (memória e
+// digisac.js da Camila): sem o `where[...]` o Digisac devolve mensagens de OUTROS contatos —
+// por isso o filtro vai no `where` E cada mensagem é conferida de novo em JS antes de sair.
+// Lança em erro (quem chama decide o que mostrar); páginas são lidas da mais recente pra
+// mais antiga e o resultado sai em ordem cronológica.
+export async function buscarConversaContato(contactId, { paginas = 3, limite = 100 } = {}) {
   const api = client();
-  if (!api) return [];
+  if (!api) throw Object.assign(new Error('Digisac não configurado.'), { status: 503 });
 
-  try {
-    const resp = await api.get(`/tickets/${ticketId}/messages`, {
-      params: { limit: limite },
+  const mensagens = [];
+  let total = 0, lastPage = 1, lidas = 0;
+  for (let page = 1; page <= paginas; page++) {
+    // include=file: sem isto a listagem vem sem o objeto `file` (nome/url do anexo) — o mesmo
+    // parâmetro que a Camila usa em GET /messages/:id (digisac.js:164). Confirmado na lista.
+    const resp = await api.get('/messages', {
+      params: { 'where[contactId]': contactId, page, limit: limite, include: 'file' },
     });
-    return resp.data?.data || resp.data || [];
-  } catch (err) {
-    console.error('[Digisac] Erro ao buscar mensagens:', err.message);
-    return [];
+    const lote = resp.data?.data || [];
+    lidas = page;
+    total = Number(resp.data?.total ?? total) || total;
+    lastPage = Number(resp.data?.lastPage ?? lastPage) || lastPage;
+    for (const m of lote) if (m && m.contactId === contactId) mensagens.push(m);
+    if (!lote.length || page >= lastPage) break;
   }
+  mensagens.sort((a, b) => new Date(a.timestamp || a.createdAt) - new Date(b.timestamp || b.createdAt));
+  return { mensagens, total, paginasLidas: lidas, temMais: lidas < lastPage };
+}
+
+// Nome dos usuários do Digisac (4 no escritório) pra rotular quem falou; cache de 10 min em
+// memória — muda raramente e é uma chamada a menos por conversa aberta.
+let usuariosCache = { em: 0, mapa: new Map() };
+export async function mapaUsuariosDigisac() {
+  const api = client();
+  if (!api) return new Map();
+  if (Date.now() - usuariosCache.em < 10 * 60_000 && usuariosCache.mapa.size) return usuariosCache.mapa;
+  try {
+    const resp = await api.get('/users', { params: { limit: 100 } });
+    const lista = resp.data?.data || resp.data || [];
+    usuariosCache = { em: Date.now(), mapa: new Map(lista.map(u => [u.id, u.name || u.email || 'Usuário'])) };
+  } catch (err) {
+    console.warn('[Digisac] Não deu pra listar usuários:', err.message);
+  }
+  return usuariosCache.mapa;
 }
 
 // Salva eventos Digisac no banco (cache local)

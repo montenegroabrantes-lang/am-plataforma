@@ -18,6 +18,7 @@ import {
 } from '../services/remuneracaoEstadual.js';
 import { obterAcessoTribunal } from '../services/acessoTribunal.js';
 import { camila } from '../services/camila.js';
+import { buscarConversaContato, mapaUsuariosDigisac } from '../services/digisac/index.js';
 import { sincronizarOnboardingComCamila } from '../services/reprocessarSyncCamila.js';
 
 export const estimativasRouter = Router();
@@ -252,6 +253,47 @@ estimativasRouter.get('/:id/referencia-estadual', apenasMaster, referenciaEstadu
       );
     }
     res.status(502).json({ ok: false, erro: 'Não foi possível consultar a fonte oficial agora.' });
+  }
+});
+
+// GET /api/estimativas/leads/:contactId/mensagens — histórico da conversa direto da API do
+// Digisac, pro painel lateral do AM (sem iframe, sem login do Digisac). Só leitura; quem
+// responde por aqui continua passando por POST /leads/:contactId/mensagem (Master). Aberto a
+// qualquer usuário logado — mesmo alcance que o iframe já tinha na tela de Leads.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+estimativasRouter.get('/leads/:contactId/mensagens', async (req, res) => {
+  const contactId = String(req.params.contactId || '');
+  if (!UUID_RE.test(contactId)) return res.status(400).json({ ok: false, erro: 'contactId inválido.' });
+  const paginas = Math.min(10, Math.max(1, Number(req.query.paginas) || 3));
+  try {
+    const [{ mensagens, total, temMais }, usuarios] = await Promise.all([
+      buscarConversaContato(contactId, { paginas }),
+      mapaUsuariosDigisac(),
+    ]);
+    const lista = mensagens.map(m => {
+      const dados = m.data && typeof m.data === 'object' ? m.data : {};
+      const evento = m.type === 'ticket' ? (Object.keys(dados).find(k => k.startsWith('ticket')) || 'ticket') : null;
+      const de = evento ? 'sistema' : m.isFromMe ? 'escritorio' : 'cliente';
+      const arquivo = m.file || dados.file || null;
+      const anexo = arquivo && typeof arquivo === 'object'
+        ? { url: arquivo.url || arquivo.downloadUrl || arquivo.publicUrl || null, nome: arquivo.name || arquivo.originalName || null, mime: arquivo.mimetype || arquivo.mimeType || null }
+        : null;
+      return {
+        id: m.id,
+        de,
+        evento,
+        autor: de === 'escritorio' ? (usuarios.get(m.userId) || (m.isFromBot ? 'Robô do Digisac' : 'Escritório')) : null,
+        texto: m.text ?? dados.text ?? '',
+        tipo: m.type || 'chat',
+        em: m.timestamp || m.createdAt || null,
+        anexo,
+        ticket_id: m.ticketId || null,
+      };
+    });
+    res.json({ ok: true, mensagens: lista, total, tem_mais: temMais });
+  } catch (err) {
+    const status = err.status || err.response?.status || 502;
+    res.status(status).json({ ok: false, erro: err.response?.data?.message || err.message || 'Não foi possível ler a conversa no Digisac.' });
   }
 });
 
