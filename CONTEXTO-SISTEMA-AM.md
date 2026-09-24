@@ -1697,3 +1697,46 @@ integrações ou produção. Não registrar segredos neste documento.
   comportamento visível ainda), comparar com o comportamento atual por alguns dias antes de
   qualquer leitura real depender do estado novo — mesmo padrão de rollout gradual já usado nas
   fases da Camila V2. Nenhum código da Fase 1 foi escrito ainda; aguardando confirmação.
+
+### 25/09/2026 (continuação) — Fase 1 da reescrita executada em modo sombra + indicador de fase no `/health`
+
+- **Usuário aprovou a primeira fatia e pediu execução** ("execute tudo quero tudo rodando").
+  Antes de cortar o comportamento real pro roteador novo, foi explicado e confirmado com o
+  usuário o risco de corte imediato (roteador novo com só 5 categorias vs. dezenas de
+  comportamentos finos do sistema atual; tabela nova com poucos minutos de dado real) — decisão
+  conjunta de manter em modo sombra, validar com dado real, só então considerar ligar.
+- **Publicado** (Camila, commit `4b2b919`, deploy `f28d92f6` `SUCCESS`): tabela `estado_comercial`
+  (migração aditiva) consolidando fase/regime/nome/cargo/órgão/barreira/dono da conversa/valor
+  aprovado/documentos a partir das 5 fontes hoje espalhadas (`estados_conversas`,
+  `contatos_comerciais`, `propostas_enviadas`, `documentos_atendimento`). Escrita em **modo
+  sombra**: `camila/estado-comercial.js` (`sincronizar()`), pendurada no único ponto que sempre
+  roda (`finally{}` de `atenderMensagem`, `server.js`), fire-and-forget, fail-open em 2 camadas
+  (nunca lança pra fora do módulo, e a chamada em `server.js` tem catch próprio) — nunca pode
+  atrasar nem quebrar um atendimento real. `camila/roteador-v3.js`: função pura `decidir(estado)`
+  que decide o agente (humano/qualificação/proposta/documentos/encerramento) a partir do estado
+  consolidado — ainda não chamada em produção pra decidir nada, só testada. `regime` fica nulo
+  por enquanto (nenhuma fonte guarda isso estruturado hoje; capturar isso é o próximo passo desta
+  mesma fase, não feito ainda de propósito, pra não mexer de novo no prompt/`CALCULAR` na mesma
+  sessão dos outros patches). DDL validado diretamente contra o schema real de produção antes de
+  esperar tráfego orgânico (leitura/DDL apenas, nenhum dado de lead tocado). **Verificado ao
+  vivo**: tabela populou com leads reais minutos depois (2 linhas), incluindo um achado real —
+  um contato com `fase:"qualificacao"` já tinha `valor_aprovado` preenchido, exatamente o tipo de
+  inconsistência entre fontes que a Fase 1 existe pra eliminar.
+- **Pedido do usuário**: expor em algum lugar do sistema a fase de implementação da reescrita,
+  com avisos. **Publicado** (commit `94d4615`, deploy `8595e751` `SUCCESS`): novo bloco
+  `reescrita_v3` no `GET /health` — `{reescrita, fase_atual, ativo, desde, aviso, sincronizacoes,
+  divergencias, taxa_divergencia}`. `ativo` fica `false` até o dia em que algo em produção
+  realmente ler `estado_comercial` pra decidir comportamento — isso exige aprovação explícita
+  separada, documentado no próprio campo `aviso`. Ao mesmo tempo, `camila/estado-comercial.js`
+  passou a gravar por sincronização real `agente_sugerido` (o que o roteador-v3 decidiria),
+  `agente_real` (o que o sistema atual já fez, traduzido pro mesmo vocabulário) e `divergiu` —
+  operacionaliza a comparação prometida antes de qualquer corte, sem mudar nenhum comportamento.
+  Testado reproduzindo o achado real de produção acima como caso de teste (divergência genuína
+  esperada, não bug). 222/222 testes (`test:safe` + `test:continuidade`, 13 testes novos no total
+  entre as duas publicações desta seção).
+- **Pendente**: aguardar acumular dado real suficiente (`sincronizacoes`/`taxa_divergencia` no
+  `/health`) antes de considerar ligar `CAMILA_ROTEADOR_V3_ATIVO` (flag ainda nem criada — corte
+  real precisa de aprovação explícita separada, mesma disciplina da Camila V2). Captura
+  estruturada de "regime" ainda não conectada. As 5 fases restantes da reescrita (prompt por
+  camadas de custo, proatividade, aprendizado redesenhado, integração com o AM, rollout) e as 6
+  teses do catálogo sem conteúdo continuam não iniciadas.
