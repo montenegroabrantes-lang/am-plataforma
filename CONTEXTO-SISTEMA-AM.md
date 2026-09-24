@@ -1591,3 +1591,71 @@ integrações ou produção. Não registrar segredos neste documento.
   Commit `26dc98a`, publicado.
 - Nenhuma mensagem de teste foi enviada a cliente nesta sessão; os 4 leads e o caso Olga foram
   conferidos apenas por leitura da API. `next build` OK antes de cada publicação do frontend.
+
+### 24-25/09/2026 — Análise completa de reestruturação da Camila (vendas) + primeiro patch de conteúdo publicado
+
+- **Pedido do usuário**: analisar todo o código da Camila (vendas) e avaliar se vale reescrever
+  como versão nova ("Camila V3" — já existe uma "Camila V2" de 12 fases no ar desde 26/08,
+  então esse nome não pode ser reaproveitado), incluindo agentes especializados, roteador,
+  aprendizado que de fato entre em prática, e eficiência/economia de tokens.
+- **Leitura profunda** (workflow de 12 agentes: 9 subsistemas + ciência de vendas + economia de
+  tokens + verificação cruzada) encontrou, com evidência de código e de dados reais de produção:
+  guarda de resposta fixa que descarta a resposta da IA inteira e reintroduz texto genérico
+  (foi exatamente o bug do caso real abaixo); memória gravando o que a IA gerou, não o que foi
+  enviado; nenhuma "situação comercial" única do lead (5-8 fontes); seletor de intenção por
+  regex que erra frases comuns e decide sozinho (inclusive forçando transferência jurídica por
+  engano); 56-62% dos tokens do mês indo pro aprendizado automático sem nenhuma técnica
+  promovida (catálogo fechado de 10 técnicas de estilo, nunca de conteúdo); só 1 dos 3 caminhos
+  de envio passa pelo portão de segurança (retomadas e abertura por número enviam direto);
+  vínculo manual sem validação virando PDF quebrado. Gasto medido: ~US$22/mês, dos quais só
+  ~33% chega ao cliente. Recomendação: reescrever o núcleo de decisão (estado único, roteador,
+  camadas de IA por custo — regra/Haiku/Sonnet, aprendizado em lote por desfecho real), mantendo
+  a infraestrutura testada (idempotência de envio, fila de webhook, máquina de aprovação de
+  estimativa, pipeline de PDF, testes com Postgres real).
+- **Caso real usado como motivador** (Aurielle Gomes dos Santos, contato `bec3eba2`, professora
+  substituta UEPB): recebeu proposta 35h depois do prometido "amanhã", PDF com período quebrado
+  ("undefined meses"), e a mesma resposta genérica duas vezes seguidas quando perguntou a origem
+  do valor e a base legal — a Camila nunca respondia de verdade nem transferia de fato ao
+  Jurídico (só oferecia "posso encaminhar?" sem nunca encaminhar).
+- **Definição do produto/tese** (trabalho conjunto com o usuário, advogado do escritório):
+  verificado que o catálogo de teses do AM (`produtos`, 8 itens) e o módulo Acervo (`teses_acervo`,
+  15 slugs) não têm descrição nem base legal preenchidas, e a Camila não referencia nenhum dos
+  dois — o `calculadora.js` (6% × meses) nunca soube qual tese estava calculando. A página pública
+  `abrantesemontenegro.com.br/restituicao-educacao` foi usada como fonte aprovada: nunca nomeia
+  "FGTS" no corpo do texto, só cita "art. 19-A da Lei 8.036/1990" no FAQ quando perguntado
+  diretamente — essa "roupagem" (vender "restituição da Fazenda Pública", não o mecanismo
+  técnico) foi definida como o padrão para a Camila. Lógica fechada com o usuário, em camadas:
+  (0) explicação geral sem nomear mecanismo; (1) lógica completa se insistir em "por que ninguém
+  me falou" — lei local omissa → lei federal especial → 25 meses → Fazenda paga → só via
+  Justiça → não afeta vínculo/contracheque; (2) citação técnica (art. 19-A/STF) só se insistir
+  ainda mais, teto do que a Camila sabe; (3) Jurídico se insistir além disso. Regime elegível:
+  contratado/temporário/excepcional interesse afirma direito sem hedge; efetivo/concursado não
+  afirma nem descarta (outra tese do catálogo pode se aplicar por cargo/órgão, ainda sem
+  conteúdo) — encaminha pra equipe avaliar. Honorários (30%, êxito, sem cobrança antecipada)
+  confirmados sem alteração, apesar de `cliente_produtos.honorarios_pct` estar majoritariamente
+  zerado no banco (achado de qualidade de dado, não de política).
+- **Testado fora de produção antes de publicar**, chamando a API do Claude diretamente com o
+  prompt real: caso Aurielle (origem do valor + insistência em base legal), regime (contratado
+  afirma, efetivo não afirma nem descarta, variações e follow-up), honorários, hesitação (achado
+  e corrigido: ela diagnosticava mas não fechava com horário — regra nova obriga propor 2
+  horários concretos na mesma mensagem), e uma conversa multi-turno com lead desconfiado
+  (golpe repetido, "por que eu e não outro contratado", quem paga) — sem contradições entre
+  turnos. **Achado bug real de produção durante o teste**: a Camila em produção, perguntada por
+  uma servidora "concursada efetiva há 10 anos", respondia que ela "é exatamente o perfil que
+  analisamos" — afirmação incorreta que o patch corrige.
+- **Publicado** (Camila, commit `d93f59b`, deploy `09952ae5` `SUCCESS`, verificado por
+  `prompt_versao: "75654902c6f0"` no `/health`): `camila/oferta-comercial.js` reescrito com a
+  lógica em camadas; `camila/prompt-vendas.js` (hesitação reescrita, regra de regime, correção
+  de repetição de CTA em objeção não resolvida, exemplo de "revisão de salário/imposto"
+  atualizado); `camila/acoes.js` e `server.js` ganharam a ação nova `TRANSFERIR_OUTRA_TESE`
+  (efetivo → equipe avalia outra tese, com alerta) e alerta também na transferência ao Jurídico;
+  `camila/respostas-aprovadas.js` (`FIXA-ORIGEM-VALOR`) e `camila/seletor-respostas.js`
+  atualizados junto, para a rede de segurança de substituição de resposta nunca reintroduzir o
+  texto antigo. **Cálculo/percentual da estimativa não foi tocado**, por pedido explícito.
+  `npm run test:safe` e `npm run test:continuidade` 100% (208/208), incluindo rebaseline do
+  hash do prompt e 2 testes ajustados para a nova ação/frase.
+- **Pendente**: as outras 6 teses do catálogo (Piso Salarial-Magistério, Adicional Noturno,
+  Insalubridade, Férias 30/45 dias, 13º Salário, Equiparação no magistério) ainda não têm
+  conteúdo aprovado — a Camila continua com a explicação genérica pra elas. O plano de
+  reescrita completa (estado único, roteador, agentes, aprendizado redesenhado) foi desenhado
+  em fases mas não iniciado — aguarda decisão do usuário sobre começar.
