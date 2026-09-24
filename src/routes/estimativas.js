@@ -80,6 +80,51 @@ for(const [method,local,remote] of [
   estimativasRouter[method](local,...(method==='get'?[]:[apenasMaster]),handler);
 }
 
+// Aba "Camila" (versão, desempenho, histórico de atualização) — pedida pelo usuário 25/09/2026.
+// /health não fica sob /api na Camila (não exige x-api-key), mas o cliente axios do camila()
+// já usa CAMILA_API_URL como baseURL, então funciona igual; o header extra é só ignorado lá.
+estimativasRouter.get('/camila/status', async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+  try {
+    const { data } = await api.get('/health');
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ ok: false, erro: `Camila indisponível: ${err.response?.status || err.message}` });
+  }
+});
+estimativasRouter.get('/camila/uso-ia', async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+  try {
+    const { data } = await api.get('/api/uso-ia', { params: req.query });
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ ok: false, erro: `Camila indisponível: ${err.response?.status || err.message}` });
+  }
+});
+estimativasRouter.get('/camila/mudancas', async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+  try {
+    const { data } = await api.get('/api/mudancas', { params: req.query });
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ ok: false, erro: `Camila indisponível: ${err.response?.status || err.message}` });
+  }
+});
+estimativasRouter.post('/camila/mudancas', apenasMaster, async (req, res) => {
+  const api = camila();
+  if (!api) return semConfig(res);
+  try {
+    const body = { ...req.body, registradoPor: req.user?.nome || req.user?.email };
+    const { data } = await api.post('/api/mudancas', body);
+    res.status(201).json(data);
+  } catch (err) {
+    res.status(err.response?.status || 502).json({ ok: false, erro: err.response?.data?.erro || 'Não foi possível registrar a mudança.' });
+  }
+});
+
 // GET /api/estimativas — lista (status=pendente|aprovada_entregue|recusada_entregue...)
 estimativasRouter.get('/', async (req, res) => {
   const api = camila();
