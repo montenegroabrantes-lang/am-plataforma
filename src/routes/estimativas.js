@@ -55,12 +55,25 @@ for(const [method,local,remote] of [
   ['get','/sinteses-aprendizado','/api/sinteses-aprendizado'],
   ['post','/sinteses-aprendizado/:id/decidir','/api/sinteses-aprendizado/:id/decidir'],
   ['get','/continuidade-metricas','/api/continuidade-metricas'],
+  // Fase 9 (achados de conformidade) e Fase 8 (fila de aprendizado supervisionado) da Camila —
+  // rotas já existiam do lado dela desde antes, comentadas como "aba da Plataforma AM", mas
+  // nunca tinham sido espelhadas aqui (achado 25/09/2026, ao procurar "a aba de notificação da
+  // Camila" e não encontrar nada). "achados-monitoramento" evita colidir com o /api/monitoramento
+  // que já existe neste mesmo backend (sync de processos com tribunais — feature não relacionada).
+  ['get','/achados-monitoramento','/api/monitoramento'],
+  ['get','/achados-monitoramento/:id','/api/monitoramento/:id'],
+  ['post','/achados-monitoramento/:id/decidir','/api/monitoramento/:id/decidir'],
+  ['get','/aprendizado-atendimentos','/api/aprendizado'],
+  ['get','/aprendizado-atendimentos/:contactId','/api/aprendizado/:contactId'],
+  ['post','/aprendizado-atendimentos/:contactId/decidir','/api/aprendizado/:contactId/decidir'],
 ]) {
   const handler=async(req,res)=>{
     const api=camila();if(!api)return semConfig(res);
     const url=remote.replace(/:([a-zA-Z]+)/g,(_,key)=>encodeURIComponent(req.params[key]));
     try {
-      const body={...req.body,registradoPor:req.user?.nome||req.user?.email||String(req.user?.id||''),atualizado_por:req.user?.nome||req.user?.email};
+      // decidido_por: nome exato que /api/monitoramento/:id/decidir e /api/aprendizado/:id/decidir
+      // (Camila) esperam no corpo — os outros dois nomes já cobriam as rotas anteriores.
+      const body={...req.body,registradoPor:req.user?.nome||req.user?.email||String(req.user?.id||''),atualizado_por:req.user?.nome||req.user?.email,decidido_por:req.user?.nome||req.user?.email};
       const {data}=await api.request({method,url,...(method==='get'?{params:req.query}:{data:body})});res.json(data);
     }catch(e){res.status(e.response?.status||502).json({ok:false,erro:e.response?.data?.erro||'Não foi possível consultar a Camila.'});}
   };
