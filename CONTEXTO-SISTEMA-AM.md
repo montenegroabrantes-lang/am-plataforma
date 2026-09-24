@@ -1656,6 +1656,44 @@ integrações ou produção. Não registrar segredos neste documento.
   hash do prompt e 2 testes ajustados para a nova ação/frase.
 - **Pendente**: as outras 6 teses do catálogo (Piso Salarial-Magistério, Adicional Noturno,
   Insalubridade, Férias 30/45 dias, 13º Salário, Equiparação no magistério) ainda não têm
-  conteúdo aprovado — a Camila continua com a explicação genérica pra elas. O plano de
-  reescrita completa (estado único, roteador, agentes, aprendizado redesenhado) foi desenhado
-  em fases mas não iniciado — aguarda decisão do usuário sobre começar.
+  conteúdo aprovado — a Camila continua com a explicação genérica pra elas.
+
+### 25/09/2026 — Correção do bypass jurídico (`pareceJuridicaIndividual`) + itens 3b/3c investigados + decisão de por onde começar a reescrita
+
+- **Bug real corrigido** (Camila, commit `8edccf5`, deploy `d618aa44` `SUCCESS`,
+  `prompt_versao: e8cb50eeed53` no `/health`): `camila/seletor-respostas.js`
+  (`pareceJuridicaIndividual`) disparava transferência jurídica incondicional só por ouvir as
+  palavras soltas "tese", "artigo" ou "jurisprudência" em qualquer mensagem do cliente — pulando
+  as camadas 1 e 2 da explicação de origem do valor (publicadas no patch anterior) mesmo na
+  primeira menção. Uma condição já existente na própria função (gateada por
+  `origemJaExplicada`) tentava resolver isso só pra "tese", mas ficava morta porque a checagem
+  anterior interceptava antes — evidência de que essa já era a intenção original, nunca
+  finalizada. Corrigido: "prescrição"/"chance de perder/ganhar" continuam transferindo direto
+  (são avaliação de risco individual, sem camada equivalente); "tese"/"artigo"/"jurisprudência"
+  soltos agora só forçam transferência depois que a explicação geral já foi dada.
+  `camila/prompt-vendas.js` (instrução em texto livre pra IA) alinhado com a mesma regra, senão
+  a IA continuaria transferindo por conta própria mesmo com o regex corrigido. Verificado
+  independentemente por um segundo agente antes de mexer (achou a mesma causa, sem viés do
+  diagnóstico original) e testado ao vivo: "qual o artigo de lei que garante isso?" agora recebe
+  a citação do art. 19-A/STF (Camada 2) em vez de transferência imediata. `test:safe` e
+  `test:continuidade` 100% (209/209), com 1 teste existente reescrito conscientemente e 1 novo.
+- **Item 3b investigado (honorários zerados no banco)**: não é bug ativo. `produtos.js:138-149`
+  já corrige isso desde 12/08/2026 — o próprio comentário do código cita a auditoria que achou
+  1073 vínculos sem lançamento financeiro por causa do default silencioso em 0%. Hoje o sistema
+  **exige** o percentual explicitamente (erro 400 sem valor informado e sem padrão configurado
+  na tese) — impossível criar vínculo novo com 0% sem querer. Os zeros no banco são registros
+  anteriores a essa correção; nenhuma mudança de código foi feita. Resta decisão de negócio
+  (não executada): corrigir retroativamente os registros antigos.
+- **Item 3c investigado (campo "regime")**: reformulado depois de checar o código. A tabela
+  `clientes`/`cliente_vinculos` do AM é só para quem já assinou — não ajuda a Camila na hora da
+  venda, que é quando o regime (efetivo/contratado/temporário) precisa ser sabido. O gap real é
+  que a Camila pergunta o regime na conversa mas nunca guarda isso como campo estruturado — fica
+  só implícito no texto. Não é um `ALTER TABLE` isolado no AM; fica registrado como parte do
+  desenho da Fase 1 abaixo (estado único), não um remendo separado.
+- **Decisão sobre a reescrita completa**: usuário escolheu começar pela **Fase 1 — estado único
+  + roteador** (não pelo levantamento de dados nem pelas 6 teses restantes). Desenho apresentado
+  e aprovação da primeira fatia ainda pendente no fim desta sessão: criar a tabela de estado
+  único (migração aditiva) e escrever nela **em modo sombra** (sem nenhuma mudança de
+  comportamento visível ainda), comparar com o comportamento atual por alguns dias antes de
+  qualquer leitura real depender do estado novo — mesmo padrão de rollout gradual já usado nas
+  fases da Camila V2. Nenhum código da Fase 1 foi escrito ainda; aguardando confirmação.
