@@ -1,6 +1,6 @@
 # Contexto permanente — Sistema AM
 
-**Última atualização:** 25/09/2026
+**Última atualização:** 25/09/2026 (mesmo dia, fix na régua de comparação do modo sombra)
 **Finalidade:** continuidade segura do desenvolvimento em outros chats e sessões.
 
 Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
@@ -1789,7 +1789,31 @@ integrações ou produção. Não registrar segredos neste documento.
     3,74M tokens, 7 finalidades) todos corretos na tela. Um bug real foi achado e corrigido nessa
     verificação: `organizacao_digisac` no `/health` é um objeto (`{ativo, ultimaExecucao,
     ultimoErro}`), não uma string — a tela mostrava `[object Object]` até o fix.
-  - **Pendência real**: o histórico de atualização só vai funcionar depois que o commit `a000bfd`
-    da Camila for enviado e reimplantado (hoje dá "Não foi possível consultar" porque
-    `/api/mudancas` ainda não existe em produção). Testes locais da Camila passaram (14/14
-    `test:safe` + 222/222 `test:continuidade`) antes do commit.
+  - **Pendência resolvida no mesmo dia**: usuário autorizou o `git push` do commit `a000bfd` da
+    Camila (deploy Railway `SUCCESS`) e do AM backend (`5cd9134`, deploy `SUCCESS`) — verificado
+    ao vivo: `/api/mudancas` responde `200 {"ok":true,"itens":[]}` direto na Camila e também pelo
+    proxy do AM. Aba "Camila" 100% funcional em produção.
+
+### 25/09/2026 — fix na régua de comparação do modo sombra (aguardando_aprovacao → proposta)
+
+- **Gatilho**: usuário pediu pra investigar a única divergência real registrada na Fase 1
+  (`/health` mostrando `sincronizacoes:3, divergencias:1`). Achado: contato `f8c33870` (lead José
+  Cleonilson Barbosa, professor da Prefeitura de Natal) estava na fase `aguardando_aprovacao`
+  (`CALCULAR` já disparado, na fila de revisão humana — só chega lá com qualificação completa),
+  com nome/cargo/órgão preenchidos e valor ainda não aprovado. O roteador-v3 classificou
+  corretamente como "proposta" ("dados completos, aguardando estimativa/aprovação"); a régua que
+  traduz o comportamento real pro mesmo vocabulário (`agenteReal()`) jogava `aguardando_aprovacao`
+  no balde "qualificação" — gerando divergência falsa toda vez que esse padrão comum (dados
+  completos, na fila de aprovação) acontecesse, contaminando a taxa de divergência que vai decidir
+  se o roteador novo pode assumir de verdade.
+- **Publicado** (commit `f138f76`, deploy Railway `SUCCESS`): `agenteReal()` em
+  `camila/estado-comercial.js` passou a mapear `aguardando_aprovacao` pra "proposta" (junto com
+  `vendas`/`aguardando_atendente_humano`), não mais pra "qualificação". Não muda nenhum
+  comportamento real da Camila — só a precisão da medição em modo sombra. Teste novo
+  (`tests/estado-comercial.test.js`) reproduz o caso exato de produção. 14/14 `test:safe` +
+  223/223 `test:continuidade` (só falharam, sem relação com o fix, 5 verificações de
+  `teste-calculadora.js` sensíveis ao dia real da semana — hoje era sexta-feira e a regra real de
+  aviso institucional de sexta interferiu com testes que não previam isso; confirmado com
+  `git stash` que a mesma falha ocorre sem o fix aplicado; sinalizado como pendência separada).
+  `/health` reiniciou zerado (`sincronizacoes:0`) depois do deploy — voltando a acumular dado
+  limpo com a régua corrigida.
