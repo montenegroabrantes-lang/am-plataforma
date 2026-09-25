@@ -1,6 +1,6 @@
 # Contexto permanente — Sistema AM
 
-**Última atualização:** 21/09/2026
+**Última atualização:** 25/09/2026
 **Finalidade:** continuidade segura do desenvolvimento em outros chats e sessões.
 
 Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
@@ -1740,3 +1740,56 @@ integrações ou produção. Não registrar segredos neste documento.
   estruturada de "regime" ainda não conectada. As 5 fases restantes da reescrita (prompt por
   camadas de custo, proatividade, aprendizado redesenhado, integração com o AM, rollout) e as 6
   teses do catálogo sem conteúdo continuam não iniciadas.
+
+### 24-25/09/2026 — ponte de notificações da Camila no AM + nova aba lateral "Camila"
+
+- **Gatilho**: usuário perguntou "cadê a aba de notificação e aviso de Camila no Sistema AM?".
+  Investigação achou duas rotas já prontas do lado da Camila desde as Fases 8/9 da V2 (fila de
+  aprendizado supervisionado e achados de conformidade/monitoramento), com comentário no próprio
+  código dizendo "aba da Plataforma AM" — mas nunca espelhadas no backend do AM nem com nenhuma
+  tela pra elas. Não era um bug, era uma ponte que faltava terminar.
+- **Publicado** (AM backend, commit `ac717a2`): `src/routes/estimativas.js` ganhou 6 rotas novas
+  (`/achados-monitoramento`, `/achados-monitoramento/:id`, `/achados-monitoramento/:id/decidir`,
+  `/aprendizado-atendimentos`, `/aprendizado-atendimentos/:contactId`,
+  `/aprendizado-atendimentos/:contactId/decidir`), proxy autenticado pra `/api/monitoramento` e
+  `/api/aprendizado` da Camila (GET livre pra qualquer usuário autenticado, POST/decidir restrito
+  a Master). Corpo de decisão passou a levar também `decidido_por`.
+- **Publicado** (AM frontend, commit `648a102`): `ContinuidadeCamila.jsx` ganhou
+  `NotificacoesCamila()` (renderizada na aba Estimativas, acima do painel de aprendizado),
+  mostrando achados de conformidade e a fila de aprendizado supervisionado, com aprovar/descartar
+  + observação. Os 2 alertas operacionais que a Camila já dispara (Jurídico acionado / regime
+  efetivo → outra tese) passaram a gravar em `monitoramento_achados` também, pra aparecer aqui.
+- **Verificação sem senha**: como não entro com credencial de ninguém, a verificação ponta a
+  ponta foi automatizada assinando um JWT de teste com o próprio `JWT_SECRET` do backend (mesmo
+  valor já lido antes via Railway CLI) usando só campos não-secretos de um usuário Master real
+  (id/nome/email/perfil — nunca `senha_hash`), técnica repetida depois nesta mesma sessão pra
+  testar a aba nova abaixo. Não é login real nem substitui a política de nunca digitar senha.
+- **Pedido seguinte do usuário**: no texto bruto da fila de aprendizado, mostrar só um resumo
+  curto (não o achado inteiro, que às vezes tinha vários parágrafos). **Publicado** (mesmo
+  commit `17ac051` abaixo): `Resumo()` em `ContinuidadeCamila.jsx` — corta pra 180 caracteres da
+  primeira linha, com `<details>` pra expandir o texto completo quando precisar.
+- **Pedido seguinte do usuário** (verbatim, resumido): uma aba lateral "Camila" com versão,
+  estatísticas de desempenho, histórico de atualização "e o que couber". **Publicado**:
+  - Camila (commit `a000bfd`, **ainda não enviado pro GitHub/deploy** — bloqueado pelo classificador
+    de modo automático como publicação fora do escopo local; aguardando autorização explícita do
+    usuário pra `git push`): tabela nova `mudancas_registradas` (`mudancas.js`) e rotas
+    `GET/POST /api/mudancas`, pra registrar e consultar um changelog curto em português de
+    negócio (não é changelog de commit técnico).
+  - AM backend (commit `a748fa2`): `estimativas.js` ganhou `GET /camila/status` (espelha
+    `/health` da Camila), `GET /camila/uso-ia` (espelha `/api/uso-ia`, telemetria de tokens) e
+    `GET`/`POST /camila/mudancas` (POST restrito a Master).
+  - AM frontend (commit `17ac051`): página nova `/camila` (`PainelCamila.jsx`) com 3 cartões —
+    status/versão (inclui o bloco `reescrita_v3` do `/health`, mostrando a fase da V3 e a taxa de
+    divergência do roteador em modo sombra), desempenho de IA por período (chamadas/tokens,
+    detalhado por finalidade) e histórico de atualização, com formulário de registro rápido
+    visível só pra Master. Entrada "Camila" nova no menu lateral, grupo Gestão.
+  - **Verificado em dev local contra a Camila de produção real** (backend e frontend rodando
+    localmente, dados reais via `CAMILA_API_URL`/`DATABASE_URL` de produção): status "No ar",
+    versão do prompt (`e8cb50eeed53`), sincronização com Digisac e consumo de IA (630 chamadas,
+    3,74M tokens, 7 finalidades) todos corretos na tela. Um bug real foi achado e corrigido nessa
+    verificação: `organizacao_digisac` no `/health` é um objeto (`{ativo, ultimaExecucao,
+    ultimoErro}`), não uma string — a tela mostrava `[object Object]` até o fix.
+  - **Pendência real**: o histórico de atualização só vai funcionar depois que o commit `a000bfd`
+    da Camila for enviado e reimplantado (hoje dá "Não foi possível consultar" porque
+    `/api/mudancas` ainda não existe em produção). Testes locais da Camila passaram (14/14
+    `test:safe` + 222/222 `test:continuidade`) antes do commit.
