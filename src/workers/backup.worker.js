@@ -1,6 +1,5 @@
 import { Worker } from 'bullmq';
-import { exec }   from 'child_process';
-import { promisify } from 'util';
+import { spawn }  from 'child_process';
 import { redis }  from '../cache/redis.js';
 import { db }     from '../db/index.js';
 import { uploadBackup, limparBackupsAntigos } from '../services/drive/index.js';
@@ -8,15 +7,64 @@ import { enviarAlerta } from '../services/digisac/index.js';
 import path       from 'path';
 import fs         from 'fs';
 
-const execAsync = promisify(exec);
 const BACKUP_DIR = process.env.BACKUP_DIR || '/tmp/am-backups';
 
-// 21/09/2026 — achado real: o upload pro Drive podia falhar (ex.: refresh_token expirado —
-// confirmado morto em produção, invalid_grant há pelo menos 11 dias) e o job continuava
-// "completado" no BullMQ, com o arquivo local apagado logo em seguida (/tmp não é persistente
-// no Railway) — nenhum backup chegava a lugar nenhum, e nada avisava ninguém. Agora: upload
-// falhou = job falha de verdade (aparece como falha no BullMQ, não como sucesso) e os masters
-// são alertados por WhatsApp; o arquivo local só é apagado quando o upload dá certo.
+// 28/09/2026 — achado real: os 7 backups de 22 a 28/09 no Drive eram gzip vazios de 20 bytes.
+// Causa: `pg_dump | gzip > arquivo` num shell sem `pipefail` — o status de saída é o do gzip,
+// não o do pg_dump, então um pg_dump que falha (ex.: pg_dump 15 do Debian contra um servidor
+// Postgres 18) ainda produz um "sucesso" com um gzip de entrada vazia, e a rotação apagava os
+// backups bons anteriores por cima. Agora o dump roda com spawn separado do gzip, checando o
+// código de saída e o stderr do pg_dump de verdade, e o arquivo final passa por um piso mínimo
+// de tamanho plausível antes de subir ao Drive ou de qualquer rotação acontecer.
+const TAMANHO_MINIMO_BACKUP_BYTES = 1024;
+
+export function backupTemTamanhoPlausivel(bytes) {
+  return typeof bytes === 'number' && bytes >= TAMANHO_MINIMO_BACKUP_BYTES;
+}
+
+// Gera `pg_dump | gzip` sem passar por shell: evita o bug de exit code do pipe (a promise só
+// resolve se o pg_dump terminar com código 0 — senão rejeita com o stderr real do pg_dump) e
+// evita interpolar a connection string numa string de shell. `comando` é injetável para teste.
+export function gerarDumpComprimido(dbUrl, destino, { comando = 'pg_dump' } = {}) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (err) => { if (!settled) { settled = true; reject(err); } };
+
+    const dump = spawn(comando, [dbUrl]);
+    const gzip = spawn('gzip');
+    const out  = fs.createWriteStream(destino);
+
+    let stderr = '';
+    dump.stderr.on('data', (chunk) => { stderr += chunk; });
+
+    dump.on('error', (err) => fail(new Error(`Falha ao iniciar ${comando}: ${err.message}`)));
+    gzip.on('error', (err) => fail(new Error(`Falha ao iniciar gzip: ${err.message}`)));
+    out.on('error',  (err) => fail(new Error(`Falha ao gravar arquivo local: ${err.message}`)));
+
+    dump.stdout.pipe(gzip.stdin);
+    gzip.stdout.pipe(out);
+
+    let dumpFechou = false;
+    let dumpCodigo = null;
+    let escritaConcluida = false;
+
+    const tentarConcluir = () => {
+      if (settled || !dumpFechou || !escritaConcluida) return;
+      if (dumpCodigo !== 0) {
+        fail(new Error(
+          `${comando} saiu com código ${dumpCodigo}${stderr.trim() ? `: ${stderr.trim()}` : ' (sem mensagem de erro no stderr)'}`
+        ));
+        return;
+      }
+      settled = true;
+      resolve();
+    };
+
+    dump.on('close', (codigo) => { dumpFechou = true; dumpCodigo = codigo; tentarConcluir(); });
+    out.on('finish', () => { escritaConcluida = true; tentarConcluir(); });
+  });
+}
+
 async function alertarFalhaBackup(mensagem) {
   const masters = await db.query(
     `SELECT whatsapp FROM usuarios WHERE perfil='master' AND whatsapp IS NOT NULL AND whatsapp <> ''`
@@ -37,9 +85,30 @@ export function criarBackupWorker() {
       const arquivo     = path.join(BACKUP_DIR, nomeArquivo);
 
       const dbUrl = process.env.DATABASE_URL;
-      await execAsync(`pg_dump "${dbUrl}" | gzip > "${arquivo}"`);
 
-      console.log(`[Backup] Arquivo gerado: ${arquivo}`);
+      try {
+        await gerarDumpComprimido(dbUrl, arquivo);
+      } catch (err) {
+        fs.unlink(arquivo, () => {});
+        console.error('[Backup] Erro ao gerar dump do banco:', err.message);
+        await alertarFalhaBackup(
+          `🔴 *Backup do banco NÃO foi gerado*\n\n${err.message}\n\nNenhum arquivo foi enviado ao Google Drive e nenhum backup antigo foi removido. Verifique com urgência.`
+        );
+        throw err;
+      }
+
+      const { size } = fs.statSync(arquivo);
+      if (!backupTemTamanhoPlausivel(size)) {
+        fs.unlink(arquivo, () => {});
+        const msg = `Arquivo de backup implausivelmente pequeno (${size} bytes, mínimo esperado ${TAMANHO_MINIMO_BACKUP_BYTES}) — provável dump vazio ou incompleto.`;
+        console.error(`[Backup] ${msg}`);
+        await alertarFalhaBackup(
+          `🔴 *Backup do banco NÃO foi gerado*\n\n${msg}\n\nNenhum arquivo foi enviado ao Google Drive e nenhum backup antigo foi removido. Verifique com urgência.`
+        );
+        throw new Error(msg);
+      }
+
+      console.log(`[Backup] Arquivo gerado: ${arquivo} (${size} bytes)`);
 
       // Envia para Google Drive
       if (process.env.GOOGLE_DRIVE_PASTA_BACKUP) {
@@ -52,7 +121,7 @@ export function criarBackupWorker() {
         } catch (err) {
           console.error('[Backup] Erro ao enviar para Drive:', err.message);
           await alertarFalhaBackup(
-            `🔴 *Backup do banco NÃO chegou ao Google Drive*\n\nErro: ${err.message}\n\nO arquivo (${nomeArquivo}) foi gerado mas o envio falhou — provavelmente a autorização do Google precisa ser refeita. Verifique com urgência: sem isso, o backup diário não está sendo salvo em nenhum lugar fora do próprio banco.`
+            `🔴 *Backup do banco NÃO chegou ao Google Drive*\n\nErro: ${err.message}\n\nO arquivo (${nomeArquivo}, ${size} bytes) foi gerado mas o envio falhou — provavelmente a autorização do Google precisa ser refeita. Verifique com urgência: sem isso, o backup diário não está sendo salvo em nenhum lugar fora do próprio banco.`
           );
           throw err;
         }
@@ -61,7 +130,7 @@ export function criarBackupWorker() {
         fs.unlink(arquivo, () => {});
       }
 
-      return { arquivo: nomeArquivo };
+      return { arquivo: nomeArquivo, tamanho: size };
     },
     { connection: redis }
   );

@@ -1,5 +1,17 @@
 FROM node:20-slim
 
+# Repositório oficial apt.postgresql.org (PGDG), via script oficial do pacote
+# postgresql-common: o postgresql-client do Debian bookworm trava na major 15, mas o
+# Postgres de produção (Railway) está na major 18 — pg_dump 15 contra um servidor 18
+# falha (mismatch de versão) e, sem essa correção, o worker de backup silenciosamente
+# gravava um gzip vazio em vez de abortar (ver backup.worker.js). Este passo só registra
+# o repositório; o "postgresql-client" do apt-get install seguinte passa a resolver para
+# a versão mais nova do PGDG em vez da 15 do bookworm (sem precisar fixar número aqui,
+# então builds futuros acompanham upgrades de major version do Postgres em produção).
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql-common ca-certificates \
+ && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
+ && rm -rf /var/lib/apt/lists/*
+
 # Chromium para Puppeteer
 RUN apt-get update && apt-get install -y \
     chromium \
