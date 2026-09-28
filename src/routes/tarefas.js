@@ -7,6 +7,7 @@ import { registrarAuditoria } from '../middleware/auditoria.js';
 import { dataCalendarioValida } from '../utils/diasUteis.js';
 import { vinculoUnicoAtivo } from '../utils/vinculos.js';
 import { resolverTribunalCnj } from '../utils/cnj.js';
+import { resolverPeriodoProtocolo } from '../utils/periodoProtocolo.js';
 
 export const tarefasRouter = Router();
 
@@ -685,7 +686,7 @@ tarefasRouter.post('/lote/restaurar', apenasMaster, async (req, res) => {
 
 // PATCH /api/tarefas/:id/concluir-com-numero — conclui tarefa de protocolo inserindo número CNJ
 tarefasRouter.patch('/:id/concluir-com-numero', apenasMaster, async (req, res) => {
-  const { numero_processo, periodo_fim, vinculo_id } = req.body;
+  const { numero_processo, periodo_inicio, periodo_fim, vinculo_id } = req.body;
 
   const CNJ_RE = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
   if (!numero_processo || !CNJ_RE.test(numero_processo.trim())) {
@@ -716,6 +717,13 @@ tarefasRouter.patch('/:id/concluir-com-numero', apenasMaster, async (req, res) =
   if (vinculo_id && !uuidValido(vinculo_id)) {
     return res.status(400).json({ ok: false, erro: 'Vínculo inválido.' });
   }
+
+  // O cron de ciclos parte do periodo_fim do último processo: sem ele o cliente some dos
+  // ciclos seguintes. Em re-protocolo, o início é o próprio ciclo_inicio (ver periodoProtocolo.js).
+  const periodo = resolverPeriodoProtocolo({
+    periodoInicio: periodo_inicio, periodoFim: periodo_fim, cicloInicio: tarefa.ciclo_inicio,
+  });
+  if (!periodo.ok) return res.status(400).json({ ok: false, erro: periodo.erro });
 
   const vinculosCliente = await db.query(
     `SELECT id, polo_passivo, vinculo_ativo FROM cliente_vinculos WHERE cliente_id = $1 ORDER BY ordem`,
@@ -794,14 +802,21 @@ tarefasRouter.patch('/:id/concluir-com-numero', apenasMaster, async (req, res) =
           [poloFinal, processoId]
         );
       }
+      // Mesmo cuidado do polo: completa o período que faltar, sem sobrescrever o já gravado.
+      await pgClient.query(
+        `UPDATE processos SET periodo_inicio = COALESCE(periodo_inicio, $1::date),
+                              periodo_fim    = COALESCE(periodo_fim, $2::date)
+          WHERE id = $3`,
+        [periodo.inicio, periodo.fim, processoId]
+      );
     } else {
       const r = await pgClient.query(
         `INSERT INTO processos (numero, tribunal, sistema, grau, cliente_id, produto_id,
-                                master_responsavel_id, polo_passivo, periodo_fim, sync_status)
-         VALUES ($1,$2,$3,'1',$4,$5,$6,$7,$8,'aguardando_primeira_captura')
+                                master_responsavel_id, polo_passivo, periodo_inicio, periodo_fim, sync_status)
+         VALUES ($1,$2,$3,'1',$4,$5,$6,$7,$8,$9,'aguardando_primeira_captura')
          RETURNING id`,
         [numeroLimpo, tribunal, sistema, tarefa.cliente_id, tarefa.produto_id,
-         masterId, poloFinal, periodo_fim || null]
+         masterId, poloFinal, periodo.inicio, periodo.fim]
       );
       processoId = r.rows[0].id;
     }
@@ -812,6 +827,16 @@ tarefasRouter.patch('/:id/concluir-com-numero', apenasMaster, async (req, res) =
          processo_id=$2, concluida_em=NOW(), cliente_vinculo_id=$4 WHERE id=$3`,
         [numeroLimpo, processoId, req.params.id, clienteVinculoId]
       );
+
+      // A demanda por trás da tarefa passa a "protocolada" e aponta pro processo — nenhuma rotina
+      // fechava demanda até aqui; é a base da trava de duplicidade do re-protocolo automatizado.
+      if (tarefa.demanda_id) {
+        await pgClient.query(
+          `UPDATE demandas SET status='protocolada', processo_id=$1, atualizado_em=NOW()
+            WHERE id=$2 AND status='aberta'`,
+          [processoId, tarefa.demanda_id]
+        );
+      }
 
       if (tarefa.onboarding_id) {
         const restantes = await pgClient.query(
@@ -859,12 +884,24 @@ tarefasRouter.patch('/:id/concluir-com-numero', apenasMaster, async (req, res) =
   await registrarAuditoria({
     usuarioId: req.user.id, acao: 'protocolar', entidade: 'processo',
     entidadeId: processoId,
-    valorDepois: { numero: numeroLimpo, cliente_vinculo_id: clienteVinculoId, polo_passivo: poloFinal },
+    valorDepois: {
+      numero: numeroLimpo, cliente_vinculo_id: clienteVinculoId, polo_passivo: poloFinal,
+      periodo_inicio: periodo.inicio, periodo_fim: periodo.fim,
+    },
     ip: req._ip,
   });
 
   res.json({ ok: true, processo_id: processoId, numero: numeroLimpo });
 });
+
+// Cadastro contraditório: vínculo marcado como ativo E com data de fim. ciclosRecorrentes.js o trata
+// como ativo e pode propor um período que já não existe; aceitar o ciclo também zera
+// precisa_triagem, o que apagaria qualquer sinalização. Por isso o aceite é barrado até o
+// cadastro do cliente ser corrigido (achado de 28/09/2026: 5 tarefas, entre elas as 2 "prontas").
+const MSG_VINCULO_CONTRADITORIO = 'O cadastro do cliente marca o vínculo como ativo e tem data de fim ao mesmo tempo. '
+  + 'Corrija o vínculo no cadastro do cliente antes de aceitar o ciclo.';
+const vinculoContraditorio = (clienteId) => db.queryOne(
+  `SELECT 1 AS x FROM clientes WHERE id=$1 AND vinculo_ativo=true AND vinculo_fim IS NOT NULL`, [clienteId]);
 
 // PATCH /api/tarefas/:id/ciclo/aceitar — o Master confirma que o novo ciclo vira protocolo:
 // exige responsável e prazo, e a tarefa passa para a fila de protocolo inicial.
@@ -882,6 +919,7 @@ tarefasRouter.patch('/:id/ciclo/aceitar', apenasMaster, async (req, res) => {
   if (!tarefa) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
   if (tarefa.subtipo !== 'ciclo') return res.status(409).json({ ok: false, erro: 'Esta tarefa não é um ciclo pendente de aceite.' });
   if (['concluida','cancelada'].includes(tarefa.status)) return res.status(409).json({ ok: false, erro: 'Ciclo já encerrado.' });
+  if (await vinculoContraditorio(tarefa.cliente_id)) return res.status(409).json({ ok: false, erro: MSG_VINCULO_CONTRADITORIO });
 
   const vinculoAuto = await vinculoUnicoAtivo(tarefa.cliente_id);
   const [atualizada] = await db.query(
@@ -942,10 +980,12 @@ tarefasRouter.patch('/ciclos/aceitar-lote', apenasMaster, async (req, res) => {
   if (!tarefas.length) return res.status(409).json({ ok: false, erro: 'Nenhum ciclo pendente encontrado para os itens selecionados.' });
 
   let atualizadas = 0;
+  const ignoradas = []; // cadastro contraditório: ficam em "Novos ciclos" até o vínculo ser corrigido
   for (let i = 0; i < tarefas.length; i++) {
     const t = tarefas[i];
+    if (await vinculoContraditorio(t.cliente_id)) { ignoradas.push(t.id); continue; }
     const prazo = new Date(`${prazo_inicial}T12:00:00`);
-    prazo.setDate(prazo.getDate() + Math.floor(i / lote) * 7);
+    prazo.setDate(prazo.getDate() + Math.floor(atualizadas / lote) * 7);
     const prazoIso = prazo.toISOString().slice(0, 10);
     const vinculoAuto = await vinculoUnicoAtivo(t.cliente_id);
     await db.execute(
@@ -960,9 +1000,9 @@ tarefasRouter.patch('/ciclos/aceitar-lote', apenasMaster, async (req, res) => {
   }
   await registrarAuditoria({
     usuarioId: req.user.id, acao: 'aceitar_lote_ciclos', entidade: 'tarefa',
-    valorDepois: { quantidade: atualizadas, atribuido_a, prazo_inicial, por_semana: lote, ids: tarefas.map(t => t.id) }, ip: req._ip,
+    valorDepois: { quantidade: atualizadas, atribuido_a, prazo_inicial, por_semana: lote, ids: tarefas.filter(t => !ignoradas.includes(t.id)).map(t => t.id), ignoradas_vinculo_contraditorio: ignoradas }, ip: req._ip,
   });
-  res.json({ ok: true, atualizadas });
+  res.json({ ok: true, atualizadas, ignoradas: ignoradas.length });
 });
 
 // PATCH /api/tarefas/:id/ciclo/devolver — desfaz uma entrada em RE-PROTOCOLO (manual ou
