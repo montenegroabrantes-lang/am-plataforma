@@ -1,6 +1,6 @@
 # Contexto permanente — Sistema AM
 
-**Última atualização:** 25/09/2026 (mesmo dia, fix na régua de comparação do modo sombra)
+**Última atualização:** 28/09/2026 (levantamento de re-protocolo pelo chat — passo 1, commits locais não publicados)
 **Finalidade:** continuidade segura do desenvolvimento em outros chats e sessões.
 
 Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
@@ -1895,3 +1895,113 @@ integrações ou produção. Não registrar segredos neste documento.
 - Pendências que ficaram de fora de propósito (fora do escopo pedido): os 2 masters sem
   WhatsApp cadastrado (Caio e a conta técnica "Integração Claude") — depende de número real do
   usuário; nada tocado no repositório da Camila.
+
+### 28/09/2026 — Levantamento de re-protocolo pelo chat (passo 1)
+
+- **Objetivo (fluxo futuro):** chat faz o levantamento → Master autoriza → sistema monta pacote →
+  robô cria rascunho no PJe → advogado assina com token. **Só o passo 1 (levantamento, somente
+  leitura) foi feito.** Nada aceita ciclo, mexe em tarefa, cria pasta no Drive ou acessa o PJe.
+- **Commits LOCAIS, sem `git push` e sem deploy** (o usuário revisa antes): `7c5f64b` (fix OAuth,
+  ver abaixo), `bef421d` (serviço), `cd4d46a` (escopos/acesso), `1b0032b` (rotas + MCP),
+  `77621d7` (valor em risco × homônimos), `3dea57d` (saída MCP compacta), `e4320be` (auditoria
+  com `autorizado_por`) e o commit desta documentação. `npm test`: **64/64 antes → 123/123
+  depois** (59 testes novos, nenhum removido).
+- **Serviço** `src/services/reprotocolo/`:
+  - `regras.js`: fragmentos SQL **copiados** de `routes/tarefas.js` (filas `reprotocolo` e
+    `ciclos`, `/resumo`, resolução de cliente/tese e o `LEFT JOIN LATERAL` de polo passivo) e do
+    cron `ciclosRecorrentes.js` (último processo por `periodo_fim`, "processo cobrindo o ciclo",
+    responsável do auto-aceite, conta do intervalo). `tarefas.js` **não foi alterado** (crítico,
+    sem teste de rota); `regras.test.js` lê os arquivos originais e falha se as regras
+    divergirem (conferido que detecta mutação). Mudou a regra da tela → atualizar os dois lados.
+  - `levantamento.js`: SQL só busca fatos; JS puro calcula período (`ciclo_inicio` → mês atual,
+    ou → `clientes.vinculo_fim` quando `vinculo_ativo=false` — a tela de Tarefas conta sempre até o
+    mês atual), meses, **meses com mais de 5 anos** (anteriores às últimas 60 competências, a mesma
+    janela da referência oficial de Estimativas — indicador de risco, não análise de prescrição),
+    intervalo da tese, CPF mascarado (**só os 4 últimos dígitos**, `***.***.*12-34`), ente
+    (agrupa grafias do mesmo ente: "ESTADO PARAIBA", "Prefeitura de João Pessoa"…), juízo = vara
+    do processo anterior (com aviso quando é gabinete/2º grau ou núcleo de cumprimento — é a
+    localização ATUAL do processo, não o juízo de origem), flags objetivas e `revisao_humana`.
+    Agrupa por ente + juízo, ordena pelo mês mais antigo, totais por seção. Processo
+    `restrito` fica oculto para quem não tem `pode_marcar_restrito`.
+  - Seção **Documentação** (honesta): `regra_de_atualizacao.definida=false` (pendente — será
+    derivada das emendas à inicial por juízo); mostra pasta vinculada (`clientes.drive_pasta_id`,
+    sem abrir o Drive), documentos registrados no AM por categoria com datas de REGISTRO, e
+    `produtos.documentos_exigidos`. **Vocabulários diferentes** (`documentos.categoria` =
+    pessoais/vinculo/procuracao/outro × `documentos_exigidos` = identidade/cpf/residencia/
+    contracheque) — não são comparados.
+  - `vinculoOficial.js`: conferência sob demanda de UMA tarefa via `buscarReferenciaEstadual`
+    (mesma fonte/cache 6h da aba Estimativas). Só Estado da Paraíba/Pernambuco; outros entes →
+    "sem fonte oficial integrada"; não consulta quando o ente veio só do padrão da tese ou quando
+    o período inteiro está fora da janela. "Valor em risco" (8%) só na tese **FGTS** e só com
+    correspondência **única/clara** — a busca é por nome exato e um nome comum da fila trouxe 20
+    homônimos (achado real, corrigido em `77621d7`).
+- **Rotas** (Master): `GET /api/reprotocolo/levantamento?secao=todas|prontos|aguardando&detalhe=
+  itens|resumo&ente=&limite=1..500` e `GET /api/reprotocolo/:tarefaId/vinculo-oficial
+  [?atualizar=1]` (limite 20/15 min, como Estimativas). Cadeia: `autenticar` → `apenasMaster` →
+  `exigirEscopo('reprotocolo')`. Cada consulta grava só `logs_auditoria`
+  (`consultar_levantamento_reprotocolo`, `conferir_vinculo_oficial`, com `autorizado_por`).
+- **MCP** (`src/mcp/index.js`): `levantamento_reprotocolo` (padrão `detalhe=resumo`; itens com 20
+  por seção) e `conferir_vinculo_oficial` (1 a 5 tarefas, uma por vez), `readOnlyHint`, JSON
+  compacto sem nulos (resumo real ≈ 33 KB; itens ≈ 73 KB). Chamam a própria API por HTTP local
+  com o mesmo token, como as de acervo (que continuam em `/api/acervo`).
+- **Escopos do conector (novo):** antes o "escopo acervo" era só nominal — o token do conector
+  (JWT da conta de serviço `integracao-claude`, perfil master, 180 dias) valia para a API
+  inteira. Agora (`src/oauth/escopos.js`): a tela `/oauth/authorize` lista as permissões com
+  caixas de marcar; o token leva `escopos` + `autorizado_por`; token COM escopos só entra em
+  `/mcp` e nas áreas dos escopos (`autenticar`); token antigo (sem claim) conta como só
+  "acervo" em `exigirEscopo`; sessões do AM não mudam. A autorização vai para `logs_auditoria`
+  (`autorizar_conector_claude`).
+  - **Como autorizar o re-protocolo no Claude (depois do deploy):** Configurações → Conectores →
+    conector do AM → desconectar e conectar de novo → na tela do AM, entrar com a conta Master e
+    **marcar "Levantamento de re-protocolo (somente leitura)"** (se o Claude pedir o escopo, ela já
+    vem marcada; senão vem só "Acervo jurídico"). Sem isso, as ferramentas novas respondem 403
+    explicando o que fazer.
+- **Achado de segurança no caminho (commit próprio `7c5f64b`):** `POST /oauth/token` com
+  `grant_type=refresh_token` emitia um token Master de 180 dias da conta de serviço **sem validar
+  nada** (o servidor nunca emitiu refresh token) — qualquer POST anônimo obtinha acesso Master à
+  API. Corrigido para `invalid_grant` e metadados sem `refresh_token`. Não testado contra
+  produção (seria explorar a falha). O teste automatizado desse ponto (`src/oauth/index.test.js`)
+  foi **bloqueado pelo classificador de permissões da sessão**, e reverter a correção também
+  (tratado como enfraquecer segurança) — validação por leitura de código + `node --check`.
+  **Recomendação: publicar este commit o quanto antes, independente do resto.** Tokens já
+  emitidos por esse caminho seguem válidos até expirar; só rotacionar `JWT_SECRET` os invalida
+  (derruba também as sessões do AM e o conector atual).
+- **Como foi validado:** testes com banco e fonte oficial simulados (rotas por HTTP real com o
+  `autenticar`/`apenasMaster`/`exigirEscopo` verdadeiros: 401 sem token, 403 não-Master, 403
+  conector sem escopo ou token antigo, 200 Master/conector com escopo, confinamento; fiação MCP
+  via JSON-RPC). Tela de autorização conferida no navegador com servidor mínimo só do router
+  OAuth (sem banco e sem o boot do `src/index.js`). **Conferência somente leitura contra
+  produção** (script avulso no scratchpad, `BEGIN READ ONLY` + `ROLLBACK`, pool do app nunca
+  usado, servidor NÃO subido): **Prontos 2 = `resumo.reprotocolo` 2; Aguardando 364 =
+  `resumo.ciclos` 364**; 366 itens / 366 ids; 0 ciclos adiados; consulta ≈ 1,3 s.
+- **Retrato real em 28/09/2026** (o que o levantamento mostrou):
+  - Os **2 "prontos"** (tarefas `6815b82b` FGTS e `ad417a5b` Equiparação, mesma cliente,
+    auto-aceitos pelo cron, prazo 06/10/2026) têm cadastro "vínculo ativo" com **fim em
+    01/01/2023, antes do início do ciclo (02/2023)** — se a data estiver certa, não há período
+    novo e o re-protocolo é indevido. Conferir antes do prazo.
+  - Novos ciclos: **185 de 364 ainda não completaram o intervalo da tese (25 meses)** pela
+    mesma conta do cron — provável herança da restauração de 19/09, que não conferia intervalo;
+    178 completaram. **36 ciclos têm meses com mais de 5 anos (859 meses no total)**, o mais
+    antigo desde 03/2011. 14 com revisão humana (5 polo genérico "Município — Outro", 3 sem
+    polo, 3 vínculo divergente, 1 início no futuro, 1 ente PE com processo no TJPB, etc.).
+    30 com juízo que é gabinete/núcleo. 289 itens (280 clientes) sem pasta do Drive vinculada.
+  - Documentação: **0 documentos registrados no AM** para os 353 clientes; 73 com pasta do
+    Drive; checklist de documentos só na tese FGTS.
+  - Conferência oficial (5 casos): 1 PE sem registro em 38 competências (reforça que o polo PE
+    está errado); 1 PB temporário com último pagamento em 07/2025 (cadastro diz ativo); 1 PB
+    com regime CLT (PBSAUDE); 1 PB temporário ativo; 1 com 20 homônimos (sem valor em risco).
+- **Pendências / limitações:**
+  - Regra de "documento a atualizar" por juízo — **não definida** (bloqueia o passo de pacote).
+  - Passos 2+ não iniciados: autorização do Master pelo chat, montagem de pacote, rascunho no
+    PJe, assinatura com token.
+  - Tokens antigos do conector (sem `escopos`) continuam valendo para a API inteira até
+    expirar (180 dias); a confinação vale só para tokens novos. Decisão do usuário: reconectar
+    e/ou confinar também os antigos.
+  - O fluxo OAuth completo (autorizar → token com escopos) não tem teste automatizado (bloqueio
+    acima); cobertos: tela (navegador), `normalizarEscopos`/`exigirEscopo`/confinamento (unitário).
+  - `tarefas.js` resolve o polo com `produtos.polos_passivos_padrao[1]` como último recurso, mas
+    esse campo é um MENU de opções em várias teses (ex.: 1º item "Estado da Paraíba") — o
+    levantamento sinaliza como `polo_inferido_da_tese`; corrigir na tela é decisão à parte.
+  - Máscara de CPF: a tela de Tarefas mostra 6 dígitos do meio (`***.456.789-**`); o
+    levantamento mostra só os 4 últimos, conforme pedido — alinhar se quiser um padrão único.
+  - Sem tela no frontend: por enquanto só API + MCP.
