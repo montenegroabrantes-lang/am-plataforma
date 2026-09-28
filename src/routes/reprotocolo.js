@@ -55,7 +55,7 @@ export function criarReprotocoloRouter({
       valorDepois: {
         secao, detalhe, ente: ente || null,
         prontos: saida.prontos?.total ?? null, aguardando_autorizacao: saida.aguardando_autorizacao?.total ?? null,
-        via_conector: Array.isArray(req.user.escopos),
+        via_conector: Array.isArray(req.user.escopos), autorizado_por: req.user.autorizado_por ?? null,
       },
       ip: req._ip,
     });
@@ -86,7 +86,7 @@ export function criarReprotocoloRouter({
     }
     await auditar({
       usuarioId: req.user.id, acao: 'conferir_vinculo_oficial', entidade: 'tarefa', entidadeId: tarefaId,
-      valorDepois: { status: resultado.status, uf: resultado.uf ?? null, via_conector: Array.isArray(req.user.escopos) },
+      valorDepois: { status: resultado.status, uf: resultado.uf ?? null, via_conector: Array.isArray(req.user.escopos), autorizado_por: req.user.autorizado_por ?? null },
       ip: req._ip,
     });
     res.json(resultado);

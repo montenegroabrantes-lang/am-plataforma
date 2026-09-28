@@ -156,5 +156,5 @@ test('vínculo oficial: 404 fora das filas, 502 com fonte fora do ar, 200 audita
   const registro = auditoria.at(-1);
   assert.equal(registro.acao, 'conferir_vinculo_oficial');
   assert.equal(registro.entidadeId, TAREFA);
-  assert.deepEqual(registro.valorDepois, { status: 'encontrado', uf: 'PB', via_conector: true });
+  assert.deepEqual(registro.valorDepois, { status: 'encontrado', uf: 'PB', via_conector: true, autorizado_por: null });
 });
