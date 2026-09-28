@@ -1,11 +1,17 @@
 # Contexto permanente — Sistema AM
 
-**Última atualização:** 28/09/2026 (levantamento de re-protocolo pelo chat — passo 1, commits locais não publicados)
+**Última atualização:** 28/09/2026 (fechamento da sessão — ver "28/09/2026 — Fechamento da sessão" no fim)
 **Finalidade:** continuidade segura do desenvolvimento em outros chats e sessões.
 
 Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
 qualquer alteração e atualizado depois de mudanças materiais no código, banco,
 integrações ou produção. Não registrar segredos neste documento.
+
+> **LER PRIMEIRO — estado ao fim da sessão de 28/09/2026:** o levantamento de re-protocolo JÁ
+> ESTÁ EM PRODUÇÃO (publicado por engano, sem revisão do usuário); há uma correção da fila de
+> re-protocolo ESCRITA em `src/index.js`, SEM COMMIT e fora do ar; a estratégia de automação do
+> re-protocolo NÃO foi confirmada pelo usuário — o próximo passo é consolidá-la e pedir "sim"
+> explícito antes de executar qualquer coisa. Detalhes em "28/09/2026 — Fechamento da sessão".
 
 > **PENDENTE — autorizado por Ramon em 21/09/2026 pra executar na mesma noite:** o restante da
 > Fase 6 do cronograma de resiliência (auditoria transacional, migrações versionadas,
@@ -60,6 +66,9 @@ integrações ou produção. Não registrar segredos neste documento.
   deve ser incluído em commits sem ordem expressa.
 - `.env` e `.env.local` são arquivos secretos e nunca devem ir para o GitHub.
 - Validar mudanças proporcionalmente ao risco antes de fazer deploy.
+- Antes de QUALQUER `git push`, conferir `git log origin/main..HEAD`. Havendo commits locais
+  ainda não revisados pelo usuário, publicar só o commit pretendido (`git push origin <sha>:main`)
+  — um push "solto" leva tudo junto (incidente de 28/09/2026).
 
 ## Funcionalidades consolidadas nesta sessão — 09 a 11/09/2026
 
@@ -1901,6 +1910,9 @@ integrações ou produção. Não registrar segredos neste documento.
 - **Objetivo (fluxo futuro):** chat faz o levantamento → Master autoriza → sistema monta pacote →
   robô cria rascunho no PJe → advogado assina com token. **Só o passo 1 (levantamento, somente
   leitura) foi feito.** Nada aceita ciclo, mexe em tarefa, cria pasta no Drive ou acessa o PJe.
+- **CORREÇÃO (fim do dia 28/09/2026): estes commits FORAM PUBLICADOS** — o push feito para subir
+  só o commit de documentação do incidente de OAuth (`7c5f64b..f6bd681`) levou todos juntos, sem a
+  revisão do usuário. Ver "28/09/2026 — Fechamento da sessão". Texto original a seguir.
 - **Commits LOCAIS, sem `git push` e sem deploy** (o usuário revisa antes): `7c5f64b` (fix OAuth,
   ver abaixo), `bef421d` (serviço), `cd4d46a` (escopos/acesso), `1b0032b` (rotas + MCP),
   `77621d7` (valor em risco × homônimos), `3dea57d` (saída MCP compacta), `e4320be` (auditoria
@@ -2034,3 +2046,93 @@ integrações ou produção. Não registrar segredos neste documento.
   invalidados de uma vez — a equipe precisa logar de novo e reconectar o conector no Claude
   (Configurações → Conectores → desconectar e conectar de novo, autorizando como Master).
 - Nenhum segredo, chave ou token foi registrado neste arquivo.
+
+### 28/09/2026 — Fechamento da sessão: estado real e pendências (LER PRIMEIRO)
+
+**Em produção (confirmado):**
+- Backend: `origin/main` em `f6bd681`, que inclui o levantamento de re-protocolo inteiro
+  (`bef421d`…`4693a5b`) — **publicado por engano, sem revisão do usuário**: o `git push origin
+  main` feito para subir só o commit de documentação do incidente de OAuth levou os 7 commits
+  junto. Confirmado pelo metadado público `/.well-known/oauth-authorization-server`, que já lista
+  o escopo `reprotocolo`. No ar: rotas `GET /api/reprotocolo/levantamento` e
+  `/api/reprotocolo/:tarefaId/vinculo-oficial` (Master + escopo `reprotocolo`), ferramentas MCP
+  `levantamento_reprotocolo` e `conferir_vinculo_oficial`, tela de consentimento com caixas e
+  confinamento do token do conector em `middleware/auth.js`. Tudo só leitura (grava apenas
+  `logs_auditoria`). Foram ao ar SEM decisão do usuário os pontos que o próprio agente listou para
+  decidir antes do push: caixa `reprotocolo` pré-marcada quando o cliente pede o escopo, máscara de
+  CPF diferente da tela de Tarefas, polo inferido do padrão da tese. **Decisão pendente: manter e
+  revisar, ou reverter esses 7 commits (mantendo `7c5f64b`).**
+- `JWT_SECRET` rotacionado: todos precisam logar de novo; o conector do AM no Claude precisa ser
+  reconectado (e, para usar o re-protocolo, marcar a permissão nova). A pendência "tokens antigos
+  do conector sem escopo" perdeu efeito — nenhum token antigo vale mais.
+- Frontend em `1238607` e Camila em `8bbdd11` (publicados de manhã com autorização; ver seção das
+  7 pendências). Camila `7c7dc96`: devolução de chamados parados com atendente humano atrás da flag
+  `DEVOLUCAO_ATENDENTE_PARADO_ATIVO` (desligada; modo sombra só grava eventos `simulado:true`;
+  ligar é decisão de Ramon + João Lucas). Camila `8bbdd11`: rascunho do conteúdo das 6 teses sem
+  cobertura (`ativa:false`, sem aprovação jurídica, fora do fluxo ativo) — precisa de revisão de
+  advogado, com atenção a 13º Salário e a Equiparação no magistério (Súmula Vinculante 37).
+
+**Escrito, SEM commit, fora do ar:**
+- `src/index.js`, logo após o bloco "Restaura ciclos cancelados por engano": migração idempotente
+  de boot com duas correções da fila — (1) adia (`ciclo_adiado_ate`) os ciclos "novos" criados
+  antes de completar o intervalo da tese, até a data real de vencimento; (2) marca
+  `precisa_triagem=true` (nunca cancela) em ciclos cujo cliente tem `vinculo_ativo=true` e
+  `vinculo_fim` preenchido ao mesmo tempo. `node --check` ok, `npm test` 123/123. O classificador
+  de permissões bloqueou commit/push; o SQL equivalente foi passado ao usuário. **Não publicar sem
+  o usuário revisar.** Banco de produção inalterado na última checagem.
+- Alcance medido (leitura, 28/09): 186 ciclos prematuros; 5 tarefas com vínculo contraditório —
+  Iradira (`6815b82b` FGTS e `ad417a5b` Equiparação, os 2 únicos "prontos"), Joana Marta Gomes de
+  Almeida (`779f6d1b`, `3331bdc4`) e Francisco Isidio da Silva (`30c176e4`). Iradira já tem 2
+  processos reais ajuizados em 21/09/2026 (`0804499-91.2026.8.15.2005` FGTS e
+  `0868660-25.2026.8.15.2001` Equiparação) com `periodo_fim` 01/2023, e os comprovantes no Drive
+  trazem outro sobrenome — conferir se o cadastro é da mesma pessoa antes de qualquer
+  re-protocolo. Prazo das tarefas dela: 06/10/2026.
+
+**Achados do Drive (investigação só leitura, amostra de 10 clientes da fila):**
+- Premissa corrigida: no re-protocolo só o documento de identidade é reaproveitado; procuração,
+  comprovante de vínculo e contracheques/fichas são novos a cada vez. Comprovante de residência
+  quase nunca aparece como arquivo separado.
+- Pastas são por ajuizamento, no ano do protocolo: "Outorgantes {ano}", "_REPROTOCOLO FGTS 2025"
+  e "_REPROTOCOLO - 2026" (onde a equipe monta os re-protocolos na prática), com subpasta `PDF/`.
+  `clientes.drive_pasta_id` aponta para pastas vazias criadas pelo AM (4 de 4 na amostra; 0
+  arquivos em 38 subpastas conferidas). CPF nunca aparece no nome das pastas reais; busca por nome
+  erra (digitação, abreviação, sobrenome); ~9% dos nomes têm um 2º candidato forte → decisão
+  humana. O ano do CNJ acerta "Outorgantes {ano}" para processos de 2022 em diante; não existe
+  pasta de 2021.
+- **Risco de duplicidade:** 14 nomes nas pastas `_REPROTOCOLO` sem o processo novo no AM; ao menos
+  3 com comprovante de protocolo (Lauristela 15/12/2025, Ivanna Martins do Nascimento 06/01/2026,
+  Silverio Gonçalves de Assis 25/09/2026) — Lauristela e Silverio ainda têm tarefa aberta em "Novos
+  ciclos". Qualquer automação precisa cruzar com essas pastas antes de montar pacote.
+- Pastas com documentos de outro cliente misturados (Aldair, Leonice); divergências AM × Drive
+  (o réu do Fagner é a EMLUR, não o Município).
+- Credencial Google do AM: o token do `.env` local está morto (`invalid_grant`); o de produção foi
+  gerado em 21/09 por `obter-novo-refresh-token.mjs` com escopo `drive` completo (não verificado ao
+  vivo — a checagem via `railway run` foi bloqueada). Calendar e Sheets usam o mesmo token e podem
+  estar falhando (nenhum `calendar_event_id` gravado desde 16/07) — não conclusivo.
+- Backups do banco no Drive vazios (20 bytes) desde 22/09: corrigido em outra sessão, no worktree
+  `vigorous-brahmagupta-d6801e` (commits `30ec8dc` e `b0d24b0`, **não publicados**, aguardando
+  autorização). Até publicar, a única proteção é o PITR do Railway.
+
+**Estratégia do re-protocolo — NÃO CONFIRMADA pelo usuário:**
+- Fatos dados pelo usuário: o MNI do PJe não funciona; operação pelo chat (levantamento →
+  autorização → o sistema sobe o processo como rascunho e gera relatório com período etc. → o
+  advogado confere, assina e protocola com o token).
+- Ajustes propostos: regras e dados vêm de ferramentas do AM, não do raciocínio do chat; o
+  "upload" é rascunho no PJe criado no navegador do advogado (servidor bloqueado pelo Cloudflare
+  do TJPB); o relatório confere o que foi preenchido no PJe; fechar o ciclo (número e recibo de
+  volta ao AM, período gravado) com trava contra duplicidade.
+- Sugestões aceitas: vínculo e regime pelo dado oficial PB/PE; fatos da inicial anterior +
+  fundamentação do modelo aprovado atual; regra de documentos a partir das emendas à inicial por
+  juízo; ritmo pela capacidade de assinatura (agrupar por juízo/ente, mês mais antigo primeiro,
+  valor em risco). Recusadas: checar o resultado do processo anterior; avisar o cliente pela
+  Camila.
+- **Próximo passo:** consolidar a estratégia numa versão única e pedir "sim" explícito antes de
+  executar qualquer fase. Decisões em aberto: manter ou reverter o levantamento publicado;
+  certificado A1 ou A3; quem aprova o dossiê; modelo aprovado da inicial por ente; pasta destino
+  do pacote (`_REPROTOCOLO - 2026` × `_PENDENTE A PROTOCOLAR - 2026`); tratamento dos 36 ciclos
+  com mais de 5 anos acumulados.
+
+**Lições de processo desta sessão:** estratégia de várias fases só se executa depois de "sim"
+explícito; "execute X" autoriza só X; antes de qualquer push, conferir `git log origin/main..HEAD`
+e publicar só o commit pretendido; não testar falha de segurança em produção antes de confirmar
+que o deploy novo está no ar. Nenhum segredo registrado.
