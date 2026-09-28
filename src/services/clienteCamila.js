@@ -15,6 +15,32 @@ export function normalizarNomeCliente(valor) {
   return palavras.join(' ');
 }
 
+// Igual a normalizarNomeCliente, mas sem remover "DA/DE/DO/..." -- usado só como parâmetro
+// pro similarity() do pg_trgm. Tirar essas palavras faria o trigram do nome buscado perder
+// pedaços que normalmente também aparecem no nome cadastrado (ex.: "DA"), reduzindo a
+// pontuação de comparação à toa.
+function normalizarParaTrigram(valor) {
+  const nomeBase = String(valor || '').split(/\s+[x×]\s+/i, 1)[0];
+  return nomeBase
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Limiar de similaridade (0-1) do pg_trgm pra considerar um nome candidato a cliente.
+// Alto o suficiente pra não confundir sobrenomes parecidos, tolerante o bastante pra
+// pequenas variações de digitação/acentuação vindas do nome de exibição do Digisac.
+const LIMIAR_SIMILARIDADE_NOME = 0.6;
+
+// Mapeamento de acentuação comum em português -> ASCII, usado só dentro do SQL pra comparar
+// com o nome já normalizado em JS. Evita depender da extensão "unaccent" (não habilitada
+// neste banco) só pra este caso de uso.
+const ACENTOS_ORIGEM = 'ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇÑ';
+const ACENTOS_DESTINO = 'AAAAAEEEEIIIIOOOOOUUUUCN';
+
 export function variantesTelefoneCliente(valor) {
   const digitos = String(valor || '').replace(/\D/g, '');
   if (digitos.length < 10 || digitos.length > 13) return [];
@@ -73,6 +99,24 @@ export async function buscarClienteParaCamila({ telefone, nome }, banco = db) {
   if (porTelefone.length > 1) return null;
 
   if (nomeNormalizado.split(' ').filter(Boolean).length < 2) return null;
-  const porNome = clientes.filter(cliente => normalizarNomeCliente(cliente.nome) === nomeNormalizado);
-  return porNome.length === 1 ? respostaCliente(porNome[0]) : null;
+
+  // Match por nome: pg_trgm (similarity()) no SQL em vez da antiga comparação exata em JS --
+  // tolera pequenas variações (abreviação, espaçamento, acentuação inconsistente do nome de
+  // exibição do Digisac) sem abrir mão da regra de segurança do projeto: em caso de
+  // homônimo/ambiguidade (mais de um cliente acima do limiar), nunca escolhe sozinho.
+  const nomeTrigram = normalizarParaTrigram(nome);
+  const candidatos = await banco.query(
+    `SELECT c.nome, c.whatsapp, c.ativo, COALESCE(c.vinculo_ativo, TRUE) AS vinculo_ativo,
+            COUNT(p.id)::int AS total_processos,
+            similarity(translate(upper(c.nome), $2, $3), $1) AS pontuacao
+       FROM clientes c
+       LEFT JOIN processos p ON p.cliente_id = c.id
+      WHERE c.ativo IS NOT FALSE
+        AND translate(upper(c.nome), $2, $3) % $1
+      GROUP BY c.id, c.nome
+      ORDER BY pontuacao DESC`,
+    [nomeTrigram, ACENTOS_ORIGEM, ACENTOS_DESTINO]
+  );
+  const acimaDoLimiar = candidatos.filter(cliente => Number(cliente.pontuacao) >= LIMIAR_SIMILARIDADE_NOME);
+  return acimaDoLimiar.length === 1 ? respostaCliente(acimaDoLimiar[0]) : null;
 }

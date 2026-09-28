@@ -20,6 +20,7 @@ import { obterAcessoTribunal } from '../services/acessoTribunal.js';
 import { camila } from '../services/camila.js';
 import { buscarConversaContato, mapaUsuariosDigisac } from '../services/digisac/index.js';
 import { sincronizarOnboardingComCamila } from '../services/reprocessarSyncCamila.js';
+import { sincronizarDriveOnboarding } from '../services/reprocessarSyncDrive.js';
 
 export const estimativasRouter = Router();
 
@@ -184,44 +185,62 @@ estimativasRouter.post('/manual', apenasMaster, async (req, res) => {
 // Cadastro de cliente quase nunca tem WhatsApp gravado, então cruzar por telefone não
 // funciona — só dá pra comparar por nome. NUNCA bloqueia a submissão nem o lead (nome pode
 // colidir por coincidência com pessoa não relacionada) — só sinaliza pro humano decidir.
-function normalizarNome(s) {
-  return String(s || '')
-    .normalize('NFD').replace(/[̀-ͯ]/g, '') // remove acentos
-    .toUpperCase()
-    .replace(/[^A-Z\s]/g, ' ')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-}
+//
+// Antes comparava em JS (inclusão de palavras) contra a tabela inteira de clientes trazida
+// pra memória a cada request. Trocado (28/09/2026) por pg_trgm/similarity() no SQL: usa o
+// mesmo índice GIN (idx_clientes_nome, gin_trgm_ops) já criado em index.js pra outras buscas
+// por nome, tolera pequena variação de digitação, e aplica a mesma regra de segurança do
+// projeto pra match por nome: em caso de homônimo (mais de um cliente ativo acima do limiar
+// pro mesmo lead), não escolhe sozinho -- fica como "ausente" igual a hoje.
+const LIMIAR_JA_E_CLIENTE = 0.5;
 
-// Todas as palavras do nome mais curto precisam aparecer no mais longo — "Beatriz Azevedo"
-// ⊆ "BEATRIZ AZEVEDO ALVES" bate; um nome de 1 palavra só (genérico demais, ou os achados
-// antigos "NOME_PENDENTE"/"valor") nunca compara, pra não gerar falso positivo em massa.
-function encontrarClienteExistente(nomeLead, clientes) {
-  const palavrasLead = normalizarNome(nomeLead);
-  if (palavrasLead.length < 2) return null;
-  for (const c of clientes) {
-    const palavrasCliente = normalizarNome(c.nome);
-    if (palavrasCliente.length < 2) continue;
-    const [menor, maior] = palavrasLead.length <= palavrasCliente.length
-      ? [palavrasLead, palavrasCliente] : [palavrasCliente, palavrasLead];
-    if (menor.every(p => maior.includes(p))) return c;
+export async function buscarClientesExistentesPorNome(nomesLeads, banco = db) {
+  const melhoresPorNome = new Map();
+  const nomes = [...new Set(nomesLeads.filter(Boolean))];
+  if (!nomes.length) return melhoresPorNome;
+
+  const linhas = await banco.query(
+    `SELECT lead_nome, cliente_id, cliente_nome, cliente_criado_em
+       FROM (
+         SELECT lead.nome AS lead_nome, c.id AS cliente_id, c.nome AS cliente_nome,
+                c.criado_em AS cliente_criado_em,
+                ROW_NUMBER() OVER (PARTITION BY lead.nome ORDER BY similarity(c.nome, lead.nome) DESC) AS posicao,
+                COUNT(*) FILTER (WHERE similarity(c.nome, lead.nome) >= $2)
+                  OVER (PARTITION BY lead.nome) AS acima_do_limiar
+           FROM unnest($1::text[]) AS lead(nome)
+           JOIN clientes c ON c.nome IS NOT NULL AND c.ativo = true AND c.nome % lead.nome
+       ) candidatos
+      WHERE posicao = 1 AND acima_do_limiar = 1`,
+    [nomes, LIMIAR_JA_E_CLIENTE]
+  ).catch(() => []);
+
+  for (const linha of linhas) {
+    melhoresPorNome.set(linha.lead_nome, {
+      id: linha.cliente_id,
+      nome: linha.cliente_nome,
+      criado_em: linha.cliente_criado_em,
+    });
   }
-  return null;
+  return melhoresPorNome;
 }
 
 // GET /api/estimativas/leads?etapa=&origem=&busca= — precisa vir ANTES de GET /:id, senão
 // "/leads" seria capturado pelo parâmetro :id. Repassa para /api/funil-leads na Camila —
 // não /api/leads: esse nome já existe lá (métricas de fase de conversa) e ficaria sombreado.
-estimativasRouter.get('/leads', async (req, res) => {
+// Restrito a Master (decisão do dono do escritório, 28/09/2026): é o funil de vendas em si
+// (valor de cada lead, taxa de conversão) — mesma restrição já aplicada a dashboard e
+// financeiro. As outras abas de Estimativas (Revisão, Processual) não passam por aqui.
+estimativasRouter.get('/leads', apenasMaster, async (req, res) => {
   const api = camila();
   if (!api) return semConfig(res);
   try {
     const { data } = await api.get('/api/funil-leads', { params: req.query });
     if (data?.ok && Array.isArray(data.leads) && data.leads.length) {
-      // Uma consulta só, comparação inteira em JS — mais barato que 1 query fuzzy por lead,
-      // e a tabela de clientes é pequena o bastante (centenas de linhas) pra isso ser rápido.
-      const clientes = await db.query(`SELECT id, nome, criado_em FROM clientes WHERE nome IS NOT NULL AND ativo=true`).catch(() => []);
+      // Uma consulta só (pg_trgm/similarity(), com o índice GIN de clientes.nome) pra todos os
+      // leads da página, em vez de trazer a tabela inteira de clientes pra memória.
+      const clientesEncontradosPorNome = await buscarClientesExistentesPorNome(
+        data.leads.map(l => l.nome), db
+      );
       const contactIds = data.leads.map(l => String(l.contact_id || '')).filter(Boolean);
       // Se esta consulta falhar, `onboarding` fica null em todo lead e a tela passaria a
       // mostrar lead já fechado como "assinado · ativar". A flag deixa o painel distinguir
