@@ -2136,3 +2136,39 @@ integrações ou produção. Não registrar segredos neste documento.
 explícito; "execute X" autoriza só X; antes de qualquer push, conferir `git log origin/main..HEAD`
 e publicar só o commit pretendido; não testar falha de segurança em produção antes de confirmar
 que o deploy novo está no ar. Nenhum segredo registrado.
+
+### 28/09/2026 (tarde) — Camila: fim da transferência ao Jurídico por "outro advogado/sindicato" + prazo 6 a 11 meses
+
+**Problema (casos reais):** qualquer menção a outro advogado, sindicato ou processo disparava a
+resposta fixa `FIXA-REPRESENTACAO-EXISTENTE` ("A existência de outro advogado, sindicato ou
+processo precisa ser considerada...") e transferia o atendimento ao Jurídico. Atingiu Danielle
+Eulalia ("Meu advogado foi acionado") e Elaine Cristina Brasilino de Albuquerque (áudio: ação do
+sindicato 2018-2021, "não sei se é uma outra proposta").
+
+**Decisão do usuário:** a mensagem não é necessária; a Camila segue o atendimento normal. Só
+transfere se a pessoa pedir advogado expressamente (ou por prescrição/chance de ganhar-perder,
+que continua em `pareceJuridicaIndividual`).
+
+**Mudanças (repo Camila, commit `477bce3`, publicado):**
+- `camila/seletor-respostas.js`: intenção `representacao_existente` removida; "demora?",
+  "demora muito?", "é demorado?" passam a acionar `FIXA-PRAZO` ("desculpa a demora" não).
+- `camila/respostas-aprovadas.js`: entrada `FIXA-REPRESENTACAO-EXISTENTE` removida;
+  `FIXA-PRAZO` v2 — "Como estimativa, a conclusão do procedimento leva de 6 a 11 meses,
+  podendo variar conforme o caso específico..." (antes "cerca de 6 meses").
+- `camila/porta-saida-comercial.js`: verificação de saída exige "6 a 11 meses".
+- `camila/prompt-vendas.js`: outra representação não interrompe a venda; se perguntar se é a
+  mesma coisa, explicar que é análise própria; "efeito de outra ação" saiu da lista de
+  transferência obrigatória. `camila/abordagens.js`: retomada deixa de oferecer o Jurídico.
+
+**Verificado em produção:** `/health` da Camila com `prompt_versao: 6718306cab97` (hash do
+prompt novo). `test:safe` e `test:continuidade` (224) verdes.
+
+**Pendências:**
+- Tickets de Danielle e Elaine já foram transferidos ao Jurídico antes da correção — a equipe
+  precisa assumir ou devolver à Camila.
+- Achado não corrigido: resposta à Jacynara (contact `e4d950be`) terminou com pergunta genérica
+  ("Tem alguma parte específica que queira entender melhor?"), que `prompt-vendas.js` já proíbe —
+  a IA não seguiu a regra; exige outro tipo de correção (verificação de saída).
+- O `/health` não expõe o commit; a conferência de deploy é pelo `prompt_versao`.
+- O remote do repositório da Camila tem token do GitHub embutido na URL — trocar o token e
+  removê-lo da URL.
