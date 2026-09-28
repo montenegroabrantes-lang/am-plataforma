@@ -30,6 +30,26 @@ const saida = ({ status, dados }) => ({
   isError: status >= 400,
 });
 
+// Para respostas grandes (re-protocolo): tira só o que não carrega informação — null e listas
+// vazias; false e 0 ficam (ex.: pasta_drive_vinculada:false, meses_mais_5_anos:0 importam).
+export function enxugar(valor) {
+  if (Array.isArray(valor)) return valor.map(enxugar);
+  if (valor && typeof valor === 'object') {
+    const limpo = {};
+    for (const [k, v] of Object.entries(valor)) {
+      if (v === null || v === undefined || (Array.isArray(v) && v.length === 0)) continue;
+      limpo[k] = enxugar(v);
+    }
+    return limpo;
+  }
+  return valor;
+}
+
+const saidaCompacta = ({ status, dados }) => ({
+  content: [{ type: 'text', text: JSON.stringify(enxugar({ http: status, ...dados })) }],
+  isError: status >= 400,
+});
+
 const qs = o => {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(o)) if (v !== undefined && v !== null && v !== '') p.append(k, String(v));
@@ -155,13 +175,13 @@ function construirServidor(token) {
       ente: z.string().max(100).optional()
         .describe('Filtra grupos pelo nome do ente ou do juízo (ex.: "Paraíba", "2º Juizado"); os totais continuam os da fila inteira'),
       limite: z.number().int().min(1).max(500).optional()
-        .describe('No modo itens: máximo de casos listados por seção (padrão 40)'),
+        .describe('No modo itens: máximo de casos listados por seção (padrão 20)'),
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async ({ secao, detalhe, ente, limite }) => {
     const modo = detalhe || 'resumo';
-    const parametros = { secao, detalhe: modo, ente, limite: modo === 'itens' ? (limite ?? 40) : undefined };
-    return saida(await chamar('GET', `/reprotocolo/levantamento${qs(parametros)}`, token));
+    const parametros = { secao, detalhe: modo, ente, limite: modo === 'itens' ? (limite ?? 20) : undefined };
+    return saidaCompacta(await chamar('GET', `/reprotocolo/levantamento${qs(parametros)}`, token));
   });
 
   s.registerTool('conferir_vinculo_oficial', {
@@ -186,7 +206,7 @@ function construirServidor(token) {
       resultados.push({ tarefa_id: id, http: status, ...dados });
     }
     return {
-      content: [{ type: 'text', text: JSON.stringify({ resultados }, null, 2) }],
+      content: [{ type: 'text', text: JSON.stringify(enxugar({ resultados })) }],
       isError: resultados.every(r => r.http >= 400),
     };
   });

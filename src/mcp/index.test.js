@@ -20,7 +20,7 @@ const { db } = await import('../db/index.js');
 for (const metodo of ['query', 'queryOne', 'execute']) {
   db[metodo] = async () => { throw new Error('banco real proibido nos testes'); };
 }
-const { mcpRouter } = await import('./index.js');
+const { mcpRouter, enxugar } = await import('./index.js');
 
 const recebidas = [];
 app.get('/api/reprotocolo/levantamento', (req, res) => {
@@ -87,10 +87,10 @@ test('levantamento_reprotocolo: padrão = resumo; repassa o mesmo token', async 
   assert.equal(recebidas[0].auth, `Bearer ${token}`);
 });
 
-test('levantamento_reprotocolo: modo itens leva ente, seção e limite (40 por padrão)', async () => {
+test('levantamento_reprotocolo: modo itens leva ente, seção e limite (20 por padrão)', async () => {
   recebidas.length = 0;
   await chamarFerramenta('levantamento_reprotocolo', { detalhe: 'itens', ente: 'Paraíba', secao: 'aguardando' });
-  assert.deepEqual(recebidas[0].query, { secao: 'aguardando', detalhe: 'itens', ente: 'Paraíba', limite: '40' });
+  assert.deepEqual(recebidas[0].query, { secao: 'aguardando', detalhe: 'itens', ente: 'Paraíba', limite: '20' });
 });
 
 test('conferir_vinculo_oficial: um por vez, sem repetir id, e mostra o HTTP de cada caso', async () => {
@@ -117,4 +117,11 @@ test('ferramentas do acervo continuam chamando /api/acervo', async () => {
   recebidas.length = 0;
   await chamarFerramenta('listar_teses', {});
   assert.equal(recebidas[0].caminho, '/api/acervo/teses');
+});
+
+test('enxugar: remove null e listas vazias, mas mantém false e 0 (carregam informação)', () => {
+  assert.deepEqual(
+    enxugar({ a: null, b: [], c: false, d: 0, e: { f: null, g: [{ h: undefined, i: 'x' }] }, j: '' }),
+    { c: false, d: 0, e: { g: [{ i: 'x' }] }, j: '' },
+  );
 });
