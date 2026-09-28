@@ -2276,3 +2276,11 @@ prompt novo). `test:safe` e `test:continuidade` (224) verdes.
   (> 1 KB) no Drive e olhar o log do build no Railway (Dockerfile mudou).
 - **Camila `1b56f68` (fechamento genérico):** confirmar pelo log `[FECHAMENTO GENÉRICO]` em
   produção; `/health` não reflete a mudança.
+- **Follow-up do worker de backup (achado em revisão pela sessão "am", conferido no código em
+  28/09/2026; NADA implementado, não publicar sem ok do usuário):** em `src/workers/backup.worker.js`
+  (1) o exit code do `gzip` não é conferido — falha no meio pode gerar arquivo truncado > 1 KB que
+  passa pelo piso de tamanho e sobe como válido; (2) faltam handlers de `error` em `gzip.stdin` e
+  `dump.stdout` — se o gzip morrer antes do fim, o EPIPE vira exceção não tratada e derruba o processo
+  (API e workers rodam juntos em `node src/index.js`); (3) se o `pg_dump` nem iniciar (ENOENT), o
+  gzip pode ficar vivo esperando stdin — na falha, matar o outro processo. Sugestão: tornar o gzip
+  injetável como o `comando`, cobrir os 3 casos em `backup.worker.test.js` e conferir o backup das 2h.
