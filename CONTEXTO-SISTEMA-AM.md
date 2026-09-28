@@ -2165,7 +2165,7 @@ prompt novo). `test:safe` e `test:continuidade` (224) verdes.
 
 **Pendências:**
 - Tickets de Danielle e Elaine já foram transferidos ao Jurídico antes da correção — a equipe
-  precisa assumir ou devolver à Camila.
+  precisa assumir ou devolver à Camila (pendente, equipe).
 - ~~Fechamento genérico~~ — resolvido (Camila `1b56f68`): resposta à Jacynara (contact
   `e4d950be`) terminou com "Tem alguma parte específica que queira entender melhor?", que
   `prompt-vendas.js` já proíbe e a IA ignorava. `trocarFechamentoGenerico` (`camila/porta-saida-comercial.js`,
@@ -2176,9 +2176,19 @@ prompt novo). `test:safe` e `test:continuidade` (224) verdes.
 - O `/health` não expõe o commit; a conferência de deploy é pelo `prompt_versao`.
 - ~~Token do GitHub embutido na URL do remote da Camila~~ — removido da URL em 28/09/2026
   (agora usa o chaveiro do macOS, como os outros repositórios; `git ls-remote` confirmado).
-  **Falta o usuário revogar o token antigo em github.com/settings/tokens** (ele já apareceu em
-  saídas de terminal desta sessão e deve ser considerado exposto) e, se precisar de outro,
-  gerar um novo direto no chaveiro, nunca na URL.
+  **PENDENTE (usuário executa depois, 28/09/2026):**
+  1. Apagar o token clássico **"SIATEMA AM — repo"** (vence 06/10/2026) em
+     github.com/settings/tokens — é o único ativo usado na última semana, logo o que estava na URL
+     (dedução, não confirmação). O token já apareceu em saída de terminal e deve ser tratado como
+     exposto. "CAMILA NOVO" (nunca usado, vence 03/10) pode ficar ou ser apagado; os demais já
+     expiraram.
+  2. Se o chaveiro usar esse mesmo token nos repos `am-plataforma`/`am-plataforma-web`, o push deles
+     vai pedir credencial: gerar token novo (classic, só `repo`) e informar no prompt do git
+     (usuário `montenegroabrantes-lang`), nunca na URL do remote.
+  3. Alternativa sem token manual: instalar o GitHub CLI pelo `.pkg` de cli.github.com
+     (`brew` e `gh` NÃO estão instalados no Mac) e rodar `gh auth login` (login pelo navegador).
+  4. Depois, pedir à IA para testar `git ls-remote` nos 3 repositórios.
+  Regra: a IA não revoga/gera tokens nem mexe em configurações de segurança do GitHub.
 
 ### 28/09/2026 — Backup diário do Postgres gravava gzip vazio (worker corrigido e publicado)
 
@@ -2249,3 +2259,20 @@ prompt novo). `test:safe` e `test:continuidade` (224) verdes.
     build por outro motivo — é a única parte desta correção sem teste automatizado.
   - Threshold de 1024 bytes é conservador/arbitrário (um dump real desta base é muito maior);
     ajustável se algum dia fizer sentido.
+
+### 28/09/2026 (noite) — Pendências que ficaram para o usuário executar
+
+- **Token do GitHub:** ver item PENDENTE na seção "(tarde)" acima (apagar "SIATEMA AM", renovar
+  credencial pelo chaveiro ou `gh auth login`).
+- **Fila de re-protocolo (`src/index.js`, sem commit):** migração de boot que altera dados de
+  produção; só publicar depois de o usuário revisar o SQL.
+- **Re-protocolo publicado por engano (7 commits):** decidir manter e revisar, ou reverter
+  (mantendo `7c5f64b`); estratégia do chat segue NÃO confirmada; caso Iradira (prazo 06/10).
+- **Devolução de chamados parados (Camila `7c7dc96`):** flag `DEVOLUCAO_ATENDENTE_PARADO_ATIVO`
+  desligada; ligar é decisão de Ramon + João Lucas.
+- **6 teses sem cobertura (Camila `8bbdd11`):** revisão de advogado (13º salário, equiparação no
+  magistério / SV 37).
+- **Backup do Drive:** correção publicada (`6315d83`, `abf5758`); falta confirmar o 1º backup real
+  (> 1 KB) no Drive e olhar o log do build no Railway (Dockerfile mudou).
+- **Camila `1b56f68` (fechamento genérico):** confirmar pelo log `[FECHAMENTO GENÉRICO]` em
+  produção; `/health` não reflete a mudança.
