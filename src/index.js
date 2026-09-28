@@ -7,7 +7,7 @@ import rateLimit          from 'express-rate-limit';
 import { db }             from './db/index.js';
 import { conectarRedis }  from './cache/redis.js';
 import { resolverDemanda } from './utils/demandas.js';
-import { garantirTabelaMigrations } from './db/migrations.js';
+import { garantirTabelaMigrations, migrar } from './db/migrations.js';
 
 // Rotas
 import { authRouter }          from './routes/auth.js';
@@ -601,6 +601,51 @@ async function iniciar() {
         ).catch(() => {});
       }
     }).catch(e => console.warn('[Migration] Restauração de ciclos cancelados:', e.message));
+
+    // Saneamento da fila de re-protocolo (28/09/2026) — roda UMA vez (migrar): repetir a cada boot
+    // desfaria a triagem humana feita depois. Nada é cancelado:
+    // (1) adia os ciclos que a restauração acima recriou antes de completar o intervalo da tese,
+    //     até a data em que o próprio cron os criaria (ciclo_inicio + intervalo_meses - 1);
+    // (2) manda para a triagem os ciclos de cliente com vinculo_ativo=true E vinculo_fim preenchido
+    //     ao mesmo tempo — ciclosRecorrentes.js trata esse caso como vínculo ativo e pode propor
+    //     período que não existe mais (ex.: as 2 tarefas "prontas" da Iradira, fim em 01/2023).
+    await migrar('2026_09_28_saneamento_fila_reprotocolo', () => db.transaction(async (tx) => {
+      const adiados = await tx.query(`
+        UPDATE tarefas t SET
+          ciclo_adiado_ate = (t.ciclo_inicio + ((pr.intervalo_meses - 1) || ' months')::interval)::date,
+          observacao = CONCAT_WS(E'\n', NULLIF(t.observacao,''),
+            'Adiado até ' || TO_CHAR((t.ciclo_inicio + ((pr.intervalo_meses - 1) || ' months')::interval)::date, 'DD/MM/YYYY')
+            || ': ciclo criado antes de completar o intervalo da tese (restauração de 19/09/2026).')
+        FROM cliente_produtos cp JOIN produtos pr ON pr.id = cp.produto_id
+        WHERE t.cliente_produto_id = cp.id AND t.tipo='protocolar' AND t.subtipo='ciclo'
+          AND t.status NOT IN ('concluida','cancelada')
+          AND (t.ciclo_adiado_ate IS NULL OR t.ciclo_adiado_ate <= CURRENT_DATE)
+          AND pr.intervalo_meses IS NOT NULL
+          AND (t.ciclo_inicio + ((pr.intervalo_meses - 1) || ' months')::interval)::date > CURRENT_DATE
+        RETURNING t.id`);
+      const sinalizados = await tx.query(`
+        UPDATE tarefas t SET
+          precisa_triagem = true,
+          observacao = CONCAT_WS(E'\n', NULLIF(t.observacao,''),
+            'Triagem (28/09/2026): o cadastro do cliente tem vínculo ativo e data de fim do vínculo ao '
+            || 'mesmo tempo — confirmar qual está certo antes de protocolar.')
+        FROM cliente_produtos cp JOIN clientes c ON c.id = cp.cliente_id
+        WHERE t.cliente_produto_id = cp.id AND t.tipo='protocolar' AND t.ciclo_inicio IS NOT NULL
+          AND t.subtipo IN ('ciclo','ciclo_aceito') AND t.status NOT IN ('concluida','cancelada')
+          AND t.precisa_triagem = false
+          AND c.vinculo_ativo = true AND c.vinculo_fim IS NOT NULL
+        RETURNING t.id`);
+      await tx.execute(
+        `INSERT INTO logs_auditoria (usuario_id, acao, entidade, valor_depois)
+         VALUES ((SELECT id FROM usuarios WHERE email='integracao-claude@abrantesemontenegro.com.br'),
+                 'saneamento_fila_reprotocolo', 'tarefa', $1)`,
+        [JSON.stringify({
+          motivo: 'Ciclos prematuros herdados da restauração de 19/09 e vínculo contraditório (ativo + fim).',
+          adiados: adiados.map(x => x.id), sinalizados_triagem: sinalizados.map(x => x.id),
+        })]
+      );
+      console.log(`[Migration] Fila de re-protocolo: ${adiados.length} ciclo(s) adiado(s), ${sinalizados.length} enviado(s) à triagem.`);
+    })).catch(e => console.warn('[Migration] Saneamento da fila de re-protocolo:', e.message));
 
     // O acervo legado nasceu da antiga equivalência "elegível = contratado". Ele permanece
     // íntegro, mas sai da fila operacional até conferência humana; nada é apagado.
