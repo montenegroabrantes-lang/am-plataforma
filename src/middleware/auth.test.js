@@ -4,7 +4,8 @@ import jwt from 'jsonwebtoken';
 
 process.env.JWT_SECRET = 'segredo-de-teste';
 
-const { autenticar, apenasMaster, apenasMaster01 } = await import('./auth.js');
+const { autenticar, apenasMaster, apenasMaster01, exigirEscopo } = await import('./auth.js');
+const { normalizarEscopos, escoposDoToken, areaPermitidaAoToken, CONTA_SERVICO_EMAIL } = await import('../oauth/escopos.js');
 
 // ── Helpers de mock req/res/next ──
 function mockRes() {
@@ -124,4 +125,65 @@ test('apenasMaster01: pode_marcar_restrito=false → 403', () => {
 
   assert.equal(res.statusCode, 403);
   assert.equal(next.chamado, false);
+});
+
+// ── escopos do conector Claude (OAuth) ──
+test('normalizarEscopos: aceita string OAuth, lista ou lixo e devolve só escopos válidos', () => {
+  assert.deepEqual(normalizarEscopos('reprotocolo acervo'), ['acervo', 'reprotocolo']);
+  assert.deepEqual(normalizarEscopos(['reprotocolo', 'reprotocolo', 'admin']), ['reprotocolo']);
+  assert.deepEqual(normalizarEscopos(undefined), []);
+  assert.deepEqual(normalizarEscopos('*'), []);
+});
+
+test('escoposDoToken: sessão do AM sem restrição; token antigo do conector = só acervo', () => {
+  assert.equal(escoposDoToken({ id: '1', perfil: 'master', email: 'alguem@exemplo.com' }), null);
+  assert.deepEqual(escoposDoToken({ id: 's', perfil: 'master', email: CONTA_SERVICO_EMAIL }), ['acervo']);
+  assert.deepEqual(escoposDoToken({ id: 's', perfil: 'master', escopos: ['reprotocolo', 'xyz'] }), ['reprotocolo']);
+});
+
+test('areaPermitidaAoToken: /mcp sempre; demais só pelo prefixo do escopo (sem casar prefixo parcial)', () => {
+  assert.equal(areaPermitidaAoToken('/mcp', []), true);
+  assert.equal(areaPermitidaAoToken('/api/reprotocolo', ['reprotocolo']), true);
+  assert.equal(areaPermitidaAoToken('/api/reprotocolo', ['acervo']), false);
+  assert.equal(areaPermitidaAoToken('/api/acervo', ['acervo']), true);
+  assert.equal(areaPermitidaAoToken('/api/acervo-falso', ['acervo']), false);
+  assert.equal(areaPermitidaAoToken('/api/tarefas', ['acervo', 'reprotocolo']), false);
+});
+
+test('autenticar: token com escopos fora da área do escopo → 403; sessão comum não é afetada', () => {
+  const comEscopo = tokenValido({ id: 's', perfil: 'master', escopos: ['acervo'] });
+  const res = mockRes();
+  const next = mockNext();
+  autenticar({ cookies: {}, headers: { authorization: `Bearer ${comEscopo}` }, baseUrl: '/api/clientes' }, res, next);
+  assert.equal(res.statusCode, 403);
+  assert.equal(next.chamado, false);
+
+  const res2 = mockRes();
+  const next2 = mockNext();
+  autenticar({ cookies: {}, headers: { authorization: `Bearer ${comEscopo}` }, baseUrl: '/api/acervo' }, res2, next2);
+  assert.ok(next2.chamado);
+
+  const res3 = mockRes();
+  const next3 = mockNext();
+  autenticar({ cookies: { am_token: tokenValido() }, headers: {}, baseUrl: '/api/clientes' }, res3, next3);
+  assert.ok(next3.chamado, 'sessão sem claim de escopo segue como antes');
+});
+
+test('exigirEscopo: sessão Master passa; conector sem o escopo → 403 com orientação; com escopo passa', () => {
+  const middleware = exigirEscopo('reprotocolo');
+
+  const next1 = mockNext();
+  middleware({ user: { id: '1', perfil: 'master', email: 'dono@exemplo.com' } }, mockRes(), next1);
+  assert.ok(next1.chamado);
+
+  const res2 = mockRes();
+  const next2 = mockNext();
+  middleware({ user: { id: 's', perfil: 'master', email: CONTA_SERVICO_EMAIL } }, res2, next2);
+  assert.equal(res2.statusCode, 403);
+  assert.equal(res2.body.escopo_necessario, 'reprotocolo');
+  assert.equal(next2.chamado, false);
+
+  const next3 = mockNext();
+  middleware({ user: { id: 's', perfil: 'master', escopos: ['acervo', 'reprotocolo'] } }, mockRes(), next3);
+  assert.ok(next3.chamado);
 });
