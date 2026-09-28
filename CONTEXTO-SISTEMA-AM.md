@@ -2170,5 +2170,8 @@ prompt novo). `test:safe` e `test:continuidade` (224) verdes.
   ("Tem alguma parte específica que queira entender melhor?"), que `prompt-vendas.js` já proíbe —
   a IA não seguiu a regra; exige outro tipo de correção (verificação de saída).
 - O `/health` não expõe o commit; a conferência de deploy é pelo `prompt_versao`.
-- O remote do repositório da Camila tem token do GitHub embutido na URL — trocar o token e
-  removê-lo da URL.
+- ~~Token do GitHub embutido na URL do remote da Camila~~ — removido da URL em 28/09/2026
+  (agora usa o chaveiro do macOS, como os outros repositórios; `git ls-remote` confirmado).
+  **Falta o usuário revogar o token antigo em github.com/settings/tokens** (ele já apareceu em
+  saídas de terminal desta sessão e deve ser considerado exposto) e, se precisar de outro,
+  gerar um novo direto no chaveiro, nunca na URL.
