@@ -1,8 +1,15 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { redis }   from '../cache/redis.js';
+import { apenasMaster } from '../middleware/auth.js';
 
 export const dashboardRouter = Router();
+
+// Decisão do dono do escritório (28/09/2026): dashboard comercial (valores homologados,
+// causa, honorários) fica restrito a Master — mesmo padrão já usado em resumos financeiros
+// e no funil de vendas. Perfil júnior não lê estas métricas; segue com acesso normal às
+// telas operacionais (Processos, Tarefas, Agenda etc.), que não passam por aqui.
+dashboardRouter.use(apenasMaster);
 
 const CACHE_KEY = 'dashboard:metricas';
 const CACHE_TTL = 60; // segundos

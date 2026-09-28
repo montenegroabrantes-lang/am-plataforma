@@ -1,10 +1,16 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
+import { apenasMaster } from '../middleware/auth.js';
 
 export const relatorioRouter = Router();
 
+// Decisão do dono do escritório (28/09/2026): restrito a Master nas 3 rotas de leitura
+// comercial/financeira deste arquivo (relatório gerencial, conversão de leads e detalhamento
+// financeiro) — mesma restrição de dashboard/funil de vendas/financeiro. GET /diligencias
+// fica de fora de propósito: é lista operacional de processo parado, não leitura comercial.
+
 // GET /api/relatorio — relatório gerencial consolidado
-relatorioRouter.get('/', async (req, res) => {
+relatorioRouter.get('/', apenasMaster, async (req, res) => {
   const params = [];
   const fP = '';
   const fM = '';
@@ -69,7 +75,7 @@ relatorioRouter.get('/', async (req, res) => {
 });
 
 // GET /api/relatorio/sac — aba SAC (dados Digisac + Camila)
-relatorioRouter.get('/sac', async (req, res) => {
+relatorioRouter.get('/sac', apenasMaster, async (req, res) => {
   const [atendimentos, conversao, processosAtivos] = await Promise.all([
 
     // Eventos SAC por tipo (últimos 30 dias)
@@ -104,7 +110,7 @@ relatorioRouter.get('/sac', async (req, res) => {
 });
 
 // GET /api/relatorio/financeiro — detalhamento financeiro por período
-relatorioRouter.get('/financeiro', async (req, res) => {
+relatorioRouter.get('/financeiro', apenasMaster, async (req, res) => {
   const { de, ate } = req.query;
   const params = [];
   const condicoes = ['1=1'];

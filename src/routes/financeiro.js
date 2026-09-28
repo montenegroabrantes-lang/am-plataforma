@@ -5,6 +5,11 @@ import { registrarAuditoria } from '../middleware/auditoria.js';
 
 export const financeiroRouter = Router();
 
+// Decisão do dono do escritório (28/09/2026): resumo financeiro fica restrito a Master —
+// perfil júnior não via nenhum apenasMaster aqui na leitura (GET), só em parte das escritas.
+// Aplicado no router inteiro pra não depender de lembrar de repetir em cada rota nova.
+financeiroRouter.use(apenasMaster);
+
 // GET /api/financeiro — resumo + lançamentos do mês (o único "lançamento" hoje é honorário;
 // despesas/reembolso/repasse ainda não têm tabela própria — ver nota no POST abaixo)
 financeiroRouter.get('/', async (req, res) => {

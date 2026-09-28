@@ -5,6 +5,12 @@ import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
 
 export const pipelineRouter = Router();
 
+// Decisão do dono do escritório (28/09/2026): é funil de vendas (kanban de leads por etapa
+// comercial) — restrito a Master, mesma restrição aplicada a dashboard, financeiro e ao
+// funil de leads da Camila. `apenasMaster` já estava importado aqui mas nunca tinha sido
+// aplicado em nenhuma rota deste arquivo.
+pipelineRouter.use(apenasMaster);
+
 pipelineRouter.param('id', (req, res, next, id) => {
   if (!uuidValido(id)) return res.status(400).json({ ok: false, erro: 'ID inválido.' });
   next();
