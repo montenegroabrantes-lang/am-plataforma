@@ -1817,3 +1817,81 @@ integrações ou produção. Não registrar segredos neste documento.
   `git stash` que a mesma falha ocorre sem o fix aplicado; sinalizado como pendência separada).
   `/health` reiniciou zerado (`sincronizacoes:0`) depois do deploy — voltando a acumular dado
   limpo com a régua corrigida.
+- **Pendência resolvida no mesmo dia (25/09/2026)**: a causa das 5 verificações sensíveis ao dia da
+  semana foi isolada em `teste-calculadora.js` — `Module._load` casa pela string exata do
+  `require`, e `./horario` não cobria os `require('../horario')` feitos de dentro de `camila/`
+  (`indisponibilidade-processual.js`, `mensagem-proposta.js`), que escapavam do dublê de relógio e
+  liam a data real do sistema. Corrigido só no teste, sem mudança em código de produção. Commit
+  `418f026`; `npm run test:safe` (14/14) passa agora independente do dia real da semana.
+
+### 28/09/2026 — 7 pendências conhecidas implementadas (AM backend + frontend)
+
+- Lista de pendências registradas em sessões anteriores, implementadas nesta sessão em commits
+  locais (**nenhum `git push`/deploy feito** — combinado que o usuário revisa o diff antes).
+  `npm test`: 58/58 antes → **64/64 depois** (6 testes novos, nenhum removido). `next build`
+  isolado (cópia em diretório temporário fora do diretório de dev, conforme regra do projeto)
+  passou limpo, 21 rotas geradas, antes de cada commit do frontend.
+- **Polling da aba Estimativas pausa com a aba oculta** (`am-plataforma-web`, commit `0ec444e`):
+  novo hook `usePollingSeVisivel(callback, intervaloMs)` usando a Page Visibility API, substitui
+  os 3 `useEffect`+`setInterval` manuais (Pendências processuais, Revisão, Leads) — cada um
+  rodava a cada 60s mesmo com a aba em segundo plano. Ao voltar a ficar visível, dispara na hora
+  além de manter o intervalo.
+- **Match de cliente por nome via pg_trgm** (`am-plataforma`, commit `82c9b86`): duas rotinas
+  comparavam nome trazendo a tabela inteira de `clientes` pra memória e comparando em JS —
+  `clienteCamila.js` (a Camila localiza o cliente pra fechar) e `encontrarClienteExistente` em
+  `routes/estimativas.js` (cruzamento "já é cliente" do funil de leads, achado real de
+  26/08/2026 documentado mais acima). Trocadas por uma consulta usando `similarity()`/`%` do
+  pg_trgm (extensão e índices GIN de `clientes.nome` já existiam em produção desde antes —
+  nenhuma migração nova precisou ser criada). Mantida a regra de segurança do projeto: mais de
+  um cliente ativo acima do limiar pro mesmo nome (homônimo) nunca escolhe sozinho. Testado só
+  com mocks (banco simulado) — a sintaxe SQL (`similarity()`, `%`, `translate()` pra
+  acento-insensibilidade sem depender da extensão `unaccent`, que não está habilitada) não foi
+  verificada contra um Postgres real nesta sessão; recomendado conferir uma vez em produção
+  antes ou logo depois do deploy.
+- **Botão de retry manual de sincronização com o Drive** (`am-plataforma` commit `59ca64c`,
+  `am-plataforma-web` commit `2c5b1ff`): a função `sincronizarDriveOnboarding()` já existia desde
+  a Fase 6 (21/09/2026) mas sem rota nem botão — só o worker em lote a cada 30min. Novo
+  `POST /api/estimativas/onboardings/:id/sincronizar-drive` (Master) + botão na ficha do lead
+  (Lista), no mesmo padrão visual do botão equivalente da Camila.
+- **PainelConversa distingue mensagem da Camila de mensagem humana** (`am-plataforma` commit
+  `e55eb87`, `am-plataforma-web` commit `dad3062`): não existe tabela `mensagens_atendimento`
+  neste repositório (as mensagens vêm ao vivo da API do Digisac, não ficam guardadas aqui) — o
+  sinal equivalente já existia no próprio payload do Digisac (`isFromBot`) e só não estava
+  exposto como campo separado, ficando embutido no fallback de `autor`. Novo campo `origem`
+  ('camila' | 'humano' | 'cliente' | 'sistema') na resposta de
+  `GET /leads/:contactId/mensagens`; no painel, mensagem da Camila ganha cor distinta
+  (verde-azulado) e badge "IA" — cor nova, não reaproveita nenhum token de `ESTADO` nem o
+  dourado da marca (ver `src/lib/cores.js`: dourado é só pra clicável, nunca estado).
+- **Painel lateral pra fechar lead sem sair da fila** (`am-plataforma-web` commit `5294c0b`):
+  decisão de design a revisar — não existe "fechar lead" dentro da aba Revisão em si (ali só se
+  aprova/recusa o *valor* de uma estimativa, e o registro de estimativa nem carrega
+  `contact_id`); "fechar" é ação do funil de Leads/Quadro. O gap real encontrado (comentário
+  antigo de `abrirCardNaLista`, "clique abre o lead na Lista, onde todas as ações já existem")
+  era: pelo Quadro ou pelo painel de conversa, a única saída pra fechar um lead era "Dados e
+  ações", que fecha a conversa, troca pra visão Lista e rola até o card — perdendo o lugar onde
+  se estava. Adicionados "Marcar fechado"/"Marcar perdido" no cabeçalho do `PainelConversa` (já
+  é um drawer lateral, sobrepõe Quadro/Lista sem navegar), reaproveitando `FormularioFechamento`
+  e `marcarDesfecho()` que já existiam — nenhuma rota nova.
+- **Acesso: leituras comerciais restritas a Master** (`am-plataforma` commit `2592640`,
+  `am-plataforma-web` commit `23ac35d`): decisão pendente do dono do escritório, resolvida como
+  "manter fechado por padrão". Nenhuma das rotas de leitura estava de fato restrita antes —
+  `GET /api/dashboard`, `GET /api/financeiro` (só a escrita tinha `apenasMaster`),
+  `GET /api/pipeline` (`apenasMaster` importado no arquivo mas nunca usado em rota nenhuma) e
+  `GET /api/relatorio` + `/sac` + `/financeiro` (`GET /api/estimativas/leads`, o funil de leads
+  da Camila, já tinha sido coberto no commit de pg_trgm acima). `GET /api/relatorio/diligencias`
+  (processo parado, lista operacional) ficou de fora de propósito. No frontend, Sidebar esconde
+  os 4 itens pra júnior, `/` manda júnior pra `/processos` em vez de `/dashboard`, e cada página
+  redireciona sozinha se acessada direto por URL. **Decisão que vale revisar**: como a tela de
+  Relatório carrega Geral+SAC (ambos comerciais) numa única função ao montar, a página inteira
+  ficou Master-only, incluindo a aba Diligências (que sozinha não seria leitura comercial) —
+  se o júnior precisar dela no dia a dia, vale separar essa aba da busca conjunta.
+- **Aba "Ficha" própria pra ficha única do cliente** (`am-plataforma-web` commit `1238607`): a
+  ficha única (checklist de documentos exigidos + demandas por tese, Fase 5, 21/09/2026) vivia
+  escondida dentro de "Teses e Protocolos" — a própria entrada daquele dia já registrava isso
+  como melhoria futura. Nova aba de nível superior "Ficha", mesmo dado já carregado (sem nova
+  chamada à API), "Teses e Protocolos" continua só com vínculo/gestão da tese. **Verificação
+  visual em produção com login real não foi feita** (fora do que esta sessão podia fazer sem
+  credenciais) — recomendado conferir uma vez antes de considerar fechado.
+- Pendências que ficaram de fora de propósito (fora do escopo pedido): os 2 masters sem
+  WhatsApp cadastrado (Caio e a conta técnica "Integração Claude") — depende de número real do
+  usuário; nada tocado no repositório da Camila.
