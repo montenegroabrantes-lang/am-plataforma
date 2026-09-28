@@ -2005,3 +2005,32 @@ integrações ou produção. Não registrar segredos neste documento.
   - Máscara de CPF: a tela de Tarefas mostra 6 dígitos do meio (`***.456.789-**`); o
     levantamento mostra só os 4 últimos, conforme pedido — alinhar se quiser um padrão único.
   - Sem tela no frontend: por enquanto só API + MCP.
+
+### 28/09/2026 — Vulnerabilidade crítica de OAuth corrigida + rotação de JWT_SECRET
+
+- Ao ler o fluxo OAuth para criar o escopo `reprotocolo` (seção anterior), foi encontrada uma
+  falha crítica em `POST /oauth/token`: o ramo `grant_type=refresh_token` emitia um JWT Master
+  de 180 dias da conta de serviço `integracao-claude` sem validar nenhum refresh token — o
+  servidor nunca chegou a emitir um refresh token de verdade em nenhum fluxo legítimo. Qualquer
+  POST anônimo a esse endpoint recebia acesso Master a toda a API protegida por
+  `autenticar`/`apenasMaster`. A falha estava em produção desde 18/09/2026 (commit `0015a89`) e
+  era descoberta trivialmente: o endpoint público de metadados
+  `/.well-known/oauth-authorization-server` anunciava `refresh_token` como grant suportado.
+- Corrigido (commit `7c5f64b`, publicado isolado do restante do trabalho de re-protocolo, antes
+  de revisão): esse ramo agora sempre responde `invalid_grant`; metadados e registro dinâmico
+  deixaram de anunciar `refresh_token`. O fluxo legítimo (authorization_code + PKCE) nunca
+  devolveu refresh_token, então nenhum cliente real foi afetado pela correção.
+- A verificação pós-deploy (chamando a rota vulnerável antes de confirmar que o deploy novo já
+  estava no ar) teve efeito colateral real: gerou um token Master válido de verdade. Como
+  `middleware/auth.js` só confere a assinatura do JWT, sem consultar o banco a cada requisição,
+  não havia como revogar um token já emitido sem trocar o segredo de assinatura. A retenção de
+  log HTTP do Railway neste projeto é curta (~10-15 minutos, testado com `--since 1h` e
+  `--since 7d`, que devolveram a mesma janela) — não foi possível confirmar nem descartar
+  exploração externa da falha nos 10 dias em que ficou aberta.
+- Decisão do usuário: rotacionar `JWT_SECRET` mesmo sem evidência de exploração, para invalidar
+  de vez qualquer token emitido pela falha (inclusive o gerado durante a verificação). Executado
+  via `railway variable set JWT_SECRET --stdin` (valor aleatório, nunca exibido nem registrado),
+  com redeploy automático. Efeito: todas as sessões do AM e o token do conector Claude/MCP foram
+  invalidados de uma vez — a equipe precisa logar de novo e reconectar o conector no Claude
+  (Configurações → Conectores → desconectar e conectar de novo, autorizando como Master).
+- Nenhum segredo, chave ou token foi registrado neste arquivo.
