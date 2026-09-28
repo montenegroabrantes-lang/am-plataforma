@@ -46,7 +46,8 @@ oauthRouter.get('/.well-known/oauth-authorization-server', (req, res) => {
     token_endpoint: `${b}/oauth/token`,
     registration_endpoint: `${b}/oauth/register`,
     response_types_supported: ['code'],
-    grant_types_supported: ['authorization_code', 'refresh_token'],
+    // Só authorization_code: este servidor nunca emite refresh_token (ver /oauth/token).
+    grant_types_supported: ['authorization_code'],
     code_challenge_methods_supported: ['S256'],
     token_endpoint_auth_methods_supported: ['none'],
     scopes_supported: ['acervo'],
@@ -75,7 +76,7 @@ oauthRouter.post('/oauth/register', (req, res) => {
     client_id_issued_at: Math.floor(Date.now() / 1000),
     redirect_uris,
     token_endpoint_auth_method: 'none',
-    grant_types: ['authorization_code', 'refresh_token'],
+    grant_types: ['authorization_code'],
     response_types: ['code'],
   });
 });
@@ -206,12 +207,15 @@ oauthRouter.post('/oauth/token', async (req, res) => {
   }
 
   if (b.grant_type === 'refresh_token') {
-    try {
-      const access_token = await tokenContaServico();
-      return res.json({ access_token, token_type: 'Bearer', expires_in: 180 * 24 * 3600, scope: 'acervo' });
-    } catch (e) {
-      return res.status(500).json({ error: 'server_error', error_description: e.message });
-    }
+    // Este servidor NUNCA emite refresh_token (a resposta do authorization_code acima não traz
+    // um). Antes, este ramo emitia um token novo da conta de serviço (perfil master, 180 dias)
+    // sem validar refresh token nenhum — qualquer pessoa na internet obtinha um token Master só
+    // com um POST anônimo. Agora é sempre invalid_grant: quando o token expira, o cliente refaz
+    // a autorização, que exige login de um Master na tela de /oauth/authorize.
+    return res.status(400).json({
+      error: 'invalid_grant',
+      error_description: 'Refresh token não suportado — refaça a autorização do conector.',
+    });
   }
 
   res.status(400).json({ error: 'unsupported_grant_type' });
