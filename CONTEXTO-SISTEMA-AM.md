@@ -1,6 +1,6 @@
 # Contexto permanente — Sistema AM
 
-**Última atualização:** 28/09/2026 (fechamento da sessão — ver "28/09/2026 — Fechamento da sessão" no fim)
+**Última atualização:** 28/09/2026 (Camila: sem transferência ao Jurídico por outro advogado/sindicato, prazo 6 a 11 meses, trava do fechamento genérico; worker de backup corrigido e publicado — ver as seções de 28/09/2026 no fim)
 **Finalidade:** continuidade segura do desenvolvimento em outros chats e sessões.
 
 Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
@@ -2166,12 +2166,86 @@ prompt novo). `test:safe` e `test:continuidade` (224) verdes.
 **Pendências:**
 - Tickets de Danielle e Elaine já foram transferidos ao Jurídico antes da correção — a equipe
   precisa assumir ou devolver à Camila.
-- Achado não corrigido: resposta à Jacynara (contact `e4d950be`) terminou com pergunta genérica
-  ("Tem alguma parte específica que queira entender melhor?"), que `prompt-vendas.js` já proíbe —
-  a IA não seguiu a regra; exige outro tipo de correção (verificação de saída).
+- ~~Fechamento genérico~~ — resolvido (Camila `1b56f68`): resposta à Jacynara (contact
+  `e4d950be`) terminou com "Tem alguma parte específica que queira entender melhor?", que
+  `prompt-vendas.js` já proíbe e a IA ignorava. `trocarFechamentoGenerico` (`camila/porta-saida-comercial.js`,
+  chamada em `server.js` antes de `garantirTransferenciaJuridica`) troca esse fechamento, só depois
+  da proposta e fora da fase de documentos, por "Posso te indicar quais documentos você precisa
+  reunir para darmos entrada?". Não afeta a pergunta binária do Passo 6. Limitação: `/health` não
+  reflete essa mudança (o texto do prompt não mudou); confirmar pelo log `[FECHAMENTO GENÉRICO]`.
 - O `/health` não expõe o commit; a conferência de deploy é pelo `prompt_versao`.
 - ~~Token do GitHub embutido na URL do remote da Camila~~ — removido da URL em 28/09/2026
   (agora usa o chaveiro do macOS, como os outros repositórios; `git ls-remote` confirmado).
   **Falta o usuário revogar o token antigo em github.com/settings/tokens** (ele já apareceu em
   saídas de terminal desta sessão e deve ser considerado exposto) e, se precisar de outro,
   gerar um novo direto no chaveiro, nunca na URL.
+
+### 28/09/2026 — Backup diário do Postgres gravava gzip vazio (worker corrigido e publicado)
+
+- **Achado do usuário** (investigação somente leitura do Drive, fora desta sessão): os 7 arquivos
+  de backup de 22 a 28/09/2026 na pasta "Backups" tinham **20 bytes cada** — gzip de entrada
+  vazia. Nenhum backup válido do banco existia no Drive; a única proteção real era o PITR do
+  Railway (ativado em 21/09/2026, ver sessão de 21/09 acima).
+- **Causa no código:** `backup.worker.js` rodava `pg_dump "$DATABASE_URL" | gzip > arquivo` via
+  `exec`/shell, sem `pipefail`. Num pipe de shell o status de saída é o do último comando
+  (`gzip`), que sempre "dá certo" mesmo comprimindo uma entrada vazia — então um `pg_dump` que
+  falha ainda parecia sucesso, subia o arquivo de 20 bytes ao Drive e `limparBackupsAntigos(7)`
+  apagava os backups bons anteriores por cima.
+- **Causa provável do `pg_dump` falhar, confirmada por investigação nesta sessão (somente
+  leitura — `railway status`/`railway logs`, nenhum comando rodado contra o banco de produção):**
+  o Postgres de produção está na **major 18** (imagem
+  `ghcr.io/railwayapp-templates/postgres-ssl:18`, confirmado via `railway status --json`),
+  enquanto o `Dockerfile` instalava `postgresql-client` do repositório padrão do Debian
+  bookworm, que resolve para a **major 15** (confirmado via `railway logs --build`:
+  `postgresql-client-15.19-0+deb12u1`). Um `pg_dump` 15 contra um servidor 18 é uma defasagem de
+  3 majors — causa bem mais provável do que a suposta ausência do binário.
+  - **Correção de premissa importante:** a nota de memória "Railway usa builder RAILPACK e
+    ignora `nixpacks.toml`" é do repositório da **Camila**, não deste. Este repositório
+    (`am-plataforma`) usa `railway.json` com `"builder": "DOCKERFILE"` (confirmado), e o
+    `Dockerfile` já instalava `postgresql-client` explicitamente — o binário sempre existiu no
+    container; o problema é a **versão**, não a ausência.
+  - Não foi possível capturar o texto exato do erro do `pg_dump` nos logs históricos do Railway
+    (a janela de logs disponível via `railway logs --deployment` não alcançou os ciclos de
+    22–27/09 do serviço `am-plataforma`) e, por instrução explícita da tarefa, **não rodei
+    `pg_dump` contra produção** para forçar o erro. O novo código (abaixo) captura e alerta com o
+    stderr real do `pg_dump` na próxima tentativa — a causa exata fica confirmada sozinha assim
+    que o cron rodar de novo.
+- **Código alterado (`src/workers/backup.worker.js`):** `pg_dump | gzip` deixou de depender de
+  shell/pipefail — agora usa `spawn` separado para `pg_dump` e `gzip`, com a connection string
+  passada como argumento (não mais interpolada numa string de shell), checando o código de saída
+  e capturando o `stderr` real do `pg_dump`. O arquivo final passa por um piso mínimo de
+  **1024 bytes** (`backupTemTamanhoPlausivel`) antes de subir ao Google Drive — se o dump falhar
+  ou sair implausivelmente pequeno, o worker apaga o arquivo local, **não** chama
+  `limparBackupsAntigos` (backups bons antigos ficam intactos) e dispara o mesmo alerta
+  WhatsApp aos masters que já existia para falha de upload (criado no incidente de 21/09), agora
+  cobrindo também essa causa.
+- **Teste novo:** `src/workers/backup.worker.test.js` (o worker não tinha nenhum teste antes) —
+  cobre `pg_dump` ausente, `pg_dump` falhando com mensagem no stderr (reproduz o bug original:
+  mesmo falhando, um gzip "válido" porém vazio ainda é gravado em disco) e `pg_dump` funcionando
+  corretamente. `backupTemTamanhoPlausivel` testado isoladamente com os 20 bytes reais do
+  incidente.
+- **`Dockerfile` alterado:** adicionado o repositório oficial `apt.postgresql.org` (PGDG) antes
+  da instalação existente de `postgresql-client`, usando o script oficial do pacote
+  `postgresql-common` (`apt.postgresql.org.sh -y`) em vez de configuração manual — sem fixar
+  versão no nome do pacote, então builds futuros acompanham upgrades de major version do Postgres
+  em produção automaticamente. Abordagem conferida contra a documentação oficial
+  (postgresql.org/download/linux/debian, wiki.postgresql.org/wiki/Apt) e o código-fonte real do
+  script (`-y` existe e evita prompt interativo no build). A imagem base (`node:20-slim`) já
+  estava confirmada como Debian bookworm pelos logs de build reais acima.
+- **Validação:** suíte completa **127/127 testes passando** (123 antes + 4 novos, nenhuma
+  regressão). O `Dockerfile` **não foi testado com build real** — Docker (e alternativas como
+  podman/nerdctl/colima) indisponíveis nesta máquina; a mudança se apoia em documentação oficial
+  e leitura do script-fonte, não em execução.
+- **Estado em produção:** nenhum. **Nada foi commitado nem deployado** — mudança pronta apenas
+  no worktree, aguardando autorização do usuário.
+- **Pendências / limitações:**
+  - Enquanto não houver deploy, os 7 backups de 20 bytes continuam sendo o "mais recente" no
+    Drive; a única proteção real do banco continua sendo o PITR do Railway.
+  - Mesmo após o deploy, só existirá um backup válido de novo depois que o cron das 02h rodar
+    com sucesso pela primeira vez — vale conferir no dia seguinte (log `[Backup]` e o tamanho do
+    arquivo mais recente no Drive).
+  - Recomendo acompanhar o **primeiro build** no Railway (`railway logs --build`) após o deploy
+    para confirmar que `postgresql-client` resolveu para a versão do PGDG (18.x) e não quebrou o
+    build por outro motivo — é a única parte desta correção sem teste automatizado.
+  - Threshold de 1024 bytes é conservador/arbitrário (um dump real desta base é muito maior);
+    ajustável se algum dia fizer sentido.
