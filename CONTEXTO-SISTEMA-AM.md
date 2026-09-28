@@ -1,17 +1,19 @@
 # Contexto permanente — Sistema AM
 
-**Última atualização:** 28/09/2026 (Camila: sem transferência ao Jurídico por outro advogado/sindicato, prazo 6 a 11 meses, trava do fechamento genérico; worker de backup corrigido e publicado — ver as seções de 28/09/2026 no fim)
+**Última atualização:** 28/09/2026, noite (Fase 0 do re-protocolo implementada em branch local, não publicada; Camila: sem transferência ao Jurídico por outro advogado/sindicato, prazo 6 a 11 meses, trava do fechamento genérico; worker de backup corrigido e publicado — ver as seções de 28/09/2026 no fim)
 **Finalidade:** continuidade segura do desenvolvimento em outros chats e sessões.
 
 Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
 qualquer alteração e atualizado depois de mudanças materiais no código, banco,
 integrações ou produção. Não registrar segredos neste documento.
 
-> **LER PRIMEIRO — estado ao fim da sessão de 28/09/2026:** o levantamento de re-protocolo JÁ
-> ESTÁ EM PRODUÇÃO (publicado por engano, sem revisão do usuário); há uma correção da fila de
-> re-protocolo ESCRITA em `src/index.js`, SEM COMMIT e fora do ar; a estratégia de automação do
-> re-protocolo NÃO foi confirmada pelo usuário — o próximo passo é consolidá-la e pedir "sim"
-> explícito antes de executar qualquer coisa. Detalhes em "28/09/2026 — Fechamento da sessão".
+> **LER PRIMEIRO — estado no fim da noite de 28/09/2026:** o levantamento de re-protocolo JÁ ESTÁ
+> EM PRODUÇÃO (publicado por engano; o usuário ainda não decidiu manter ou reverter). A estratégia
+> de automação do re-protocolo FOI CONFIRMADA pelo usuário na noite de 28/09 (seção "Fase 0" no
+> fim). A **Fase 0 está implementada em branch local `reprotocolo-fase0` (backend e frontend), SEM
+> push e SEM deploy** — o diff antigo e não commitado de `src/index.js` no checkout principal foi
+> SUBSTITUÍDO por essa versão (usa `migrar()`) e deve ser descartado ao publicar. Nada de Fase 1 em
+> diante foi iniciado.
 
 > **PENDENTE — autorizado por Ramon em 21/09/2026 pra executar na mesma noite:** o restante da
 > Fase 6 do cronograma de resiliência (auditoria transacional, migrações versionadas,
@@ -2284,3 +2286,80 @@ prompt novo). `test:safe` e `test:continuidade` (224) verdes.
   (API e workers rodam juntos em `node src/index.js`); (3) se o `pg_dump` nem iniciar (ENOENT), o
   gzip pode ficar vivo esperando stdin — na falha, matar o outro processo. Sugestão: tornar o gzip
   injetável como o `comando`, cobrir os 3 casos em `backup.worker.test.js` e conferir o backup das 2h.
+
+### 28/09/2026 (noite) — Estratégia do re-protocolo CONFIRMADA + Fase 0 implementada (branch local, NÃO publicada)
+
+**Estratégia confirmada pelo usuário** (sequência de execução; cada fase só começa com novo "sim"):
+- Fluxo por caso: levantamento (já existe) → autorização do Master pelo chat → documentos (o AM gera
+  a procuração e aponta o que falta; a equipe colhe assinatura/documentos do período) → pacote no AM
+  (pasta no Drive, inicial a partir da anterior + modelo aprovado, valor da causa, relatório) →
+  rascunho no PJe feito pelo robô no navegador do escritório, que para antes de assinar → o advogado
+  confere, assina com o token e protocola → o chat registra número e período no AM, guarda o recibo
+  e registra a peça no acervo.
+- Fases: 0 saneamento; 1 descoberta (regra de documentos a partir das emendas por juízo; modelo de
+  inicial aprovado por ente); 2 pacote; 3 piloto de 10 rascunhos; 4 escala. Travas: nada assina nem
+  protocola sozinho; um rascunho por demanda; período sempre gravado; nenhum acesso ao TJPB a partir
+  do servidor nem plugin de evasão de detecção; escrita pelo chat com lista + confirmação e auditoria.
+- Recusadas pelo usuário (não reintroduzir): checar o resultado do processo anterior; avisar o
+  cliente pela Camila. Decisões ainda abertas: manter/reverter o levantamento já no ar; procuração
+  nova a cada re-protocolo (recomendado, por causa do Tema 1198 do STJ); modelo da inicial por ente;
+  pasta destino (`_REPROTOCOLO - 2026` recomendada); quem aprova; certificado A1×A3 (assumido A3).
+
+**Fase 0 — código** (branch `reprotocolo-fase0` em `am-plataforma` e `am-plataforma-web`; commits
+locais, sem push):
+- `PATCH /api/tarefas/:id/concluir-com-numero` (`src/routes/tarefas.js`): o fim do período passa a
+  ser obrigatório (mês/ano, não posterior ao mês atual) e o início passa a ser gravado. Em
+  re-protocolo o início é o `ciclo_inicio` da tarefa e nunca antes dele (antes disso o período é do
+  processo anterior); em protocolo inicial o início é opcional. Regra em `src/utils/periodoProtocolo.js`
+  (8 testes). Processo já existente tem o período completado sem sobrescrever o já gravado. A
+  demanda da tarefa passa a `protocolada` e recebe o `processo_id` (nenhuma rotina fechava demanda).
+  A auditoria `protocolar` registra início e fim.
+- `PATCH /api/tarefas/:id/ciclo/aceitar` e `/ciclos/aceitar-lote`: recusam ciclo de cliente com
+  `vinculo_ativo=true` E `vinculo_fim` preenchido (cadastro contraditório). Individual: 409 com a
+  explicação. Lote: ignora esses itens e devolve `ignoradas`. Motivo: o aceite zera
+  `precisa_triagem`, então qualquer sinalização seria apagada sem aviso. Corrigir o cadastro
+  destrava.
+- `src/index.js`: migração ÚNICA `2026_09_28_saneamento_fila_reprotocolo` (usa `migrar()`, em uma
+  transação, com auditoria `saneamento_fila_reprotocolo`): (1) adia (`ciclo_adiado_ate`) os ciclos
+  `ciclo` criados pela restauração de 19/09 antes de completar o intervalo da tese, até
+  `ciclo_inicio + intervalo_meses - 1`; (2) marca `precisa_triagem=true` nas tarefas de ciclo cujo
+  cliente tem vínculo ativo com data de fim. Nada é cancelado. Medido em produção em 28/09 (somente
+  leitura): 186 a adiar e 5 a sinalizar (Iradira Juvino 2 `ciclo_aceito`, Joana Marta 2 e Francisco
+  Isidio 1, em "Novos ciclos"). Substitui o diff antigo do checkout principal, que rodava a cada boot
+  e desfaria triagens humanas.
+- Frontend (`tarefas/page.js`): o modal "Concluir e iniciar monitoramento" exige mês e ano do fim
+  ("Fim do Período Solicitado *"), mostra o início do ciclo quando é re-protocolo, e o aceite em lote
+  avisa quantos ciclos foram ignorados pelo vínculo contraditório.
+
+**Verificado:** suíte do backend 131/131 sem `backup.worker.test.js` (123 anteriores + 8 novos); esse
+arquivo passa 4/4 isolado mas o processo NÃO encerra sem Redis alcançável (importar o worker abre
+`src/cache/redis.js`, que reconecta para sempre) — `npm test` trava localmente; item enviado à
+sessão que mantém o backup. Build isolado do Next.js passou. SQL novo validado por `EXPLAIN` em
+transação somente leitura contra produção. **Nada foi gravado em produção; o comportamento novo só
+existe depois de push e deploy, que dependem do usuário.**
+
+**Conferências só de leitura (28/09/2026):**
+- `processos`: 812 processos, **nenhum com `periodo_inicio`**; 5 sem `periodo_fim` (3 FGTS, 1 Piso, 1
+  sem tese). Processo sem fim conta como "cobrindo o ciclo" para o cron, então esses clientes não
+  recebem ciclo novo. O risco de o cliente sumir dos ciclos é pequeno (5); o problema geral é o
+  início nunca ter sido gravado.
+- Ciclos abertos: 366; **36 com meses anteriores às últimas 60 competências** — 5 sem processo
+  anterior da tese (o ciclo parte do início do vínculo; é ajuizamento novo, não re-protocolo) e 31 com
+  processo anterior cujo período terminou antes de 09/2021. A ausência de período nos processos NÃO
+  explica esses 36. Ficam fora do piloto até decisão do advogado.
+- Duplicidade com re-protocolos feitos à mão (pastas `_REPROTOCOLO`): 14 nomes sem o processo novo no
+  AM (9 na pasta 2025, 5 na de 2026). 12 clientes têm tarefa de ciclo aberta e devem ser conferidos
+  antes de aceitar: nome exato — Lauristela Cabral Sarinho, Mariluce Ferreira de Araujo, Saulo Soares
+  de Carvalho, Sonize de Araujo Alves, Sybele Cristina da Silva Assis (nas duas pastas), Diva Alves da
+  Costa Batista, Nilma de Pontes Cordeiro, Silverio Goncalves de Assis (comprovante de 25/09/2026),
+  Suely da Silva Assis; nome incerto (o cadastro mais parecido pode ser outra pessoa) — Deusimar Morais,
+  Ronilda Silva dos Santos, Suenia Araujo da Silva Souza. Ivanna Martins do Nascimento não tem tarefa
+  aberta (protocolada à mão em 06/01/2026). Ainda NADA foi marcado no banco para esses casos.
+
+**Pendências:** publicar a Fase 0 (backend antes ou junto do frontend; migração roda no boot) —
+depende do "sim" do usuário; ao publicar, descartar o diff antigo de `src/index.js` no checkout
+principal e conferir `git log origin/main..HEAD` antes de qualquer push; triagem dos 5 casos pelo
+usuário (prazo das tarefas da Iradira: 06/10/2026); decisão sobre os 12 clientes com possível
+duplicidade; manter/reverter o levantamento; `npm test` que não encerra sem Redis; 3 pontos de
+revisão do worker de backup (exit code do gzip, erro de pipe derrubando o processo, gzip pendurado)
+enviados à sessão "Alinhamento de atendimento Camila".
