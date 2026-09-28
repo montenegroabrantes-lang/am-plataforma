@@ -39,6 +39,7 @@ import { integracaoCamilaRouter, autenticarIntegracaoCamila } from './routes/int
 import { chavesApiRouter } from './routes/chavesApi.js';
 import { integracoesExternasRouter } from './routes/integracoesExternas.js';
 import { acervoRouter } from './routes/acervo.js';
+import { reprotocoloRouter } from './routes/reprotocolo.js';
 import { mcpRouter } from './mcp/index.js';
 import { oauthRouter } from './oauth/index.js';
 
@@ -145,6 +146,8 @@ app.use('/api/push-tj',       autenticar, pushTJRouter);
 app.use('/api/onboardings',   autenticar, onboardingsRouter);
 app.use('/api/chaves-api',    autenticar, chavesApiRouter);
 app.use('/api/acervo',        autenticar, acervoRouter);
+// Levantamento de re-protocolo (somente leitura): Master + escopo OAuth "reprotocolo" no conector.
+app.use('/api/reprotocolo',   autenticar, reprotocoloRouter);
 app.use('/mcp',               mcpRouter);
 app.use(oauthRouter); // /.well-known/*, /oauth/authorize, /oauth/token, /oauth/register — sem autenticar
 

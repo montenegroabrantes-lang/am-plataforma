@@ -1,7 +1,9 @@
-// Servidor MCP do Acervo — expõe as rotas de /api/acervo como ferramentas MCP.
+// Servidor MCP do AM — expõe como ferramentas as rotas de /api/acervo e, desde 28/09/2026, o
+// levantamento de re-protocolo (/api/reprotocolo, somente leitura).
 // Stateless: uma instância de servidor e transporte por requisição.
-// As ferramentas chamam a própria API por HTTP local, reaproveitando validação,
-// escopo de visibilidade e auditoria já implementados nas rotas.
+// As ferramentas chamam a própria API por HTTP local com o MESMO token, reaproveitando
+// validação, perfil (apenasMaster), escopo OAuth (exigirEscopo), visibilidade e auditoria já
+// implementados nas rotas — nenhuma regra de acesso é reimplementada aqui.
 import { Router } from 'express';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -10,7 +12,7 @@ import { autenticar } from '../middleware/auth.js';
 
 export const mcpRouter = Router();
 
-const BASE = `http://127.0.0.1:${process.env.PORT || 3001}/api/acervo`;
+const BASE = `http://127.0.0.1:${process.env.PORT || 3001}/api`;
 
 async function chamar(metodo, caminho, token, corpo) {
   const r = await fetch(`${BASE}${caminho}`, {
@@ -41,13 +43,13 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.0.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.1.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
     description: 'Lista os slugs de tese válidos do acervo do escritório. Consulte antes de criar peça ou precedente para não usar slug inexistente.',
     inputSchema: {},
-  }, async () => saida(await chamar('GET', '/teses', token)));
+  }, async () => saida(await chamar('GET', '/acervo/teses', token)));
 
   s.registerTool('buscar_acervo', {
     title: 'Buscar no acervo',
@@ -62,7 +64,7 @@ function construirServidor(token) {
       aba: z.enum(['todos','pecas','precedentes','organizacao']).optional(),
       limite: z.number().int().min(1).max(200).optional(),
     },
-  }, async a => saida(await chamar('GET', `/${qs(a)}`, token)));
+  }, async a => saida(await chamar('GET', `/acervo/${qs(a)}`, token)));
 
   s.registerTool('criar_peca', {
     title: 'Registrar peça no acervo',
@@ -88,7 +90,7 @@ function construirServidor(token) {
       resumo: z.string().optional(),
       modelo_aprovado: z.boolean().optional(),
     },
-  }, async a => saida(await chamar('POST', '/pecas', token, a)));
+  }, async a => saida(await chamar('POST', '/acervo/pecas', token, a)));
 
   s.registerTool('atualizar_resultado_peca', {
     title: 'Atualizar resultado da peça',
@@ -98,7 +100,7 @@ function construirServidor(token) {
       resultado: z.enum(RESULTADOS),
       resumo: z.string().optional(),
     },
-  }, async ({ id, ...b }) => saida(await chamar('PATCH', `/pecas/${id}/resultado`, token, b)));
+  }, async ({ id, ...b }) => saida(await chamar('PATCH', `/acervo/pecas/${id}/resultado`, token, b)));
 
   s.registerTool('criar_precedente', {
     title: 'Registrar precedente',
@@ -122,7 +124,7 @@ function construirServidor(token) {
       drive_file_id: z.string().optional(),
       drive_url: z.string().optional(),
     },
-  }, async a => saida(await chamar('POST', '/precedentes', token, a)));
+  }, async a => saida(await chamar('POST', '/acervo/precedentes', token, a)));
 
   s.registerTool('conferir_precedente', {
     title: 'Conferir precedente',
@@ -131,7 +133,61 @@ function construirServidor(token) {
       id: z.string().uuid(),
       fonte_primaria_url: z.string(),
     },
-  }, async ({ id, fonte_primaria_url }) => saida(await chamar('PATCH', `/precedentes/${id}/conferir`, token, { fonte_primaria_url })));
+  }, async ({ id, fonte_primaria_url }) => saida(await chamar('PATCH', `/acervo/precedentes/${id}/conferir`, token, { fonte_primaria_url })));
+
+  // ── Re-protocolo (somente leitura). Exige Master + escopo "reprotocolo" no conector. ──
+
+  s.registerTool('levantamento_reprotocolo', {
+    title: 'Levantamento de re-protocolo (somente leitura)',
+    description: 'Retrato, SEM ALTERAR NADA, das duas filas de re-protocolo do AM: "prontos" (fila Re-protocolo — ciclos já '
+      + 'aceitos, prontos para protocolar) e "aguardando" (fila Novos ciclos — aguardam autorização do Master). Agrupa por '
+      + 'ente (polo passivo) + juízo do processo anterior e ordena pelo mês mais antigo do período. Traz cliente com CPF '
+      + 'mascarado, tese, período acumulado, meses com mais de 5 anos (risco de prescrição), intervalo da tese, responsável, '
+      + 'flags de revisão humana e o que o AM sabe da documentação (a regra de "documento a atualizar" ainda NÃO foi '
+      + 'definida — não afirme que documento está vencido). Os totais batem com os contadores da tela de Tarefas. '
+      + 'Comece por detalhe="resumo"; para ver casos, use detalhe="itens" com ente e/ou limite. '
+      + 'Requer a permissão "Levantamento de re-protocolo" marcada ao autorizar o conector.',
+    inputSchema: {
+      secao: z.enum(['todas', 'prontos', 'aguardando']).optional()
+        .describe('prontos = fila Re-protocolo; aguardando = fila Novos ciclos; padrão: todas'),
+      detalhe: z.enum(['resumo', 'itens']).optional()
+        .describe('resumo (padrão): totais e grupos; itens: lista os casos de cada grupo'),
+      ente: z.string().max(100).optional()
+        .describe('Filtra grupos pelo nome do ente ou do juízo (ex.: "Paraíba", "2º Juizado"); os totais continuam os da fila inteira'),
+      limite: z.number().int().min(1).max(500).optional()
+        .describe('No modo itens: máximo de casos listados por seção (padrão 40)'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+  }, async ({ secao, detalhe, ente, limite }) => {
+    const modo = detalhe || 'resumo';
+    const parametros = { secao, detalhe: modo, ente, limite: modo === 'itens' ? (limite ?? 40) : undefined };
+    return saida(await chamar('GET', `/reprotocolo/levantamento${qs(parametros)}`, token));
+  });
+
+  s.registerTool('conferir_vinculo_oficial', {
+    title: 'Conferir vínculo na fonte oficial (PB/PE)',
+    description: 'Para 1 a 5 tarefas do levantamento de re-protocolo, consulta a folha oficial do Estado da Paraíba ou de '
+      + 'Pernambuco (a mesma fonte da aba Estimativas, com cache de 6h) no período acumulado: competências localizadas, '
+      + 'última competência com pagamento, órgão/cargo/regime encontrados, compatibilidade com o cadastro e a referência de '
+      + '8% (valor em risco). Entes municipais ou outros: responde "sem fonte oficial integrada". Somente leitura. '
+      + 'Não use em massa — é API pública do governo; consulte só os casos que o Master pedir.',
+    inputSchema: {
+      tarefa_ids: z.array(z.string().uuid()).min(1).max(5).describe('IDs de tarefa (campo tarefa_id do levantamento), no máximo 5'),
+      atualizar: z.boolean().optional().describe('true ignora o cache de 6h e consulta de novo'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  }, async ({ tarefa_ids, atualizar }) => {
+    const resultados = [];
+    // Um por vez, nunca em paralelo: cada consulta já dispara vários pedidos à fonte oficial.
+    for (const id of [...new Set(tarefa_ids)]) {
+      const { status, dados } = await chamar('GET', `/reprotocolo/${id}/vinculo-oficial${atualizar ? '?atualizar=1' : ''}`, token);
+      resultados.push({ tarefa_id: id, http: status, ...dados });
+    }
+    return {
+      content: [{ type: 'text', text: JSON.stringify({ resultados }, null, 2) }],
+      isError: resultados.every(r => r.http >= 400),
+    };
+  });
 
   return s;
 }
