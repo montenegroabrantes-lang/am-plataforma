@@ -9,9 +9,25 @@
 // Somente leitura: não grava nada no AM nem aprova valor. O resultado é referência para
 // conferência humana.
 import { db } from '../../db/index.js';
-import { buscarReferenciaEstadual, ReferenciaEstadualError, detectarUfEstadual } from '../remuneracaoEstadual.js';
+import { buscarReferenciaEstadual, ReferenciaEstadualError, detectarUfEstadual, normalizarTexto } from '../remuneracaoEstadual.js';
 import { carregarItens, indiceMes } from './levantamento.js';
 import { MESES_JANELA_QUINQUENAL } from './regras.js';
+
+const MAX_VINCULOS_LISTADOS = 5;
+const COMPATIBILIDADE_MINIMA = 0.5;
+
+// A busca oficial é por NOME EXATO: nomes comuns trazem homônimos. Só apontamos um vínculo
+// como "do cliente" quando não há dúvida: um único vínculo encontrado, ou o de maior
+// compatibilidade (cargo/órgão do cadastro) está acima do mínimo e à frente do segundo.
+export function avaliarCorrespondencia(vinculos) {
+  if (!vinculos.length) return { correspondencia: 'nenhuma', escolhido: null };
+  if (vinculos.length === 1) return { correspondencia: 'unica', escolhido: vinculos[0] };
+  const [primeiro, segundo] = vinculos; // já vêm ordenados por compatibilidade
+  if (primeiro.compatibilidade >= COMPATIBILIDADE_MINIMA && primeiro.compatibilidade > segundo.compatibilidade) {
+    return { correspondencia: 'clara', escolhido: primeiro };
+  }
+  return { correspondencia: 'ambigua', escolhido: null };
+}
 
 function indiceCompetencia(texto) {
   const m = String(texto || '').match(/^(\d{1,2})\/(\d{4})$/);
@@ -126,7 +142,22 @@ export async function conferirVinculoOficial(tarefaId, {
 
   const fimConsultaIdx = indiceCompetencia(resultado.periodo_consultado?.fim);
   const vinculos = (resultado.vinculos || []).map((v, i) => ({ ordem: i + 1, ...resumirVinculoOficial(v, { janelaIdx, fimConsultaIdx }) }));
-  const melhor = vinculos[0] || null;
+  const { correspondencia, escolhido } = avaliarCorrespondencia(vinculos);
+  // A referência de 8% é a do FGTS (a mesma da aba Estimativas); para outras teses ela não
+  // mede o que está em jogo, então não é apresentada como "valor em risco".
+  const teseFgts = /\bFGTS\b/.test(normalizarTexto(item.tese.nome));
+  let valorEmRisco = null;
+  let motivoSemValor = null;
+  if (!teseFgts) motivoSemValor = `A referência de 8% corresponde ao FGTS; não há cálculo integrado de valor em risco para a tese ${item.tese.nome}.`;
+  else if (correspondencia === 'ambigua') motivoSemValor = 'Mais de um vínculo com o mesmo nome e sem correspondência clara com o cadastro (possíveis homônimos): confira manualmente.';
+  else if (escolhido) {
+    valorEmRisco = {
+      vinculo: escolhido.ordem,
+      referencia_8pct: escolhido.referencia_8pct,
+      saindo_da_janela_em_12_meses: escolhido.referencia_8pct_saindo_da_janela_em_12_meses,
+      base: '8% da remuneração oficial localizada no período, dentro das últimas 60 competências (referência, não cálculo jurídico).',
+    };
+  }
   return {
     ...base,
     status: resultado.status,
@@ -134,12 +165,11 @@ export async function conferirVinculoOficial(tarefaId, {
     fonte: { nome: resultado.fonte_nome, url: resultado.fonte_url },
     cache: Boolean(resultado.cache),
     periodo_consultado: resultado.periodo_consultado,
-    vinculos_encontrados: vinculos,
-    valor_em_risco_referencia: melhor ? {
-      referencia_8pct: melhor.referencia_8pct,
-      saindo_da_janela_em_12_meses: melhor.referencia_8pct_saindo_da_janela_em_12_meses,
-      base: 'Vínculo de maior compatibilidade: 8% da remuneração oficial localizada no período, dentro das últimas 60 competências.',
-    } : null,
+    correspondencia,
+    vinculos_encontrados: vinculos.slice(0, MAX_VINCULOS_LISTADOS),
+    vinculos_omitidos: Math.max(0, vinculos.length - MAX_VINCULOS_LISTADOS),
+    valor_em_risco_referencia: valorEmRisco,
+    ...(motivoSemValor ? { valor_em_risco_indisponivel: motivoSemValor } : {}),
     aviso: [
       resultado.aviso,
       'Busca por nome exato: homônimos são possíveis — confira cargo, órgão e admissão.',

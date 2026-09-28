@@ -169,7 +169,9 @@ function construirServidor(token) {
     description: 'Para 1 a 5 tarefas do levantamento de re-protocolo, consulta a folha oficial do Estado da Paraíba ou de '
       + 'Pernambuco (a mesma fonte da aba Estimativas, com cache de 6h) no período acumulado: competências localizadas, '
       + 'última competência com pagamento, órgão/cargo/regime encontrados, compatibilidade com o cadastro e a referência de '
-      + '8% (valor em risco). Entes municipais ou outros: responde "sem fonte oficial integrada". Somente leitura. '
+      + '8% como valor em risco (só na tese FGTS e só quando a correspondência com o cadastro é única/clara — a busca é '
+      + 'por nome exato e nomes comuns trazem homônimos). Mês sem pagamento no fim pode ser só atraso de publicação da '
+      + 'fonte. Entes municipais ou outros: responde "sem fonte oficial integrada". Somente leitura. '
       + 'Não use em massa — é API pública do governo; consulte só os casos que o Master pedir.',
     inputSchema: {
       tarefa_ids: z.array(z.string().uuid()).min(1).max(5).describe('IDs de tarefa (campo tarefa_id do levantamento), no máximo 5'),

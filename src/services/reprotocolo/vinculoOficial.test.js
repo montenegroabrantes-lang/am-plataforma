@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db } from '../../db/index.js';
 import { ReferenciaEstadualError } from '../remuneracaoEstadual.js';
-import { conferirVinculoOficial, orgaoParaConsulta, resumirVinculoOficial } from './vinculoOficial.js';
+import { conferirVinculoOficial, orgaoParaConsulta, resumirVinculoOficial, avaliarCorrespondencia } from './vinculoOficial.js';
 import { SECAO_AGUARDANDO } from './levantamento.js';
 
 // Guarda: banco simulado; qualquer uso acidental do pool real falha na hora.
@@ -157,4 +157,33 @@ test('parcela que sai da janela de 5 anos em 12 meses usa só as competências m
     referencia_fgts_8pct: 560,
   }, { janelaIdx, fimConsultaIdx: 2026 * 12 + 8 });
   assert.equal(r.referencia_8pct_saindo_da_janela_em_12_meses, 160); // 8% de (10/2021 + 09/2022)
+});
+
+test('homônimos: sem correspondência clara não há "valor em risco" e a lista é limitada a 5', async () => {
+  const homonimo = (cargo, ref) => ({ ...RESPOSTA_PB.vinculos[0], cargo, orgao: 'PBPREV', compatibilidade: 0.18, referencia_fgts_8pct: ref });
+  const resposta = { ...RESPOSTA_PB, vinculos: Array.from({ length: 7 }, (_, i) => homonimo(`CARGO ${i}`, 1000 + i)) };
+  const r = await conferirVinculoOficial('t-1', { conexao: banco([linha()]), buscar: buscarFalso(resposta) });
+  assert.equal(r.correspondencia, 'ambigua');
+  assert.equal(r.valor_em_risco_referencia, null);
+  assert.match(r.valor_em_risco_indisponivel, /homônimos/);
+  assert.equal(r.vinculos_encontrados.length, 5);
+  assert.equal(r.vinculos_omitidos, 2);
+});
+
+test('correspondência: única, clara (acima do mínimo e à frente), ambígua (empate ou fraca)', () => {
+  const v = c => ({ compatibilidade: c });
+  assert.equal(avaliarCorrespondencia([]).correspondencia, 'nenhuma');
+  assert.equal(avaliarCorrespondencia([v(0)]).correspondencia, 'unica');
+  assert.equal(avaliarCorrespondencia([v(0.65), v(0.3)]).correspondencia, 'clara');
+  assert.equal(avaliarCorrespondencia([v(0.65), v(0.65)]).correspondencia, 'ambigua');
+  assert.equal(avaliarCorrespondencia([v(0.4), v(0.1)]).correspondencia, 'ambigua');
+});
+
+test('tese que não é FGTS: vínculo aparece, mas os 8% não viram "valor em risco"', async () => {
+  const r = await conferirVinculoOficial('t-1', {
+    conexao: banco([linha({ produto_nome: 'ADICIONAL NOTURNO' })]), buscar: buscarFalso(RESPOSTA_PB),
+  });
+  assert.equal(r.vinculos_encontrados.length, 1);
+  assert.equal(r.valor_em_risco_referencia, null);
+  assert.match(r.valor_em_risco_indisponivel, /ADICIONAL NOTURNO/);
 });
