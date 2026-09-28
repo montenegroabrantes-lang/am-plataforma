@@ -276,7 +276,7 @@ estimativasRouter.get('/leads', apenasMaster, async (req, res) => {
         processosPorCliente.get(processo.cliente_id).push(item);
       }
       for (const lead of data.leads) {
-        const encontrado = lead.nome ? encontrarClienteExistente(lead.nome, clientes) : null;
+        const encontrado = lead.nome ? clientesEncontradosPorNome.get(lead.nome) || null : null;
         const onboarding = onboardingPorContato.get(String(lead.contact_id)) || null;
         lead.ja_e_cliente = !!encontrado;
         lead.cliente_encontrado = encontrado ? { id: encontrado.id, nome: encontrado.nome, criado_em: encontrado.criado_em } : null;
@@ -351,6 +351,13 @@ estimativasRouter.get('/leads/:contactId/mensagens', async (req, res) => {
       const dados = m.data && typeof m.data === 'object' ? m.data : {};
       const evento = m.type === 'ticket' ? (Object.keys(dados).find(k => k.startsWith('ticket')) || 'ticket') : null;
       const de = evento ? 'sistema' : m.isFromMe ? 'escritorio' : 'cliente';
+      // A própria API do Digisac já grava, por mensagem, se ela saiu de um usuário logado
+      // (humano) ou da integração/bot (`isFromBot`) -- só não chegava exposto ao painel do
+      // AM como um campo à parte, só embutido no texto do fallback de `autor`. Aqui a única
+      // automação que manda mensagem "nossa" pelo Digisac é a Camila, então isFromBot=true
+      // em uma mensagem de escritório é a Camila; sem isso, é humano (usuário mapeado ou não).
+      const automatico = de === 'escritorio' && !!m.isFromBot;
+      const origem = de === 'escritorio' ? (automatico ? 'camila' : 'humano') : de;
       const arquivo = m.file || dados.file || null;
       const anexo = arquivo && typeof arquivo === 'object'
         ? { url: arquivo.url || arquivo.downloadUrl || arquivo.publicUrl || null, nome: arquivo.name || arquivo.originalName || null, mime: arquivo.mimetype || arquivo.mimeType || null }
@@ -358,8 +365,9 @@ estimativasRouter.get('/leads/:contactId/mensagens', async (req, res) => {
       return {
         id: m.id,
         de,
+        origem,
         evento,
-        autor: de === 'escritorio' ? (usuarios.get(m.userId) || (m.isFromBot ? 'Robô do Digisac' : 'Escritório')) : null,
+        autor: de === 'escritorio' ? (automatico ? 'Camila' : (usuarios.get(m.userId) || 'Escritório')) : null,
         texto: m.text ?? dados.text ?? '',
         tipo: m.type || 'chat',
         em: m.timestamp || m.createdAt || null,
