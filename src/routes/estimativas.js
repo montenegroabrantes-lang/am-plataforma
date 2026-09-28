@@ -594,6 +594,20 @@ estimativasRouter.post('/onboardings/:id/sincronizar-camila', apenasMaster, asyn
   }
 });
 
+// POST /api/estimativas/onboardings/:id/sincronizar-drive — mesmo padrão do botão
+// "Sincronizar de novo" da Camila acima, agora pro Google Drive: o worker de alertas já
+// reprocessa quem está com drive_sync_status='erro' a cada 30 min sozinho (Fase 6), isto é só
+// pra não esperar quando alguém está olhando na hora (ex.: credencial do Drive acabou de
+// voltar a funcionar).
+estimativasRouter.post('/onboardings/:id/sincronizar-drive', apenasMaster, async (req, res) => {
+  try {
+    await sincronizarDriveOnboarding(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(err.status || 500).json({ ok: false, erro: err.message });
+  }
+});
+
 // DELETE /api/estimativas/leads/:contactId/desfecho — desfazer um desfecho marcado por engano
 estimativasRouter.delete('/leads/:contactId/desfecho', apenasMaster, async (req, res) => {
   const api = camila();
