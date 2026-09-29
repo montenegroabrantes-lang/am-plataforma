@@ -313,6 +313,9 @@ export async function semConfirmacaoValida(ids, { conexao = db, podeVerRestrito 
 export async function salvarConferenciaOficial(conexao, tarefaId, conferencia) {
   const resumo = conferencia.status === 'erro' ? { status: 'erro', mensagem: conferencia.mensagem ?? null } : {
     status: conferencia.status, uf: conferencia.uf ?? null, correspondencia: conferencia.correspondencia ?? null,
+    // Referência de 8% (FGTS) só quando a correspondência é clara; usada pelo valor da causa do pacote.
+    risco: conferencia.valor_em_risco_referencia?.referencia_8pct ?? null,
+    periodo_consultado: conferencia.periodo_consultado ?? null,
     vinculos: (conferencia.vinculos_encontrados || []).map(v => ({
       cargo: v.cargo, orgao: v.orgao, regime: v.regime, admissao: v.admissao,
       ultima_paga: v.ultima_competencia_com_pagamento, sem_pgto_meses: v.meses_sem_pagamento_ate_o_fim_da_consulta,

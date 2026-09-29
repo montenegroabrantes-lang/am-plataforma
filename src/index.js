@@ -693,6 +693,50 @@ async function iniciar() {
         )`);
     }).catch(e => console.warn('[Migration] Tabelas da verificação de re-protocolo:', e.message));
 
+    // Pacote do re-protocolo (29/09/2026): reserva única por tarefa/demanda + relatório montado, e o
+    // cadastro dos modelos aprovados (inicial/procuração) por ente e tese.
+    await migrar('2026_09_29_pacote_reprotocolo', async () => {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS pacotes_reprotocolo (
+          id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          tarefa_id          UUID NOT NULL REFERENCES tarefas(id) ON DELETE CASCADE,
+          demanda_id         UUID REFERENCES demandas(id) ON DELETE SET NULL,
+          cliente_id         UUID NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+          status             TEXT NOT NULL DEFAULT 'reservado' CHECK (status IN ('reservado','montado','aprovado','cancelado')),
+          periodo_inicio     DATE,
+          periodo_fim        DATE,
+          meses              INTEGER,
+          valor_causa        NUMERIC(14,2),
+          valor_exige_humano BOOLEAN,
+          dados              JSONB NOT NULL DEFAULT '{}',
+          reservado_por      UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+          reservado_em       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          montado_em         TIMESTAMPTZ,
+          aprovado_por       UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+          aprovado_em        TIMESTAMPTZ,
+          cancelado_por      UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+          cancelado_em       TIMESTAMPTZ,
+          motivo_cancelamento TEXT,
+          atualizado_em      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`);
+      // Um pacote ativo por tarefa e por demanda: reservas simultâneas nunca duplicam o protocolo.
+      await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS uq_pacote_reprot_tarefa_ativo ON pacotes_reprotocolo (tarefa_id) WHERE status <> 'cancelado'`);
+      await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS uq_pacote_reprot_demanda_ativo ON pacotes_reprotocolo (demanda_id) WHERE status <> 'cancelado' AND demanda_id IS NOT NULL`);
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS modelos_reprotocolo (
+          id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          ente             TEXT NOT NULL,
+          tese_id          UUID REFERENCES produtos(id) ON DELETE CASCADE,
+          tipo             TEXT NOT NULL CHECK (tipo IN ('inicial','procuracao')),
+          titulo           TEXT,
+          drive_arquivo_id TEXT NOT NULL,
+          aprovado_por     UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+          aprovado_em      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          ativo            BOOLEAN NOT NULL DEFAULT true
+        )`);
+      await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS uq_modelo_reprot_ativo ON modelos_reprotocolo (ente, COALESCE(tese_id, '00000000-0000-0000-0000-000000000000'::uuid), tipo) WHERE ativo`);
+    }).catch(e => console.warn('[Migration] Tabelas do pacote de re-protocolo:', e.message));
+
     // O acervo legado nasceu da antiga equivalência "elegível = contratado". Ele permanece
     // íntegro, mas sai da fila operacional até conferência humana; nada é apagado.
     // Tarefas nascidas de ciclo (ciclo_inicio) ficam de fora: para elas, ter processo anterior é a regra.

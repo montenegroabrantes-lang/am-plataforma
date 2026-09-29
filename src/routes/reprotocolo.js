@@ -14,6 +14,9 @@ import { conferirVinculoOficial } from '../services/reprotocolo/vinculoOficial.j
 import {
   verificarCiclos, confirmarCiclos, resumirResultado, totaisPorGrupo, salvarConferenciaOficial, vincularPastaAntiga, GRUPO,
 } from '../services/reprotocolo/verificacao.js';
+import {
+  reservarPacotes, montarPacote, cancelarPacote, listarPacotes, obterPacote, cadastrarModelo, listarModelos, STATUS_PACOTE, TIPOS_MODELO,
+} from '../services/reprotocolo/pacote.js';
 import { db } from '../db/index.js';
 import { ReferenciaEstadualError } from '../services/remuneracaoEstadual.js';
 
@@ -52,6 +55,7 @@ export function criarReprotocoloRouter({
   salvarOficial = salvarConferenciaOficial,
   vincularPasta = vincularPastaAntiga,
   transacao = (fn) => db.transaction(fn),
+  pacotes = { reservar: reservarPacotes, montar: montarPacote, cancelar: cancelarPacote, listar: listarPacotes, obter: obterPacote, cadastrarModelo, listarModelos },
 } = {}) {
   const router = Router();
   router.use(apenasMaster, exigirEscopo('reprotocolo'));
@@ -200,6 +204,78 @@ export function criarReprotocoloRouter({
       throw err;
     }
     await auditar({ usuarioId: req.user.id, acao: 'vincular_pasta_antiga_reprotocolo', entidade: 'cliente', entidadeId: clienteId, valorDepois: { drive_pasta_id: driveId }, ip: req._ip });
+    res.json({ ok: true });
+  });
+
+  // ───────────── Pacote do re-protocolo (Fase 2) ─────────────
+
+  // GET /api/reprotocolo/pacotes?status=&limite= — lista (leitura; também pelo conector com escopo).
+  router.get('/pacotes', async (req, res) => {
+    const status = req.query.status ?? '';
+    if (status && !Object.values(STATUS_PACOTE).includes(status)) return res.status(400).json({ ok: false, erro: `status deve ser: ${Object.values(STATUS_PACOTE).join(', ')}.` });
+    const limite = req.query.limite === undefined ? 200 : Number(req.query.limite);
+    if (!Number.isInteger(limite) || limite < 1 || limite > 500) return res.status(400).json({ ok: false, erro: 'limite deve ser um inteiro de 1 a 500.' });
+    const itens = await pacotes.listar({ status: status || null, limite });
+    res.json({ ok: true, total: itens.length, itens });
+  });
+
+  // GET /api/reprotocolo/pacotes/:id — relatório do pacote (leitura).
+  router.get('/pacotes/:id', async (req, res) => {
+    if (!uuidValido(req.params.id)) return res.status(400).json({ ok: false, erro: 'ID de pacote inválido.' });
+    const p = await pacotes.obter({ pacoteId: req.params.id });
+    if (!p) return res.status(404).json({ ok: false, erro: 'Pacote não encontrado.' });
+    res.json({ ok: true, pacote: p });
+  });
+
+  // POST /api/reprotocolo/pacotes/reservar { tarefa_ids } — só ciclos com confirmação válida (só sessão do AM).
+  router.post('/pacotes/reservar', apenasSessao, async (req, res) => {
+    const { tarefa_ids: ids } = req.body || {};
+    if (!Array.isArray(ids) || !ids.length || ids.length > 50 || ids.some(id => !uuidValido(id))) {
+      return res.status(400).json({ ok: false, erro: 'Informe de 1 a 50 tarefas válidas.' });
+    }
+    const resultados = await transacao(tx => pacotes.reservar({ conexao: tx, usuarioId: req.user.id, tarefaIds: ids, podeVerRestrito: Boolean(req.user.pode_marcar_restrito) }));
+    const reservados = resultados.filter(r => r.ok);
+    await auditar({ usuarioId: req.user.id, acao: 'reservar_pacote_reprotocolo', entidade: 'tarefa', valorDepois: { reservados: reservados.map(r => r.pacote_id), recusados: resultados.length - reservados.length }, ip: req._ip });
+    res.json({ ok: true, reservados: reservados.length, recusados: resultados.length - reservados.length, resultados });
+  });
+
+  // POST /api/reprotocolo/pacotes/:id/montar { periodo_inicio_pedido? } — monta o relatório (não gera peças).
+  router.post('/pacotes/:id/montar', apenasSessao, async (req, res) => {
+    if (!uuidValido(req.params.id)) return res.status(400).json({ ok: false, erro: 'ID de pacote inválido.' });
+    const inicio = req.body?.periodo_inicio_pedido ?? null;
+    if (inicio !== null && !/^\d{4}-(0[1-9]|1[0-2])(-\d{2})?$/.test(String(inicio))) return res.status(400).json({ ok: false, erro: 'periodo_inicio_pedido deve ser AAAA-MM.' });
+    const r = await transacao(tx => pacotes.montar({ conexao: tx, pacoteId: req.params.id, usuarioId: req.user.id, periodoInicioPedido: inicio, podeVerRestrito: Boolean(req.user.pode_marcar_restrito) }));
+    if (!r.ok) return res.status(r.status || 400).json({ ok: false, erro: r.erro, motivo: r.motivo ?? null });
+    await auditar({ usuarioId: req.user.id, acao: 'montar_pacote_reprotocolo', entidade: 'pacote_reprotocolo', entidadeId: req.params.id, valorDepois: { periodo: r.relatorio.periodo, pronto_para_gerar_pecas: r.relatorio.pronto_para_gerar_pecas }, ip: req._ip });
+    res.json({ ok: true, pacote_id: r.pacote_id, relatorio: r.relatorio, texto: r.texto });
+  });
+
+  // POST /api/reprotocolo/pacotes/:id/cancelar { motivo } — libera a reserva (só sessão do AM).
+  router.post('/pacotes/:id/cancelar', apenasSessao, async (req, res) => {
+    if (!uuidValido(req.params.id)) return res.status(400).json({ ok: false, erro: 'ID de pacote inválido.' });
+    const motivo = String(req.body?.motivo ?? '').trim();
+    if (motivo.length < 5) return res.status(400).json({ ok: false, erro: 'Informe o motivo do cancelamento.' });
+    const ok = await transacao(tx => pacotes.cancelar({ conexao: tx, pacoteId: req.params.id, usuarioId: req.user.id, motivo: motivo.slice(0, 500) }));
+    if (!ok) return res.status(409).json({ ok: false, erro: 'Pacote não encontrado ou já não pode ser cancelado.' });
+    await auditar({ usuarioId: req.user.id, acao: 'cancelar_pacote_reprotocolo', entidade: 'pacote_reprotocolo', entidadeId: req.params.id, valorDepois: { motivo: motivo.slice(0, 200) }, ip: req._ip });
+    res.json({ ok: true });
+  });
+
+  // Modelos aprovados (inicial / procuração) por ente e tese — o advogado marca quais valem.
+  router.get('/modelos', async (_req, res) => { res.json({ ok: true, itens: await pacotes.listarModelos({}) }); });
+  router.put('/modelos', apenasSessao, async (req, res) => {
+    const { ente, tese_id: teseId = null, tipo, drive_arquivo_id: driveId, titulo = '' } = req.body || {};
+    if (!String(ente ?? '').trim() || String(ente).length > 120) return res.status(400).json({ ok: false, erro: 'Informe o ente.' });
+    if (!TIPOS_MODELO.includes(tipo)) return res.status(400).json({ ok: false, erro: `tipo deve ser: ${TIPOS_MODELO.join(', ')}.` });
+    if (teseId !== null && !uuidValido(teseId)) return res.status(400).json({ ok: false, erro: 'tese_id inválido.' });
+    if (!ID_DRIVE_RE.test(String(driveId ?? ''))) return res.status(400).json({ ok: false, erro: 'drive_arquivo_id inválido.' });
+    try {
+      await transacao(tx => pacotes.cadastrarModelo({ conexao: tx, ente: String(ente).trim(), teseId, tipo, titulo: String(titulo).slice(0, 200), driveId: String(driveId), usuarioId: req.user.id }));
+    } catch (err) {
+      if (err?.code === '23503') return res.status(404).json({ ok: false, erro: 'Tese não encontrada.' });
+      throw err;
+    }
+    await auditar({ usuarioId: req.user.id, acao: 'cadastrar_modelo_reprotocolo', entidade: 'modelo_reprotocolo', valorDepois: { ente, tese_id: teseId, tipo, drive_arquivo_id: driveId }, ip: req._ip });
     res.json({ ok: true });
   });
 
