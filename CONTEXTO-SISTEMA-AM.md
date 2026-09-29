@@ -2489,3 +2489,11 @@ vinculado. O acervo não tem rota para editar o link de uma peça; o pacote acei
   card renderizados em servidor; relatórios de exemplo com dados reais (Estado: modelo achado com
   arquivo; Município: modelo sem arquivo).
 
+**Publicação de 29/09/2026 (fim do dia):** backend `fa09938..fdd2a82` publicado a pedido do usuário (deploy Railway
+`969cb387` SUCCESS; `POST /api/reprotocolo/pacotes/:id/aprovar` responde 401 sem login, ou seja, a rota
+existe). **Frontend NÃO publicado:** o push foi recusado porque `origin/main` do `am-plataforma-web`
+avançou (`13c44e9`, correção de Estimativas feita por outra sessão) e o passo de reaplicar o commit
+`f52f4ff` foi negado pelo modo automático. **Variáveis do Railway NÃO aplicadas**
+(`SALARIO_MINIMO_VIGENTE=1621`, `REPROTOCOLO_APROVADORES`). Enquanto o frontend não sobe, a tela do pacote
+(reservar, montar, aprovar) não existe para o usuário; o backend já responde às rotas.
+
