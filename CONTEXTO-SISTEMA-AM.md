@@ -2452,3 +2452,40 @@ locais: backend `reprotocolo-pacote` (empilhada sobre a Fase 0) e frontend `repr
   (depende dos modelos aprovados por ente e do modelo de procuração); quem aprova o dossiê; ferramentas
   de escrita do chat em escopo separado; regra de residência por juízo (das emendas à inicial); piloto
   no PJe (Fase 3).
+
+### 29/09/2026 (fim do dia) — Decisões do usuário e aprovação do pacote (commits locais, SEM push)
+
+**Decisões do usuário:** (1) **a procuração anterior será reaproveitada** (o checklist deixou de gerar
+procuração nova; a data da procuração aparece no relatório com o aviso do Tema 1198 do STJ); (2) **as
+iniciais aprovadas já estão no sistema**: o pacote lê o modelo do acervo (peça `inicial` com
+`modelo_aprovado`, por ente e tese); (3) **salário mínimo vigente: R$ 1.621** (teto do Juizado = 60 ×
+esse valor = R$ 97.260); (4) **quem aprova o dossiê é o Luciano Montenegro** (usuário Master
+`luciano montenegro`).
+
+**Achado no acervo (produção, leitura):** só 2 iniciais aprovadas — Estado da Paraíba (`estado-paraiba`,
+tese `fgts-nulidade`, com arquivo do Drive) e Município de João Pessoa (`municipio-joao-pessoa`,
+`fgts-nulidade`, **sem arquivo do Drive**). Como 67 dos 78 ciclos Confirmados são do Município, o
+pacote deles fica com a pendência `modelo_sem_arquivo` (bloqueia a aprovação) até o arquivo ser
+vinculado. O acervo não tem rota para editar o link de uma peça; o pacote aceita um ajuste manual
+(tabela `modelos_reprotocolo`, com precedência) — a tela do pacote tem o campo para colar o link.
+
+**Implementado (branches `reprotocolo-aprovacao` no backend e no frontend):**
+- `checklist.js`: identidade e procuração reaproveitadas; sem procuração na pasta antiga → pedir ao
+  cliente; vínculo e contracheques novos.
+- `pacote.js`: modelo de inicial do acervo (`slugEnteAcervo`/`slugTeseAcervo`), pendências
+  estruturadas (`modelo_inicial`, `modelo_sem_arquivo`, `valor`, `documentos`), `aprovarPacote` e
+  `pacotesPorTarefas`. Aprovação: só e-mails em `REPROTOCOLO_APROVADORES` (sem a variável ninguém
+  aprova), só por sessão do AM; exige pacote montado, sem pendência de modelo, valor da causa > 0
+  informado pelo aprovador (a proposta do sistema fica registrada), ciência explícita acima do teto e
+  confirmação da verificação ainda válida. Pacote aprovado ainda pode ser cancelado com motivo.
+- `POST /api/reprotocolo/pacotes/:id/aprovar`; `GET /verificacao` traz o pacote de cada ciclo e
+  `pode_aprovar`.
+- Tela: reservar, montar, ver relatório, cancelar, vincular o modelo de inicial (colar o link) e
+  aprovar (só o aprovador).
+- **Configuração a fazer no Railway (backend):** `SALARIO_MINIMO_VIGENTE=1621` e
+  `REPROTOCOLO_APROVADORES=<e-mail do usuário Luciano Montenegro>`. Nenhuma foi aplicada ainda
+  (o modo automático nega mudanças de produção; o usuário aplica).
+- **Verificado:** suíte 194/194 (sem `backup.worker.test.js`); build isolado do Next.js; estados do
+  card renderizados em servidor; relatórios de exemplo com dados reais (Estado: modelo achado com
+  arquivo; Município: modelo sem arquivo).
+
