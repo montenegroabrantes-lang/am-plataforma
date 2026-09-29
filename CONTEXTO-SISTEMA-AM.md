@@ -2363,3 +2363,30 @@ usuário (prazo das tarefas da Iradira: 06/10/2026); decisão sobre os 12 client
 duplicidade; manter/reverter o levantamento; `npm test` que não encerra sem Redis; 3 pontos de
 revisão do worker de backup (exit code do gzip, erro de pipe derrubando o processo, gzip pendurado)
 enviados à sessão "Alinhamento de atendimento Camila".
+
+### 29/09/2026 — Verificação dos re-protocolos pendentes (somente leitura)
+
+Executada a etapa 1 da estratégia confirmada. Nada foi alterado no AM, no Drive nem no PJe; o banco
+foi lido em transação `READ ONLY`, o Drive só por metadados (nomes e datas, sem abrir arquivos).
+Resultado sobre as **366 tarefas de ciclo em aberto** (2 em Re-protocolo + 364 em Novos ciclos):
+- **Confirmado 73** (64 Município de João Pessoa, 9 Estado da Paraíba): ciclo vencido, sem alertas,
+  pasta antiga única no Drive. **Conferir 95** e **Bloqueado 198**: 186 ainda não completaram o
+  intervalo da tese (voltam sozinhos ao vencer) e 12 têm possível protocolo à mão (pasta na equipe
+  em `_REPROTOCOLO`/pendentes sem o processo no AM).
+- Conferir, por motivo (um caso pode ter vários): 35 com meses fora das últimas 60 competências; 27
+  sem pasta antiga e 22 com pasta ambígua; 27 com juízo do processo anterior que é gabinete/núcleo; 30
+  com alerta na fonte oficial PB/PE (14 sem vínculo encontrado, 10 com último pagamento antigo, 3
+  regime diferente de temporário, 2 homônimos, 1 fonte indisponível); 4 com cadastro contraditório
+  (vínculo ativo com data de fim); 5 sem processo anterior; 5 com polo genérico ou ausente.
+- Pastas antigas em OUTORGANTES (119 listadas; 587 pastas lidas nos anos 2022 a 2026, `_REPROTOCOLO`
+  e pendentes): identidade em 92%, inicial anterior 90%, procuração 95%, comprovante de vínculo 88%,
+  contracheques/fichas 40%, comprovante de residência 33%. Só identidade e inicial anterior são
+  reaproveitáveis; procuração, vínculo e contracheques do período novo são sempre novos.
+- Conferência oficial PB/PE feita em 50 casos (vencidos com ente confirmado); município sem fonte.
+- Limites: re-protocolo à mão sem pasta, comprovante ou publicação não aparece; pastas achadas por
+  nome (sem CPF); listagem de 2024–2025 transcrita à mão por um agente (3 pastas conferidas, 3 de 3).
+- Achado de processo: uma listagem do Drive tem pasta com senha no título de uma pasta de 2023 —
+  não registrada aqui; convém a equipe renomear.
+- Entregues ao usuário: página HTML e planilha (fora do repositório, contêm dados de clientes).
+- Pendências: usuário confirma a lista Confirmado (amostra de 5) e decide os grupos Conferir/Bloqueado;
+  depois, publicar a Fase 0 (aguarda "sim"), Descoberta, Pacote, Piloto e Escala.
