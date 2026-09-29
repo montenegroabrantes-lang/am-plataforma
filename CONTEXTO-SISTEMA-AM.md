@@ -7,19 +7,16 @@ Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
 qualquer alteração e atualizado depois de mudanças materiais no código, banco,
 integrações ou produção. Não registrar segredos neste documento.
 
-> **LER PRIMEIRO — estado em 29/09/2026:** a estratégia do re-protocolo está CONFIRMADA. A Fase 0
-> (saneamento e período no protocolo) e a Fase 2 (verificação gravada no AM, pacote em modo sombra,
-> importação controlada) estão prontas, testadas (185/185) e commitadas em `reprotocolo-pacote`
-> (backend, já reaplicada sobre `origin/main`) e `reprotocolo-fase2` (frontend). **PUBLICAÇÃO
-> PENDENTE:** o modo automático negou o `git push` (classificador "Production Deploy"); o usuário
-> publica com `git push origin reprotocolo-pacote:main` (backend, primeiro) e depois
-> `git push origin reprotocolo-fase2:main` (frontend, no repositório `am-plataforma-web`). Antes de
-> assumir que ainda está pendente, confira `git log origin/main`. Depois do deploy: importar a
-> apuração pelo botão "Importar apuração" e só então considerar `REPROTOCOLO_EXIGE_CONFIRMACAO`.
-> O levantamento de re-protocolo (rotas/MCP de leitura) JÁ ESTÁ NO AR desde 28/09 (publicado por
-> engano; o usuário ainda não decidiu manter ou reverter). O diff antigo e não commitado de
-> `src/index.js` no checkout principal está SUPERADO pela migração única da Fase 0 (usa `migrar()`)
-> e deve ser guardado/descartado (`git stash`) antes de sincronizar o `main` local.
+> **LER PRIMEIRO — estado em 29/09/2026 (tarde):** Fase 0 e Fase 2 do re-protocolo **PUBLICADAS no
+> backend** (push do usuário `2b24638..fa09938`, deploy Railway `effb5521` SUCCESS). Verificado em
+> produção (leitura): migrações `2026_09_28_saneamento_fila_reprotocolo`,
+> `2026_09_29_verificacao_reprotocolo` e `2026_09_29_pacote_reprotocolo` aplicadas uma vez; 5 tabelas
+> novas; auditoria do saneamento = 186 ciclos adiados + 5 tarefas à triagem; fila "Novos ciclos" caiu
+> de 364 para 178. **Frontend AINDA NÃO publicado** (`am-plataforma-web`, branch `reprotocolo-fase2`,
+> 3 commits: `git push origin reprotocolo-fase2:main`). Depois: importar a apuração pelo botão
+> "Importar apuração…" (arquivo local fora do Git). `REPROTOCOLO_EXIGE_CONFIRMACAO` e
+> `SALARIO_MINIMO_VIGENTE` NÃO configuradas. O diff antigo de `src/index.js` foi guardado em
+> `git stash` no checkout principal (superado). Levantamento de 28/09 segue no ar (decisão pendente).
 
 > **PENDENTE — autorizado por Ramon em 21/09/2026 pra executar na mesma noite:** o restante da
 > Fase 6 do cronograma de resiliência (auditoria transacional, migrações versionadas,
