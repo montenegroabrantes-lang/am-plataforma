@@ -4,7 +4,8 @@ import { db } from '../../db/index.js';
 import { item, HOJE } from './fixturesTeste.js';
 import { avaliarCiclo, hashVerificacao, situacaoConfirmacao } from './verificacao.js';
 import {
-  resolverPeriodoPedido, montarRelatorio, relatorioEmTexto, reservarPacotes, montarPacote, cancelarPacote, cadastrarModelo, SQL_MODELOS,
+  resolverPeriodoPedido, montarRelatorio, relatorioEmTexto, reservarPacotes, montarPacote, cancelarPacote, cadastrarModelo, aprovarPacote,
+  slugEnteAcervo, slugTeseAcervo, usuarioPodeAprovar, aprovadoresConfigurados, pacotesPorTarefas, SQL_MODELOS, SQL_MODELO_ACERVO,
 } from './pacote.js';
 import { montarChecklist } from './checklist.js';
 import { calcularValorCausa } from './valorCausa.js';
@@ -15,7 +16,7 @@ for (const metodo of ['query', 'queryOne', 'execute']) {
 
 const AGORA = new Date('2026-09-28T15:00:00Z');
 const OFICIAL = { status: 'encontrado', correspondencia: 'unica', risco: 8000, periodo_consultado: { inicio: '2021-10', fim: '2026-09' }, vinculos: [{ regime: 'TEMPORARIO', ultima_paga: '2026-08', sem_pgto_meses: 1 }] };
-const PASTA = { status: 'unica', drive_pasta_id: 'pasta-1', titulo: 'MARIA X PB', pai: 'Outorgantes 2024', duplicidade: [], documentos: { identidade: { qtd: 1, ultima: '2024-03-01' }, inicial: { qtd: 1, ultima: '2024-05-01' } } };
+const PASTA = { status: 'unica', drive_pasta_id: 'pasta-1', titulo: 'MARIA X PB', pai: 'Outorgantes 2024', duplicidade: [], documentos: { identidade: { qtd: 1, ultima: '2024-03-01' }, procuracao: { qtd: 1, ultima: '2024-05-01' }, inicial: { qtd: 1, ultima: '2024-05-01' } } };
 
 // Resultado de verificarCiclos com confirmação válida (ou não).
 function resultado({ confirmada = true, extra, oficial = OFICIAL, pasta = PASTA } = {}) {
@@ -46,16 +47,19 @@ test('relatório: pendências de modelos e do valor; texto com o essencial; juí
   const periodo = resolverPeriodoPedido(r.item);
   const rel = montarRelatorio({ item: r.item, resultado: r, periodo, valor: calcularValorCausa({ tese: 'FGTS', oficial: OFICIAL, salarioMinimo: null }), checklist: montarChecklist({ documentos: PASTA.documentos, fonteOficial: 'PB' }), modelos: {} });
   assert.equal(rel.pronto_para_gerar_pecas, false);
-  assert.ok(rel.pendencias.some(p => /Modelo aprovado de inicial/.test(p)));
-  assert.ok(rel.pendencias.some(p => /procuração/.test(p)));
+  assert.ok(rel.pendencias.some(p => p.codigo === 'modelo_inicial' && /Modelo aprovado de inicial/.test(p.texto)));
+  assert.equal(rel.pendencias.some(p => /procuração/i.test(p.texto)), false, 'a procuração anterior é reaproveitada: não há modelo a cadastrar');
+  assert.deepEqual(rel.documentos.reaproveita, ['identidade', 'procuracao']);
   assert.equal(rel.valor_da_causa.valor, 8000);
   assert.equal(rel.decisao_humana.confirmado_em, '2026-09-27T12:00:00.000Z');
   const texto = relatorioEmTexto(rel);
   assert.match(texto, /MARIA DA SILVA/);
   assert.match(texto, /R\$\s?8\.000,00/);
   assert.match(texto, /o juízo não é herdado/);
-  const completo = montarRelatorio({ item: r.item, resultado: r, periodo, valor: calcularValorCausa({ tese: 'FGTS', oficial: OFICIAL, salarioMinimo: null }), checklist: montarChecklist({ documentos: PASTA.documentos }), modelos: { inicial: { titulo: 'I' }, procuracao: { titulo: 'P' } } });
+  const completo = montarRelatorio({ item: r.item, resultado: r, periodo, valor: calcularValorCausa({ tese: 'FGTS', oficial: OFICIAL, salarioMinimo: null }), checklist: montarChecklist({ documentos: PASTA.documentos }), modelos: { inicial: { titulo: 'I', drive_arquivo_id: 'arq-1' } } });
   assert.equal(completo.pronto_para_gerar_pecas, true);
+  const semArquivo = montarRelatorio({ item: r.item, resultado: r, periodo, valor: calcularValorCausa({ tese: 'FGTS', oficial: OFICIAL, salarioMinimo: null }), checklist: montarChecklist({ documentos: PASTA.documentos }), modelos: { inicial: { titulo: 'I', drive_arquivo_id: null } } });
+  assert.deepEqual(semArquivo.pendencias.map(p => p.codigo), ['modelo_sem_arquivo']);
 });
 
 // ── reservar ──
@@ -87,11 +91,15 @@ test('reservar: só com confirmação válida; segunda reserva da mesma tarefa �
 
 // ── montar ──
 
-function conexaoMontagem({ pacote = { id: 'pac-1', tarefa_id: 't-1', status: 'reservado' }, modelos = [] } = {}) {
+function conexaoMontagem({ pacote = { id: 'pac-1', tarefa_id: 't-1', status: 'reservado' }, modelos = [], acervo = null } = {}) {
   const updates = [];
+  const consultasAcervo = [];
   return {
-    updates,
-    async queryOne(sql) { assert.match(sql, /FROM pacotes_reprotocolo WHERE id = \$1 FOR UPDATE/); return pacote; },
+    updates, consultasAcervo,
+    async queryOne(sql, params) {
+      if (sql === SQL_MODELO_ACERVO) { consultasAcervo.push(params); return acervo; }
+      assert.match(sql, /FROM pacotes_reprotocolo WHERE id = \$1 FOR UPDATE/); return pacote;
+    },
     async query(sql) { assert.equal(sql, SQL_MODELOS); return modelos; },
     async execute(sql, params) { assert.match(sql, /UPDATE pacotes_reprotocolo SET status = 'montado'/); updates.push(params); return { rowCount: 1 }; },
   };
@@ -103,10 +111,39 @@ test('montar: grava o relatório e o período; modelos cadastrados entram no rel
   const r = await montarPacote({ conexao, pacoteId: 'pac-1', usuarioId: 'm1', verificar, agora: AGORA });
   assert.equal(r.ok, true);
   assert.equal(r.relatorio.modelos.inicial.titulo, 'Inicial FGTS PB');
-  assert.equal(r.relatorio.modelos.procuracao, null);
+  assert.equal(r.relatorio.modelos.inicial.origem, 'ajuste_manual');
+  assert.equal(conexao.consultasAcervo.length, 0, 'ajuste manual tem precedência: não consulta o acervo');
   const [inicio, fim, meses, valor, exige] = conexao.updates[0];
   assert.deepEqual([inicio, fim, meses, valor, exige], ['2024-01-01', '2026-09-01', 33, 8000, false]);
-  assert.match(r.texto, /Pendências para gerar as peças/);
+  assert.doesNotMatch(r.texto, /Modelo aprovado de inicial/);
+});
+
+test('montar: modelo de inicial vem do acervo (ente + tese); sem arquivo ou inexistente vira pendência', async () => {
+  const verificar = async () => ({ resultados: [resultado()] });
+  const achado = conexaoMontagem({ acervo: { id: 'a1', titulo: 'INICIAL FGTS x ESTADO DA PARAÍBA — modelo', drive_file_id: 'arq-9' } });
+  const r1 = await montarPacote({ conexao: achado, pacoteId: 'p', verificar, agora: AGORA });
+  assert.deepEqual(achado.consultasAcervo[0], ['estado-paraiba', 'fgts-nulidade']);
+  assert.deepEqual(r1.relatorio.modelos.inicial, { origem: 'acervo', acervo_id: 'a1', titulo: 'INICIAL FGTS x ESTADO DA PARAÍBA — modelo', drive_arquivo_id: 'arq-9' });
+  assert.equal(r1.relatorio.pendencias.some(p => p.codigo.startsWith('modelo')), false);
+  const semArq = await montarPacote({ conexao: conexaoMontagem({ acervo: { id: 'a2', titulo: 'PMJP', drive_file_id: null } }), pacoteId: 'p', verificar, agora: AGORA });
+  assert.deepEqual(semArq.relatorio.pendencias.filter(p => p.codigo.startsWith('modelo')).map(p => p.codigo), ['modelo_sem_arquivo']);
+  const nenhum = await montarPacote({ conexao: conexaoMontagem({ acervo: null }), pacoteId: 'p', verificar, agora: AGORA });
+  assert.deepEqual(nenhum.relatorio.pendencias.filter(p => p.codigo.startsWith('modelo')).map(p => p.codigo), ['modelo_inicial']);
+  // ente sem código no acervo: nem consulta
+  const semSlug = conexaoMontagem();
+  await montarPacote({ conexao: semSlug, pacoteId: 'p', verificar: async () => ({ resultados: [resultado({ extra: { polo_passivo: 'Município de Cabedelo', polo_vinculo_unico: 'Município de Cabedelo', polo_cliente: 'Município de Cabedelo' }, oficial: null })] }), agora: AGORA });
+  assert.equal(semSlug.consultasAcervo.length, 0);
+});
+
+test('slugs do acervo: ente e tese', () => {
+  assert.equal(slugEnteAcervo({ nome: 'Estado da Paraíba', fonte_oficial: 'PB' }), 'estado-paraiba');
+  assert.equal(slugEnteAcervo({ nome: 'Estado de Pernambuco', fonte_oficial: 'PE' }), 'estado-pernambuco');
+  assert.equal(slugEnteAcervo({ nome: 'Município de João Pessoa', fonte_oficial: null }), 'municipio-joao-pessoa');
+  assert.equal(slugEnteAcervo({ nome: 'Prefeitura de João Pessoa' }), 'municipio-joao-pessoa');
+  assert.equal(slugEnteAcervo({ nome: 'Município de Cabedelo' }), null);
+  assert.equal(slugTeseAcervo('FGTS', 'estado-paraiba'), 'fgts-nulidade');
+  assert.equal(slugTeseAcervo('FGTS', 'estado-pernambuco'), 'fgts-pernambuco');
+  assert.equal(slugTeseAcervo('INSALUBRIDADE', 'estado-paraiba'), null);
 });
 
 test('montar: pacote inexistente 404, cancelado 409, confirmação vencida 409, período inválido 400', async () => {
@@ -131,4 +168,67 @@ test('cancelar e cadastrar modelo: SQL e parâmetros', async () => {
   assert.match(chamadas[1][0], /UPDATE modelos_reprotocolo SET ativo = false/);
   assert.match(chamadas[2][0], /INSERT INTO modelos_reprotocolo/);
   await assert.rejects(cadastrarModelo({ conexao, ente: 'X', tipo: 'invalido', driveId: 'a', usuarioId: 'm1' }));
+});
+
+// ── aprovação ──
+
+function conexaoAprovacao({ pacote }) {
+  const updates = [];
+  return { updates, async queryOne() { return pacote; }, async execute(sql, params) { assert.match(sql, /SET status = 'aprovado'/); updates.push(params); return { rowCount: 1 }; } };
+}
+const montado = (extra = {}) => ({ id: 'pac-1', tarefa_id: 't-1', status: 'montado', dados: { pendencias: [{ codigo: 'valor', texto: 'v' }], valor_da_causa: { valor: null } }, ...extra });
+
+test('aprovar: só pacote montado, sem pendência de modelo, com valor válido e confirmação ainda válida', async () => {
+  const verificar = async () => ({ resultados: [resultado()] });
+  const base = { pacoteId: 'pac-1', usuarioId: 'lu', valorCausa: 8000, verificar, agora: AGORA, salarioMinimo: null };
+  assert.equal((await aprovarPacote({ ...base, conexao: conexaoAprovacao({ pacote: null }) })).status, 404);
+  assert.equal((await aprovarPacote({ ...base, conexao: conexaoAprovacao({ pacote: montado({ status: 'reservado' }) }) })).status, 409);
+  const semModelo = await aprovarPacote({ ...base, conexao: conexaoAprovacao({ pacote: montado({ dados: { pendencias: [{ codigo: 'modelo_sem_arquivo', texto: 'Modelo sem arquivo.' }] } }) }) });
+  assert.equal(semModelo.status, 409);
+  assert.deepEqual(semModelo.pendencias, ['modelo_sem_arquivo']);
+  for (const v of [0, -5, 'abc', null]) assert.equal((await aprovarPacote({ ...base, valorCausa: v, conexao: conexaoAprovacao({ pacote: montado() }) })).status, 400, String(v));
+  const vencida = await aprovarPacote({ ...base, verificar: async () => ({ resultados: [resultado({ confirmada: false })] }), conexao: conexaoAprovacao({ pacote: montado() }) });
+  assert.equal(vencida.status, 409);
+  assert.match(vencida.erro, /perdeu a validade/);
+});
+
+test('aprovar: grava valor, quem aprovou e a proposta do sistema; documentos e valor pendentes não impedem', async () => {
+  const conexao = conexaoAprovacao({ pacote: montado({ dados: { pendencias: [{ codigo: 'valor', texto: 'v' }, { codigo: 'documentos', texto: 'd' }], valor_da_causa: { valor: 6118.03 } } }) });
+  const r = await aprovarPacote({ conexao, pacoteId: 'pac-1', usuarioId: 'lu', valorCausa: '6.118,03'.replace('.', '').replace(',', '.'), observacao: ' conferido ', verificar: async () => ({ resultados: [resultado()] }), agora: AGORA, salarioMinimo: null });
+  assert.equal(r.ok, true);
+  const [valor, quem, json, id] = conexao.updates[0];
+  assert.deepEqual([valor, quem, id], [6118.03, 'lu', 'pac-1']);
+  assert.deepEqual(JSON.parse(json), { valor_causa: 6118.03, observacao: 'conferido', acima_do_teto_ciente: false, proposta_do_sistema: 6118.03 });
+});
+
+test('aprovar: valor acima do teto de 60 salários mínimos exige ciência explícita', async () => {
+  const verificar = async () => ({ resultados: [resultado()] });
+  const base = { pacoteId: 'pac-1', usuarioId: 'lu', valorCausa: 100000, verificar, agora: AGORA, salarioMinimo: 1621 };
+  const barrado = await aprovarPacote({ ...base, conexao: conexaoAprovacao({ pacote: montado() }) });
+  assert.equal(barrado.status, 409);
+  assert.equal(barrado.teto, 97260);
+  assert.match(barrado.erro, /teto do Juizado/);
+  assert.equal((await aprovarPacote({ ...base, acimaDoTetoCiente: true, conexao: conexaoAprovacao({ pacote: montado() }) })).ok, true);
+  assert.equal((await aprovarPacote({ ...base, valorCausa: 97260, conexao: conexaoAprovacao({ pacote: montado() }) })).ok, true, 'exatamente no teto passa');
+});
+
+test('aprovador: só e-mails de REPROTOCOLO_APROVADORES; sem a variável ninguém aprova', () => {
+  const antes = process.env.REPROTOCOLO_APROVADORES;
+  try {
+    delete process.env.REPROTOCOLO_APROVADORES;
+    assert.equal(usuarioPodeAprovar({ email: 'lucianomlc@outlook.com' }), false);
+    process.env.REPROTOCOLO_APROVADORES = ' LucianoMLC@outlook.com , outro@x.com ';
+    assert.deepEqual(aprovadoresConfigurados(), ['lucianomlc@outlook.com', 'outro@x.com']);
+    assert.equal(usuarioPodeAprovar({ email: 'lucianomlc@outlook.com' }), true);
+    assert.equal(usuarioPodeAprovar({ email: 'ramona@x.com' }), false);
+    assert.equal(usuarioPodeAprovar({}), false);
+    assert.equal(usuarioPodeAprovar(null), false);
+  } finally { if (antes === undefined) delete process.env.REPROTOCOLO_APROVADORES; else process.env.REPROTOCOLO_APROVADORES = antes; }
+});
+
+test('cancelar aceita pacote aprovado; pacotesPorTarefas sem ids não consulta o banco', async () => {
+  const chamadas = [];
+  await cancelarPacote({ conexao: { async execute(sql) { chamadas.push(sql); return { rowCount: 1 }; } }, pacoteId: 'p', usuarioId: 'm1', motivo: 'Revisão' });
+  assert.match(chamadas[0], /'reservado','montado','aprovado'/);
+  assert.deepEqual(await pacotesPorTarefas({ conexao: { async query() { throw new Error('não deveria consultar'); } }, tarefaIds: [] }), []);
 });

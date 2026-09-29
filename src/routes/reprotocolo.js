@@ -15,7 +15,8 @@ import {
   verificarCiclos, confirmarCiclos, resumirResultado, totaisPorGrupo, salvarConferenciaOficial, vincularPastaAntiga, GRUPO,
 } from '../services/reprotocolo/verificacao.js';
 import {
-  reservarPacotes, montarPacote, cancelarPacote, listarPacotes, obterPacote, cadastrarModelo, listarModelos, STATUS_PACOTE, TIPOS_MODELO,
+  reservarPacotes, montarPacote, cancelarPacote, listarPacotes, obterPacote, cadastrarModelo, listarModelos, aprovarPacote, pacotesPorTarefas,
+  usuarioPodeAprovar, STATUS_PACOTE, TIPOS_MODELO,
 } from '../services/reprotocolo/pacote.js';
 import { importarDados, LIMITE_IMPORTACAO } from '../services/reprotocolo/importacao.js';
 import { db } from '../db/index.js';
@@ -57,7 +58,8 @@ export function criarReprotocoloRouter({
   vincularPasta = vincularPastaAntiga,
   transacao = (fn) => db.transaction(fn),
   importar = importarDados,
-  pacotes = { reservar: reservarPacotes, montar: montarPacote, cancelar: cancelarPacote, listar: listarPacotes, obter: obterPacote, cadastrarModelo, listarModelos },
+  podeAprovar = usuarioPodeAprovar,
+  pacotes = { reservar: reservarPacotes, montar: montarPacote, cancelar: cancelarPacote, listar: listarPacotes, obter: obterPacote, cadastrarModelo, listarModelos, aprovar: aprovarPacote, porTarefas: pacotesPorTarefas },
 } = {}) {
   const router = Router();
   router.use(apenasMaster, exigirEscopo('reprotocolo'));
@@ -139,9 +141,16 @@ export function criarReprotocoloRouter({
       valorDepois: { grupo: grupo || null, ente: ente || null, via_conector: Array.isArray(req.user.escopos), autorizado_por: req.user.autorizado_por ?? null },
       ip: req._ip,
     });
+    const pagina = filtrados.slice(offset, offset + limite).map(resumirResultado);
+    let porTarefa = new Map();
+    try {
+      const linhas = await pacotes.porTarefas({ tarefaIds: pagina.map(i => i.tarefa_id) });
+      porTarefa = new Map(linhas.map(l => [l.tarefa_id, { id: l.id, status: l.status, valor_causa: l.valor_causa ?? null, aprovado_em: l.aprovado_em ?? null }]));
+    } catch (err) { console.warn('[Reprotocolo] Pacotes indisponíveis na verificação:', err.message); }
     res.json({
       ok: true, hoje, totais: totaisPorGrupo(resultados), total_filtrado: filtrados.length,
-      itens: filtrados.slice(offset, offset + limite).map(resumirResultado),
+      pode_aprovar: Boolean(podeAprovar(req.user)),
+      itens: pagina.map(i => ({ ...i, pacote: porTarefa.get(i.tarefa_id) ?? null })),
     });
   });
 
@@ -250,6 +259,19 @@ export function criarReprotocoloRouter({
     if (!r.ok) return res.status(r.status || 400).json({ ok: false, erro: r.erro, motivo: r.motivo ?? null });
     await auditar({ usuarioId: req.user.id, acao: 'montar_pacote_reprotocolo', entidade: 'pacote_reprotocolo', entidadeId: req.params.id, valorDepois: { periodo: r.relatorio.periodo, pronto_para_gerar_pecas: r.relatorio.pronto_para_gerar_pecas }, ip: req._ip });
     res.json({ ok: true, pacote_id: r.pacote_id, relatorio: r.relatorio, texto: r.texto });
+  });
+
+  // POST /api/reprotocolo/pacotes/:id/aprovar { valor_causa, observacao, acima_do_teto_ciente } — só o aprovador
+  // configurado (REPROTOCOLO_APROVADORES) e só por sessão do AM. Aprova período, valor da causa e modelo.
+  router.post('/pacotes/:id/aprovar', apenasSessao, async (req, res) => {
+    if (!uuidValido(req.params.id)) return res.status(400).json({ ok: false, erro: 'ID de pacote inválido.' });
+    if (!podeAprovar(req.user)) return res.status(403).json({ ok: false, erro: 'Só o aprovador designado pode aprovar o pacote.' });
+    const { valor_causa: valor, observacao = '', acima_do_teto_ciente: ciente = false } = req.body || {};
+    if (typeof ciente !== 'boolean') return res.status(400).json({ ok: false, erro: 'acima_do_teto_ciente deve ser true ou false.' });
+    const r = await transacao(tx => pacotes.aprovar({ conexao: tx, pacoteId: req.params.id, usuarioId: req.user.id, valorCausa: valor, observacao: String(observacao).slice(0, 500), acimaDoTetoCiente: ciente, podeVerRestrito: Boolean(req.user.pode_marcar_restrito) }));
+    if (!r.ok) return res.status(r.status || 400).json({ ok: false, erro: r.erro, motivo: r.motivo ?? null, pendencias: r.pendencias ?? null, teto: r.teto ?? null });
+    await auditar({ usuarioId: req.user.id, acao: 'aprovar_pacote_reprotocolo', entidade: 'pacote_reprotocolo', entidadeId: req.params.id, valorDepois: { valor_causa: r.aprovacao.valor_causa, acima_do_teto_ciente: r.aprovacao.acima_do_teto_ciente }, ip: req._ip });
+    res.json({ ok: true, pacote_id: r.pacote_id, aprovacao: r.aprovacao });
   });
 
   // POST /api/reprotocolo/pacotes/:id/cancelar { motivo } — libera a reserva (só sessão do AM).

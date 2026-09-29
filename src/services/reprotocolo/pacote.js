@@ -2,21 +2,46 @@
 //
 // 1. Reservar: só ciclo com confirmação válida da verificação. A reserva é única por tarefa e por
 //    demanda (índices únicos parciais) — dois pedidos simultâneos nunca geram dois pacotes.
-// 2. Montar: junta período pedido, valor da causa (proposta), checklist de documentos e modelos
-//    aprovados e produz o RELATÓRIO que o advogado confere. Não escreve inicial nem procuração:
-//    isso depende dos modelos aprovados por ente (tabela modelos_reprotocolo) e da aprovação do
-//    dossiê. Fica em modo sombra: serve para comparar com re-protocolos já feitos à mão.
+// 2. Montar: junta período pedido, valor da causa (proposta), checklist de documentos e o modelo
+//    de inicial aprovado (do ACERVO: peça `inicial` com modelo_aprovado, por ente e tese; a tabela
+//    modelos_reprotocolo é só um ajuste manual que tem precedência) e produz o RELATÓRIO que o
+//    advogado confere. A procuração anterior é reaproveitada. Não escreve peça.
+// 3. Aprovar: só quem está em REPROTOCOLO_APROVADORES (e-mails) aprova, informando o valor da causa;
+//    modelo de inicial ausente ou sem arquivo do Drive bloqueia a aprovação.
 // O juízo do processo anterior não é herdado: re-protocolo é processo novo, sem dependência.
 import { db } from '../../db/index.js';
 import { indiceMes, mesDoIndice } from './levantamento.js';
 import { verificarCiclos } from './verificacao.js';
-import { calcularValorCausa } from './valorCausa.js';
+import { calcularValorCausa, salarioMinimoVigente, TETO_JUIZADO_SALARIOS } from './valorCausa.js';
+import { normalizarTexto } from '../remuneracaoEstadual.js';
 import { montarChecklist } from './checklist.js';
 
 export const STATUS_PACOTE = { RESERVADO: 'reservado', MONTADO: 'montado', APROVADO: 'aprovado', CANCELADO: 'cancelado' };
 export const TIPOS_MODELO = ['inicial', 'procuracao'];
 
 const primeiroDia = (ym) => `${String(ym).slice(0, 7)}-01`;
+
+// Quem aprova o pacote: e-mails em REPROTOCOLO_APROVADORES (separados por vírgula). Sem a variável
+// ninguém aprova (padrão seguro).
+export const aprovadoresConfigurados = () => String(process.env.REPROTOCOLO_APROVADORES ?? '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+export const usuarioPodeAprovar = (usuario) => Boolean(usuario?.email) && aprovadoresConfigurados().includes(String(usuario.email).toLowerCase());
+// Pendências que impedem a aprovação (não dá para gerar a inicial sem o modelo). Documentos a colher
+// e o valor da causa não impedem: o valor é informado na própria aprovação.
+export const PENDENCIAS_QUE_BLOQUEIAM_APROVACAO = ['modelo_inicial', 'modelo_sem_arquivo'];
+
+// Ente do AM → código do ente no acervo; tese do AM → código da tese no acervo.
+export function slugEnteAcervo(ente) {
+  const t = normalizarTexto(ente?.nome);
+  if (ente?.fonte_oficial === 'PB') return 'estado-paraiba';
+  if (ente?.fonte_oficial === 'PE') return 'estado-pernambuco';
+  if (/JOAO PESSOA/.test(t)) return 'municipio-joao-pessoa';
+  if (/ESPIRITO SANTO/.test(t)) return 'estado-espirito-santo';
+  return null;
+}
+export function slugTeseAcervo(teseNome, slugEnte) {
+  if (!/\bFGTS\b/.test(normalizarTexto(teseNome))) return null;
+  return slugEnte === 'estado-pernambuco' ? 'fgts-pernambuco' : slugEnte === 'estado-espirito-santo' ? 'fgts-espirito-santo' : 'fgts-nulidade';
+}
 
 // Período pedido: por padrão o período inteiro do ciclo; o advogado pode começar depois (por
 // exemplo, limitar às últimas 60 competências), nunca antes do início do ciclo.
@@ -49,11 +74,10 @@ export function montarRelatorio({ item, resultado, periodo, valor, checklist, mo
   if (valor.exige_humano) alertas.push({ origem: 'valor', codigo: 'valor_exige_humano', texto: valor.motivo, aceito: false });
 
   const pendencias = [];
-  for (const tipo of ['inicial', 'procuracao']) {
-    if (!modelos[tipo]) pendencias.push(`Modelo aprovado de ${tipo === 'inicial' ? 'inicial' : 'procuração'} para ${item.ente?.nome ?? 'o ente'} não cadastrado.`);
-  }
-  if (valor.valor === null) pendencias.push('Valor da causa a informar pelo advogado.');
-  if (checklist.faltando.length) pendencias.push(`Documentos sem origem na pasta antiga: ${checklist.faltando.join(', ')}.`);
+  if (!modelos.inicial) pendencias.push({ codigo: 'modelo_inicial', texto: `Modelo aprovado de inicial para ${item.ente?.nome ?? 'o ente'} não encontrado no acervo.` });
+  else if (!modelos.inicial.drive_arquivo_id) pendencias.push({ codigo: 'modelo_sem_arquivo', texto: `O modelo aprovado de inicial de ${item.ente?.nome ?? 'o ente'} está no acervo sem o arquivo do Drive: cole o link do arquivo do modelo no pacote (ou anexe-o na peça do acervo).` });
+  if (valor.valor === null) pendencias.push({ codigo: 'valor', texto: 'Valor da causa a informar pelo advogado.' });
+  if (checklist.faltando.length) pendencias.push({ codigo: 'documentos', texto: `Documentos sem origem na pasta antiga: ${checklist.faltando.join(', ')}.` });
 
   return {
     versao: 1,
@@ -66,7 +90,7 @@ export function montarRelatorio({ item, resultado, periodo, valor, checklist, mo
     valor_da_causa: valor,
     documentos: checklist,
     pasta_antiga: resultado.pasta ? { titulo: resultado.pasta.titulo ?? null, pai: resultado.pasta.pai ?? null, drive_pasta_id: resultado.pasta.drive_pasta_id ?? null } : null,
-    modelos: { inicial: modelos.inicial ?? null, procuracao: modelos.procuracao ?? null },
+    modelos: { inicial: modelos.inicial ?? null },
     alertas,
     decisao_humana: { confirmado_em: confirmacao.decidido_em ?? null, valida_ate: confirmacao.valida_ate ?? null, observacao: confirmacao.observacao ?? null, motivos_aceitos: confirmacao.motivos_aceitos ?? [] },
     pendencias,
@@ -84,7 +108,7 @@ export function relatorioEmTexto(rel) {
   for (const m of rel.valor_da_causa.memoria || []) l.push(`  · ${m}`);
   l.push(`Documentos: reaproveita ${rel.documentos.reaproveita.join(', ') || 'nada'}; novos ${rel.documentos.novos.join(', ')}${rel.documentos.faltando.length ? `; faltando ${rel.documentos.faltando.join(', ')}` : ''}`);
   if (rel.alertas.length) { l.push('Alertas:'); for (const a of rel.alertas) l.push(`  · ${a.texto}${a.aceito ? ' (aceito na confirmação)' : ''}`); }
-  if (rel.pendencias.length) { l.push('Pendências para gerar as peças:'); for (const p of rel.pendencias) l.push(`  · ${p}`); }
+  if (rel.pendencias.length) { l.push('Pendências para gerar as peças:'); for (const p of rel.pendencias) l.push(`  · ${typeof p === 'string' ? p : p.texto}`); }
   return l.join('\n');
 }
 
@@ -94,6 +118,13 @@ export const SQL_MODELOS = `
   SELECT tipo, titulo, drive_arquivo_id, tese_id FROM modelos_reprotocolo
    WHERE ativo = true AND ente = $1 AND (tese_id IS NULL OR tese_id = $2)
    ORDER BY (tese_id IS NULL) ASC`;
+
+export const SQL_MODELO_ACERVO = `
+  SELECT a.id, a.titulo, a.drive_file_id FROM acervo_pecas a
+   WHERE a.modelo_aprovado = true AND a.arquivada_em IS NULL AND a.tipo_peca = 'inicial' AND a.visibilidade_snapshot = 'normal'
+     AND a.ente = $1
+     AND ($2::text IS NULL OR EXISTS (SELECT 1 FROM acervo_pecas_teses apt JOIN teses_acervo t ON t.id = apt.tese_id WHERE apt.peca_id = a.id AND t.slug = $2))
+   ORDER BY (a.drive_file_id IS NULL) ASC, a.atualizado_em DESC LIMIT 1`;
 
 export async function reservarPacotes({ conexao = db, usuarioId, tarefaIds, podeVerRestrito = false, agora = new Date(), verificar = verificarCiclos }) {
   const { resultados } = await verificar({ conexao, podeVerRestrito, ids: tarefaIds, agora });
@@ -130,7 +161,12 @@ export async function montarPacote({ conexao = db, pacoteId, usuarioId, periodoI
   const checklist = montarChecklist({ documentos: resultado.pasta?.documentos ?? null, ente: item.ente?.nome ?? null, fonteOficial: item.ente?.fonte_oficial ?? null });
   const linhasModelo = item.ente?.nome ? await conexao.query(SQL_MODELOS, [item.ente.nome, item.tese?.id ?? null]) : [];
   const modelos = {};
-  for (const m of linhasModelo) if (!modelos[m.tipo]) modelos[m.tipo] = { titulo: m.titulo ?? null, drive_arquivo_id: m.drive_arquivo_id };
+  for (const m of linhasModelo) if (m.tipo === 'inicial' && !modelos.inicial) modelos.inicial = { origem: 'ajuste_manual', titulo: m.titulo ?? null, drive_arquivo_id: m.drive_arquivo_id };
+  if (!modelos.inicial) {
+    const slugEnte = slugEnteAcervo(item.ente);
+    const doAcervo = slugEnte ? await conexao.queryOne(SQL_MODELO_ACERVO, [slugEnte, slugTeseAcervo(item.tese?.nome, slugEnte)]) : null;
+    if (doAcervo) modelos.inicial = { origem: 'acervo', acervo_id: doAcervo.id, titulo: doAcervo.titulo, drive_arquivo_id: doAcervo.drive_file_id ?? null };
+  }
 
   const relatorio = montarRelatorio({ item, resultado, periodo, valor, checklist, modelos });
   await conexao.execute(
@@ -143,7 +179,7 @@ export async function montarPacote({ conexao = db, pacoteId, usuarioId, periodoI
 export async function cancelarPacote({ conexao = db, pacoteId, usuarioId, motivo }) {
   const r = await conexao.execute(
     `UPDATE pacotes_reprotocolo SET status = 'cancelado', cancelado_por = $1, cancelado_em = NOW(), motivo_cancelamento = $2, atualizado_em = NOW()
-      WHERE id = $3 AND status IN ('reservado','montado')`, [usuarioId, motivo, pacoteId]);
+      WHERE id = $3 AND status IN ('reservado','montado','aprovado')`, [usuarioId, motivo, pacoteId]);
   return (r?.rowCount ?? 0) > 0;
 }
 
@@ -160,6 +196,37 @@ export async function obterPacote({ conexao = db, pacoteId }) {
   const p = await conexao.queryOne(`SELECT id, tarefa_id, cliente_id, status, dados, reservado_em, montado_em FROM pacotes_reprotocolo WHERE id = $1`, [pacoteId]);
   if (!p) return null;
   return { ...p, texto: p.dados?.versao ? relatorioEmTexto(p.dados) : null };
+}
+
+export async function aprovarPacote({ conexao = db, pacoteId, usuarioId, valorCausa, observacao = '', acimaDoTetoCiente = false, podeVerRestrito = false,
+  agora = new Date(), verificar = verificarCiclos, salarioMinimo = salarioMinimoVigente() }) {
+  const pacote = await conexao.queryOne(`SELECT * FROM pacotes_reprotocolo WHERE id = $1 FOR UPDATE`, [pacoteId]);
+  if (!pacote) return { ok: false, status: 404, erro: 'Pacote não encontrado.' };
+  if (pacote.status !== STATUS_PACOTE.MONTADO) return { ok: false, status: 409, erro: `Pacote ${pacote.status}: só um pacote montado pode ser aprovado.` };
+  const bloqueantes = (pacote.dados?.pendencias || []).filter(p => PENDENCIAS_QUE_BLOQUEIAM_APROVACAO.includes(p?.codigo));
+  if (bloqueantes.length) return { ok: false, status: 409, erro: bloqueantes.map(p => p.texto).join(' '), pendencias: bloqueantes.map(p => p.codigo) };
+  const valor = Math.round(Number(valorCausa) * 100) / 100;
+  if (!Number.isFinite(valor) || valor <= 0) return { ok: false, status: 400, erro: 'Informe o valor da causa (maior que zero).' };
+  if (salarioMinimo) {
+    const teto = Math.round(TETO_JUIZADO_SALARIOS * salarioMinimo * 100) / 100;
+    if (valor > teto && !acimaDoTetoCiente) return { ok: false, status: 409, erro: `O valor passa do teto do Juizado (${TETO_JUIZADO_SALARIOS} salários mínimos = R$ ${teto.toFixed(2).replace('.', ',')}): confirme que está ciente.`, teto };
+  }
+  const { resultados } = await verificar({ conexao, podeVerRestrito, tarefaId: pacote.tarefa_id, agora });
+  if (!resultados[0]?.confirmacao.confirmada) return { ok: false, status: 409, erro: 'A confirmação da verificação perdeu a validade: confirme de novo e remonte o pacote.', motivo: resultados[0]?.confirmacao.motivo ?? 'fora_das_filas' };
+  const aprovacao = { valor_causa: valor, observacao: String(observacao).trim() || null, acima_do_teto_ciente: Boolean(acimaDoTetoCiente), proposta_do_sistema: pacote.dados?.valor_da_causa?.valor ?? null };
+  await conexao.execute(
+    `UPDATE pacotes_reprotocolo SET status = 'aprovado', valor_causa = $1, valor_exige_humano = false, aprovado_por = $2, aprovado_em = NOW(),
+            dados = jsonb_set(dados, '{aprovacao}', $3::jsonb), atualizado_em = NOW() WHERE id = $4`,
+    [valor, usuarioId, JSON.stringify(aprovacao), pacoteId]);
+  return { ok: true, pacote_id: pacoteId, aprovacao };
+}
+
+// Pacote ativo (não cancelado) de cada tarefa — para o selo na tela.
+export async function pacotesPorTarefas({ conexao = db, tarefaIds }) {
+  if (!tarefaIds.length) return [];
+  return conexao.query(
+    `SELECT id, tarefa_id, status, valor_causa, aprovado_em, dados->'aprovacao'->>'observacao' AS observacao_aprovacao FROM pacotes_reprotocolo
+      WHERE tarefa_id = ANY($1::uuid[]) AND status <> 'cancelado'`, [tarefaIds]);
 }
 
 export async function cadastrarModelo({ conexao = db, ente, teseId = null, tipo, titulo = '', driveId, usuarioId }) {

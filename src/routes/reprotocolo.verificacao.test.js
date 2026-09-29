@@ -65,6 +65,8 @@ app.use('/api/reprotocolo', autenticar, criarReprotocoloRouter({
   salvarOficial: async (_tx, id, conf) => { chamadas.oficial.push([id, conf.status]); return { status: conf.status }; },
   vincularPasta: async (_tx, dados) => { if (erroPasta) throw erroPasta; chamadas.pasta.push(dados); },
   transacao: async (fn) => fn('tx'),
+  podeAprovar: (usuario) => usuario.id === 'm1',
+  pacotes: { porTarefas: async () => [{ id: 'pac-1', tarefa_id: T1, status: 'montado', valor_causa: null, aprovado_em: null }] },
 }));
 app.use((err, _req, res, _next) => res.status(500).json({ ok: false, erro: err.message }));
 const servidor = app.listen(0);
@@ -181,4 +183,13 @@ test('PUT /pasta-antiga/:clienteId: valida ids, vincula e audita; conector do ch
   erroPasta = Object.assign(new Error('fk'), { code: '23503' });
   assert.equal((await chamar('PUT', url, TOKENS.master, corpo)).status, 404);
   erroPasta = null;
+});
+
+test('GET /verificacao: traz o pacote ativo de cada ciclo e se o usuário pode aprovar', async () => {
+  const r = await chamar('GET', '/api/reprotocolo/verificacao', TOKENS.master);
+  assert.equal(r.corpo.pode_aprovar, true);
+  const primeiro = r.corpo.itens.find(i => i.tarefa_id === T1);
+  assert.deepEqual(primeiro.pacote, { id: 'pac-1', status: 'montado', valor_causa: null, aprovado_em: null });
+  assert.equal(r.corpo.itens.find(i => i.tarefa_id === T2).pacote, null);
+  assert.equal((await chamar('GET', '/api/reprotocolo/verificacao', TOKENS.conectorReprotocolo)).corpo.pode_aprovar, false);
 });
