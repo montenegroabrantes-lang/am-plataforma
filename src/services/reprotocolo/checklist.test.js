@@ -8,15 +8,16 @@ const DOCS = {
 };
 const acao = (c, tipo) => c.itens.find(i => i.tipo === tipo).acao;
 
-test('pasta completa: só a identidade se reaproveita; procuração, vínculo e contracheques são novos; inicial é fonte de dados', () => {
+test('pasta completa: identidade e procuração anteriores se reaproveitam; vínculo e contracheques são novos; inicial é fonte de dados', () => {
   const c = montarChecklist({ documentos: DOCS, ente: 'Estado da Paraíba', fonteOficial: 'PB' });
   assert.equal(acao(c, 'identidade'), ACAO.REAPROVEITAR);
-  assert.equal(acao(c, 'procuracao'), ACAO.GERAR_NOVA);
+  assert.equal(acao(c, 'procuracao'), ACAO.REAPROVEITAR);
   assert.equal(acao(c, 'inicial_anterior'), ACAO.FONTE_DE_DADOS);
   assert.equal(acao(c, 'vinculo'), ACAO.OBTER_NOVO);
   assert.equal(acao(c, 'contracheque'), ACAO.OBTER_NOVO);
-  assert.deepEqual(c.reaproveita, ['identidade']);
-  assert.deepEqual(c.novos, ['procuracao', 'vinculo', 'contracheque']);
+  assert.deepEqual(c.reaproveita, ['identidade', 'procuracao']);
+  assert.deepEqual(c.novos, ['vinculo', 'contracheque']);
+  assert.match(c.itens.find(i => i.tipo === 'procuracao').obs, /Tema 1198/);
   assert.deepEqual(c.faltando, []);
   assert.match(c.itens.find(i => i.tipo === 'contracheque').obs, /portal oficial/);
 });
@@ -30,11 +31,11 @@ test('residência: sem regra definida por juízo, nunca vira exigência inventad
 });
 
 test('identidade ou inicial ausentes ficam em "faltando"; pasta não localizada avisa', () => {
-  const c = montarChecklist({ documentos: { procuracao: { qtd: 1, ultima: '2024-01-01' } } });
-  assert.deepEqual(c.faltando, ['identidade', 'inicial_anterior']);
+  const c = montarChecklist({ documentos: { vinculo: { qtd: 1, ultima: '2024-01-01' } } });
+  assert.deepEqual(c.faltando, ['identidade', 'procuracao', 'inicial_anterior']);
   const nulo = montarChecklist({ documentos: null });
   assert.match(nulo.itens[0].obs, /não localizada/);
-  assert.deepEqual(nulo.faltando, ['identidade', 'inicial_anterior']);
+  assert.deepEqual(nulo.faltando, ['identidade', 'procuracao', 'inicial_anterior']);
 });
 
 test('município: contracheques com o cliente ou no portal do município', () => {

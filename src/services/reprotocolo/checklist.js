@@ -1,9 +1,11 @@
 // Checklist de documentos do re-protocolo, a partir do que existe na pasta antiga do Drive.
 //
-// Regra apurada na verificação de 29/09/2026 (comparando datas e tamanhos em pastas reais): só a
-// IDENTIDADE se reaproveita; procuração, comprovante de vínculo e contracheques/fichas do período
-// novo são sempre novos, e a inicial anterior serve de FONTE DE DADOS (qualificação, endereço,
-// comarca), não de peça a reaproveitar. Comprovante de residência: a regra por juízo ainda não foi
+// Regra: a IDENTIDADE e a PROCURAÇÃO anteriores são reaproveitadas (decisão do escritório em
+// 29/09/2026; na prática da equipe a procuração costumava ser refeita a cada re-protocolo, e o STJ
+// (Tema 1198) admite que o juiz exija procuração atualizada diante de indício de litigância abusiva —
+// por isso a data da procuração aparece no relatório). Comprovante de vínculo e contracheques/fichas
+// do período novo são sempre novos, e a inicial anterior serve de FONTE DE DADOS (qualificação,
+// endereço, comarca), não de peça a reaproveitar. Comprovante de residência: a regra por juízo ainda não foi
 // definida (sai das emendas à inicial), então fica "regra pendente" — nunca uma exigência inventada.
 //
 // `documentos`: inventário da pasta por tipo ({ identidade: { qtd, ultima, exemplo }, ... }).
@@ -28,7 +30,9 @@ export function montarChecklist({ documentos = null, ente = null, fonteOficial =
     tem(documentos, 'identidade')
       ? { tipo: 'identidade', acao: ACAO.REAPROVEITAR, ultima: ultima(documentos, 'identidade'), obs: 'Copiar da pasta antiga (sem mover).' }
       : { tipo: 'identidade', acao: ACAO.PEDIR_AO_CLIENTE, obs: sem ? 'Pasta antiga ainda não localizada.' : 'Não há identidade na pasta antiga.' },
-    { tipo: 'procuracao', acao: ACAO.GERAR_NOVA, ultima: ultima(documentos, 'procuracao'), obs: 'Nova a cada re-protocolo (assinatura nova); a antiga não serve.' },
+    tem(documentos, 'procuracao')
+      ? { tipo: 'procuracao', acao: ACAO.REAPROVEITAR, ultima: ultima(documentos, 'procuracao'), obs: 'Procuração anterior reaproveitada (decisão do escritório); o juiz pode exigir uma atualizada se houver indício de litigância abusiva (STJ, Tema 1198).' }
+      : { tipo: 'procuracao', acao: ACAO.PEDIR_AO_CLIENTE, obs: sem ? 'Pasta antiga ainda não localizada.' : 'Não há procuração na pasta antiga: colher uma nova.' },
     tem(documentos, 'inicial')
       ? { tipo: 'inicial_anterior', acao: ACAO.FONTE_DE_DADOS, ultima: ultima(documentos, 'inicial'), obs: 'Fonte de qualificação, endereço, comarca e fatos; a fundamentação vem do modelo aprovado atual.' }
       : { tipo: 'inicial_anterior', acao: ACAO.SEM_FONTE, obs: sem ? 'Pasta antiga ainda não localizada.' : 'Sem inicial anterior na pasta: os dados de qualificação precisam vir do cadastro ou do cliente.' },
