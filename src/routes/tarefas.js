@@ -8,6 +8,7 @@ import { dataCalendarioValida } from '../utils/diasUteis.js';
 import { vinculoUnicoAtivo } from '../utils/vinculos.js';
 import { resolverTribunalCnj } from '../utils/cnj.js';
 import { resolverPeriodoProtocolo } from '../utils/periodoProtocolo.js';
+import { confirmacaoExigida, semConfirmacaoValida } from '../services/reprotocolo/verificacao.js';
 
 export const tarefasRouter = Router();
 
@@ -900,6 +901,9 @@ tarefasRouter.patch('/:id/concluir-com-numero', apenasMaster, async (req, res) =
 // cadastro do cliente ser corrigido (achado de 28/09/2026: 5 tarefas, entre elas as 2 "prontas").
 const MSG_VINCULO_CONTRADITORIO = 'O cadastro do cliente marca o vínculo como ativo e tem data de fim ao mesmo tempo. '
   + 'Corrija o vínculo no cadastro do cliente antes de aceitar o ciclo.';
+// Com REPROTOCOLO_EXIGE_CONFIRMACAO=true, o aceite exige a confirmação válida da verificação
+// (ver services/reprotocolo/verificacao.js). Desligada por padrão: nada muda até ser ligada.
+const MSG_SEM_CONFIRMACAO = 'Este ciclo ainda não tem confirmação válida da verificação. Confirme-o na tela de Re-protocolo antes de aceitar.';
 const vinculoContraditorio = (clienteId) => db.queryOne(
   `SELECT 1 AS x FROM clientes WHERE id=$1 AND vinculo_ativo=true AND vinculo_fim IS NOT NULL`, [clienteId]);
 
@@ -920,6 +924,10 @@ tarefasRouter.patch('/:id/ciclo/aceitar', apenasMaster, async (req, res) => {
   if (tarefa.subtipo !== 'ciclo') return res.status(409).json({ ok: false, erro: 'Esta tarefa não é um ciclo pendente de aceite.' });
   if (['concluida','cancelada'].includes(tarefa.status)) return res.status(409).json({ ok: false, erro: 'Ciclo já encerrado.' });
   if (await vinculoContraditorio(tarefa.cliente_id)) return res.status(409).json({ ok: false, erro: MSG_VINCULO_CONTRADITORIO });
+  if (confirmacaoExigida()) {
+    const pendentes = await semConfirmacaoValida([req.params.id], { podeVerRestrito: Boolean(req.user.pode_marcar_restrito) });
+    if (pendentes.length) return res.status(409).json({ ok: false, erro: MSG_SEM_CONFIRMACAO });
+  }
 
   const vinculoAuto = await vinculoUnicoAtivo(tarefa.cliente_id);
   const [atualizada] = await db.query(
@@ -981,9 +989,14 @@ tarefasRouter.patch('/ciclos/aceitar-lote', apenasMaster, async (req, res) => {
 
   let atualizadas = 0;
   const ignoradas = []; // cadastro contraditório: ficam em "Novos ciclos" até o vínculo ser corrigido
+  const ignoradasSemConfirmacao = []; // só com REPROTOCOLO_EXIGE_CONFIRMACAO=true
+  const semConfirmacao = confirmacaoExigida()
+    ? new Set(await semConfirmacaoValida(tarefas.map(t => t.id), { podeVerRestrito: Boolean(req.user.pode_marcar_restrito) }))
+    : new Set();
   for (let i = 0; i < tarefas.length; i++) {
     const t = tarefas[i];
     if (await vinculoContraditorio(t.cliente_id)) { ignoradas.push(t.id); continue; }
+    if (semConfirmacao.has(t.id)) { ignoradasSemConfirmacao.push(t.id); continue; }
     const prazo = new Date(`${prazo_inicial}T12:00:00`);
     prazo.setDate(prazo.getDate() + Math.floor(atualizadas / lote) * 7);
     const prazoIso = prazo.toISOString().slice(0, 10);
@@ -1000,9 +1013,9 @@ tarefasRouter.patch('/ciclos/aceitar-lote', apenasMaster, async (req, res) => {
   }
   await registrarAuditoria({
     usuarioId: req.user.id, acao: 'aceitar_lote_ciclos', entidade: 'tarefa',
-    valorDepois: { quantidade: atualizadas, atribuido_a, prazo_inicial, por_semana: lote, ids: tarefas.filter(t => !ignoradas.includes(t.id)).map(t => t.id), ignoradas_vinculo_contraditorio: ignoradas }, ip: req._ip,
+    valorDepois: { quantidade: atualizadas, atribuido_a, prazo_inicial, por_semana: lote, ids: tarefas.filter(t => !ignoradas.includes(t.id) && !ignoradasSemConfirmacao.includes(t.id)).map(t => t.id), ignoradas_vinculo_contraditorio: ignoradas, ignoradas_sem_confirmacao: ignoradasSemConfirmacao }, ip: req._ip,
   });
-  res.json({ ok: true, atualizadas, ignoradas: ignoradas.length });
+  res.json({ ok: true, atualizadas, ignoradas: ignoradas.length, ignoradas_sem_confirmacao: ignoradasSemConfirmacao.length });
 });
 
 // PATCH /api/tarefas/:id/ciclo/devolver — desfaz uma entrada em RE-PROTOCOLO (manual ou
