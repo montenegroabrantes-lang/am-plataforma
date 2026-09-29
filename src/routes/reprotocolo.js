@@ -17,6 +17,7 @@ import {
 import {
   reservarPacotes, montarPacote, cancelarPacote, listarPacotes, obterPacote, cadastrarModelo, listarModelos, STATUS_PACOTE, TIPOS_MODELO,
 } from '../services/reprotocolo/pacote.js';
+import { importarDados, LIMITE_IMPORTACAO } from '../services/reprotocolo/importacao.js';
 import { db } from '../db/index.js';
 import { ReferenciaEstadualError } from '../services/remuneracaoEstadual.js';
 
@@ -55,6 +56,7 @@ export function criarReprotocoloRouter({
   salvarOficial = salvarConferenciaOficial,
   vincularPasta = vincularPastaAntiga,
   transacao = (fn) => db.transaction(fn),
+  importar = importarDados,
   pacotes = { reservar: reservarPacotes, montar: montarPacote, cancelar: cancelarPacote, listar: listarPacotes, obter: obterPacote, cadastrarModelo, listarModelos },
 } = {}) {
   const router = Router();
@@ -277,6 +279,21 @@ export function criarReprotocoloRouter({
     }
     await auditar({ usuarioId: req.user.id, acao: 'cadastrar_modelo_reprotocolo', entidade: 'modelo_reprotocolo', valorDepois: { ente, tese_id: teseId, tipo, drive_arquivo_id: driveId }, ip: req._ip });
     res.json({ ok: true });
+  });
+
+  // POST /api/reprotocolo/importar { pastas: [...], oficiais: [...], dry_run } — carrega pasta antiga, inventário de
+  // documentos, duplicidade e conferência oficial apurados fora do AM. Só sessão do AM. dry_run é o padrão:
+  // valida e conta sem gravar; só grava com dry_run=false explícito.
+  router.post('/importar', apenasSessao, async (req, res) => {
+    const { pastas = [], oficiais = [], dry_run: dryRun = true } = req.body || {};
+    if (!Array.isArray(pastas) || !Array.isArray(oficiais) || pastas.length + oficiais.length === 0 || pastas.length > LIMITE_IMPORTACAO || oficiais.length > LIMITE_IMPORTACAO) {
+      return res.status(400).json({ ok: false, erro: `Envie "pastas" e/ou "oficiais" (até ${LIMITE_IMPORTACAO} cada).` });
+    }
+    if (typeof dryRun !== 'boolean') return res.status(400).json({ ok: false, erro: 'dry_run deve ser true ou false.' });
+    const resultado = await transacao(tx => importar({ conexao: tx, pastas, oficiais, usuarioId: req.user.id, dryRun }));
+    await auditar({ usuarioId: req.user.id, acao: dryRun ? 'simular_importacao_reprotocolo' : 'importar_reprotocolo', entidade: 'tarefa',
+      valorDepois: { pastas: resultado.pastas.gravadas || resultado.pastas.validas, oficiais: resultado.oficiais.gravadas || resultado.oficiais.validas, recusadas: resultado.pastas.recusadas.length + resultado.oficiais.recusadas.length, dry_run: dryRun }, ip: req._ip });
+    res.json({ ok: true, ...resultado });
   });
 
   return router;

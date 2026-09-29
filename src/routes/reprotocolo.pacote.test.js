@@ -18,7 +18,7 @@ const TESE = '66666666-6666-4666-8666-666666666666';
 const DRIVE = '1S6IMMEkOnW2VbWAdweLbJMUAznwPQEBG';
 
 const auditoria = [];
-const ch = { reservar: [], montar: [], cancelar: [], modelo: [] };
+const ch = { reservar: [], montar: [], cancelar: [], modelo: [], importar: [] };
 let respostaMontar = { ok: true, pacote_id: P1, relatorio: { periodo: { meses: 33 }, pronto_para_gerar_pecas: false }, texto: 'texto' };
 let cancelou = true;
 let erroModelo = null;
@@ -30,6 +30,7 @@ app.use('/api/reprotocolo', autenticar, criarReprotocoloRouter({
   auditar: async (r) => { auditoria.push(r); }, limitador: (_q, _s, n) => n(),
   verificar: async () => ({ hoje: '2026-09-28', resultados: [] }),
   transacao: async (fn) => fn('tx'),
+  importar: async (a) => { ch.importar.push(a); return { dry_run: a.dryRun, pastas: { recebidas: a.pastas.length, validas: a.pastas.length, gravadas: 0, mantidas_manuais: 0, recusadas: [] }, oficiais: { recebidas: a.oficiais.length, validas: a.oficiais.length, gravadas: 0, recusadas: [] } }; },
   pacotes: {
     reservar: async (a) => { ch.reservar.push(a); return a.tarefaIds.map(id => ({ tarefa_id: id, ok: id === T1, pacote_id: id === T1 ? P1 : undefined })); },
     montar: async (a) => { ch.montar.push(a); return respostaMontar; },
@@ -128,4 +129,24 @@ test('modelos: valida ente, tipo, tese e id do Drive; cadastra e audita; tese in
   assert.equal(auditoria.at(-1).acao, 'cadastrar_modelo_reprotocolo');
   erroModelo = Object.assign(new Error('fk'), { code: '23503' });
   assert.equal((await chamar('PUT', url, TOKENS.master, { ...ok, tese_id: TESE })).status, 404);
+});
+
+test('importar: só sessão do AM; simulação é o padrão; valida corpo e limites', async () => {
+  const url = '/api/reprotocolo/importar';
+  const linha = { cliente_id: '44444444-4444-4444-8444-444444444444', status: 'nao_encontrada' };
+  assert.equal((await chamar('POST', url, TOKENS.conector, { pastas: [linha] })).status, 403);
+  assert.equal((await chamar('POST', url, TOKENS.junior, { pastas: [linha] })).status, 403);
+  assert.equal((await chamar('POST', url, TOKENS.master, {})).status, 400);
+  assert.equal((await chamar('POST', url, TOKENS.master, { pastas: 'x' })).status, 400);
+  assert.equal((await chamar('POST', url, TOKENS.master, { pastas: Array(1001).fill(linha) })).status, 400);
+  assert.equal((await chamar('POST', url, TOKENS.master, { pastas: [linha], dry_run: 'nao' })).status, 400);
+  assert.equal(ch.importar.length, 0);
+  const sim = await chamar('POST', url, TOKENS.master, { pastas: [linha] });
+  assert.equal(sim.status, 200);
+  assert.equal(sim.corpo.dry_run, true);
+  assert.equal(auditoria.at(-1).acao, 'simular_importacao_reprotocolo');
+  const real = await chamar('POST', url, TOKENS.master, { pastas: [linha], dry_run: false });
+  assert.equal(real.corpo.dry_run, false);
+  assert.equal(ch.importar.at(-1).usuarioId, 'm1');
+  assert.equal(auditoria.at(-1).acao, 'importar_reprotocolo');
 });
