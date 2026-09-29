@@ -647,6 +647,52 @@ async function iniciar() {
       console.log(`[Migration] Fila de re-protocolo: ${adiados.length} ciclo(s) adiado(s), ${sinalizados.length} enviado(s) à triagem.`);
     })).catch(e => console.warn('[Migration] Saneamento da fila de re-protocolo:', e.message));
 
+    // Fase 2 do re-protocolo (29/09/2026): confirmação da verificação gravada no AM.
+    // - verificacoes_reprotocolo: histórico por hash dos dados verificados + decisão humana;
+    // - reprotocolo_pasta_antiga: pasta do processo anterior em OUTORGANTES (1 por cliente; o
+    //   drive_pasta_id de clientes aponta para pastas vazias criadas pelo AM, não serve);
+    // - reprotocolo_conferencia_oficial: cache da conferência na fonte oficial PB/PE.
+    await migrar('2026_09_29_verificacao_reprotocolo', async () => {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS verificacoes_reprotocolo (
+          id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          tarefa_id      UUID NOT NULL REFERENCES tarefas(id) ON DELETE CASCADE,
+          demanda_id     UUID REFERENCES demandas(id) ON DELETE SET NULL,
+          grupo          TEXT NOT NULL CHECK (grupo IN ('confirmado','conferir','bloqueado')),
+          motivos        JSONB NOT NULL DEFAULT '[]',
+          snapshot       JSONB NOT NULL DEFAULT '{}',
+          snapshot_hash  TEXT NOT NULL,
+          verificado_em  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          decisao        TEXT CHECK (decisao IN ('confirmada')),
+          decidido_por   UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+          decidido_em    TIMESTAMPTZ,
+          motivos_aceitos JSONB NOT NULL DEFAULT '[]',
+          observacao     TEXT
+        )`);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_verif_reprot_tarefa ON verificacoes_reprotocolo (tarefa_id, verificado_em DESC)`);
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS reprotocolo_pasta_antiga (
+          cliente_id      UUID PRIMARY KEY REFERENCES clientes(id) ON DELETE CASCADE,
+          status          TEXT NOT NULL CHECK (status IN ('unica','ambigua','nao_encontrada')),
+          drive_pasta_id  TEXT,
+          titulo          TEXT,
+          pai             TEXT,
+          candidatos      JSONB NOT NULL DEFAULT '[]',
+          duplicidade     JSONB NOT NULL DEFAULT '[]',
+          documentos      JSONB,
+          origem          TEXT NOT NULL DEFAULT 'manual',
+          confirmada_por  UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+          confirmada_em   TIMESTAMPTZ,
+          atualizado_em   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`);
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS reprotocolo_conferencia_oficial (
+          tarefa_id     UUID PRIMARY KEY REFERENCES tarefas(id) ON DELETE CASCADE,
+          resultado     JSONB NOT NULL,
+          conferido_em  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`);
+    }).catch(e => console.warn('[Migration] Tabelas da verificação de re-protocolo:', e.message));
+
     // O acervo legado nasceu da antiga equivalência "elegível = contratado". Ele permanece
     // íntegro, mas sai da fila operacional até conferência humana; nada é apagado.
     // Tarefas nascidas de ciclo (ciclo_inicio) ficam de fora: para elas, ter processo anterior é a regra.
