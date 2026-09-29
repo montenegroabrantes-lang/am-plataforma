@@ -7,13 +7,19 @@ Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
 qualquer alteração e atualizado depois de mudanças materiais no código, banco,
 integrações ou produção. Não registrar segredos neste documento.
 
-> **LER PRIMEIRO — estado no fim da noite de 28/09/2026:** o levantamento de re-protocolo JÁ ESTÁ
-> EM PRODUÇÃO (publicado por engano; o usuário ainda não decidiu manter ou reverter). A estratégia
-> de automação do re-protocolo FOI CONFIRMADA pelo usuário na noite de 28/09 (seção "Fase 0" no
-> fim). A **Fase 0 está implementada em branch local `reprotocolo-fase0` (backend e frontend), SEM
-> push e SEM deploy** — o diff antigo e não commitado de `src/index.js` no checkout principal foi
-> SUBSTITUÍDO por essa versão (usa `migrar()`) e deve ser descartado ao publicar. Nada de Fase 1 em
-> diante foi iniciado.
+> **LER PRIMEIRO — estado em 29/09/2026:** a estratégia do re-protocolo está CONFIRMADA. A Fase 0
+> (saneamento e período no protocolo) e a Fase 2 (verificação gravada no AM, pacote em modo sombra,
+> importação controlada) estão prontas, testadas (185/185) e commitadas em `reprotocolo-pacote`
+> (backend, já reaplicada sobre `origin/main`) e `reprotocolo-fase2` (frontend). **PUBLICAÇÃO
+> PENDENTE:** o modo automático negou o `git push` (classificador "Production Deploy"); o usuário
+> publica com `git push origin reprotocolo-pacote:main` (backend, primeiro) e depois
+> `git push origin reprotocolo-fase2:main` (frontend, no repositório `am-plataforma-web`). Antes de
+> assumir que ainda está pendente, confira `git log origin/main`. Depois do deploy: importar a
+> apuração pelo botão "Importar apuração" e só então considerar `REPROTOCOLO_EXIGE_CONFIRMACAO`.
+> O levantamento de re-protocolo (rotas/MCP de leitura) JÁ ESTÁ NO AR desde 28/09 (publicado por
+> engano; o usuário ainda não decidiu manter ou reverter). O diff antigo e não commitado de
+> `src/index.js` no checkout principal está SUPERADO pela migração única da Fase 0 (usa `migrar()`)
+> e deve ser guardado/descartado (`git stash`) antes de sincronizar o `main` local.
 
 > **PENDENTE — autorizado por Ramon em 21/09/2026 pra executar na mesma noite:** o restante da
 > Fase 6 do cronograma de resiliência (auditoria transacional, migrações versionadas,
@@ -2266,10 +2272,11 @@ prompt novo). `test:safe` e `test:continuidade` (224) verdes.
 
 - **Token do GitHub:** ver item PENDENTE na seção "(tarde)" acima (apagar "SIATEMA AM", renovar
   credencial pelo chaveiro ou `gh auth login`).
-- **Fila de re-protocolo (`src/index.js`, sem commit):** migração de boot que altera dados de
-  produção; só publicar depois de o usuário revisar o SQL.
+- **Fila de re-protocolo:** SUPERADO em 29/09 — a correção virou a migração única
+  `2026_09_28_saneamento_fila_reprotocolo` (usa `migrar()`), commitada na Fase 0 e aguardando o push
+  do usuário; o diff antigo de `src/index.js` no checkout principal deve ser descartado.
 - **Re-protocolo publicado por engano (7 commits):** decidir manter e revisar, ou reverter
-  (mantendo `7c5f64b`); estratégia do chat segue NÃO confirmada; caso Iradira (prazo 06/10).
+  (mantendo `7c5f64b`); a estratégia foi CONFIRMADA em 28/09 (noite); caso Iradira (prazo 06/10): as 2 tarefas vão à triagem pela migração da Fase 0.
 - **Devolução de chamados parados (Camila `7c7dc96`):** flag `DEVOLUCAO_ATENDENTE_PARADO_ATIVO`
   desligada; ligar é decisão de Ramon + João Lucas.
 - **6 teses sem cobertura (Camila `8bbdd11`):** revisão de advogado (13º salário, equiparação no
