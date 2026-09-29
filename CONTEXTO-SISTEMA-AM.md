@@ -12,9 +12,10 @@ integrações ou produção. Não registrar segredos neste documento.
 > produção (leitura): migrações `2026_09_28_saneamento_fila_reprotocolo`,
 > `2026_09_29_verificacao_reprotocolo` e `2026_09_29_pacote_reprotocolo` aplicadas uma vez; 5 tabelas
 > novas; auditoria do saneamento = 186 ciclos adiados + 5 tarefas à triagem; fila "Novos ciclos" caiu
-> de 364 para 178. **Frontend AINDA NÃO publicado** (`am-plataforma-web`, branch `reprotocolo-fase2`,
-> 3 commits: `git push origin reprotocolo-fase2:main`). Depois: importar a apuração pelo botão
-> "Importar apuração…" (arquivo local fora do Git). `REPROTOCOLO_EXIGE_CONFIRMACAO` e
+> de 364 para 178. **Frontend PUBLICADO** (`am-plataforma-web` `1238607..e6a3fba`, deploy Railway
+> `8472f278` SUCCESS; o JavaScript publicado de Tarefas contém o botão "Importar apuração…").
+> Próximo passo do usuário: importar a apuração por esse botão (arquivo local fora do Git).
+> `REPROTOCOLO_EXIGE_CONFIRMACAO` e
 > `SALARIO_MINIMO_VIGENTE` NÃO configuradas. O diff antigo de `src/index.js` foi guardado em
 > `git stash` no checkout principal (superado). Levantamento de 28/09 segue no ar (decisão pendente).
 
