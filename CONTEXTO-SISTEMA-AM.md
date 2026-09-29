@@ -1,6 +1,6 @@
 # Contexto permanente — Sistema AM
 
-**Última atualização:** 28/09/2026, noite (Fase 0 do re-protocolo implementada em branch local, não publicada; Camila: sem transferência ao Jurídico por outro advogado/sindicato, prazo 6 a 11 meses, trava do fechamento genérico; worker de backup corrigido e publicado — ver as seções de 28/09/2026 no fim)
+**Última atualização:** 29/09/2026 (Fases 0 e 2 do re-protocolo implementadas em branches locais, não publicadas; Camila: sem transferência ao Jurídico por outro advogado/sindicato, prazo 6 a 11 meses, trava do fechamento genérico; worker de backup corrigido e publicado — ver as seções de 28/09/2026 no fim)
 **Finalidade:** continuidade segura do desenvolvimento em outros chats e sessões.
 
 Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
@@ -2390,3 +2390,60 @@ Resultado sobre as **366 tarefas de ciclo em aberto** (2 em Re-protocolo + 364 e
 - Entregues ao usuário: página HTML e planilha (fora do repositório, contêm dados de clientes).
 - Pendências: usuário confirma a lista Confirmado (amostra de 5) e decide os grupos Conferir/Bloqueado;
   depois, publicar a Fase 0 (aguarda "sim"), Descoberta, Pacote, Piloto e Escala.
+
+### 29/09/2026 — Fase 2 do re-protocolo: verificação gravada no AM + pacote (commits locais, SEM push)
+
+Aprovado pelo usuário: gravar a confirmação da verificação no AM e seguir para o pacote. Branches
+locais: backend `reprotocolo-pacote` (empilhada sobre a Fase 0) e frontend `reprotocolo-fase2`.
+**Nada foi publicado e nada foi gravado no banco de produção**; as migrações rodam no deploy.
+
+- **Regra decidida:** o juízo do processo anterior NÃO entra (re-protocolo é sempre processo novo,
+  sem dependência). O alerta `juizo_nao_e_de_origem` deixou de mandar conferir.
+- **Verificação** (`src/services/reprotocolo/verificacao.js`): cada ciclo aberto cai em Confirmado,
+  Conferir ou Bloqueado. Bloqueio: intervalo da tese incompleto; processo cobrindo o período;
+  possível protocolo à mão (pasta da equipe em `_REPROTOCOLO`/pendentes, decidido pela tese da pasta e
+  ignorando a pasta `Outorgantes {ano}` do ano do processo anterior). Conferir: meses fora das 60
+  competências, sem processo anterior, vínculo/polo/ente, publicação de processo desconhecido,
+  alertas da fonte oficial PB/PE, pasta antiga não localizada/ambígua. A decisão humana fica em
+  `verificacoes_reprotocolo`, presa a um hash dos dados (o fim do período fica fora do hash para não
+  invalidar tudo na virada do mês); perde a validade se os dados mudarem ou após 30 dias. Bloqueio por
+  prazo ou processo existente nunca é confirmado; "protocolo à mão" pode ser liberado com observação.
+  Validado contra a produção somente leitura: o motor reproduz a classificação feita à mão.
+- **Rotas** (`src/routes/reprotocolo.js`, Master): leitura também pelo conector com escopo
+  `reprotocolo` (`GET /verificacao`, `/pacotes`, `/pacotes/:id`, `/modelos`); escrita SÓ por sessão do
+  AM, nunca pelo conector (`POST /verificacao/confirmar`, `POST /verificacao/:id/oficial`,
+  `PUT /pasta-antiga/:clienteId`, `POST /pacotes/reservar|:id/montar|:id/cancelar`, `PUT /modelos`,
+  `POST /importar`). Tudo auditado; CPF sempre mascarado.
+- **Gate do aceite:** `REPROTOCOLO_EXIGE_CONFIRMACAO=true` faz `ciclo/aceitar` recusar (409) e o
+  aceite em lote ignorar ciclo sem confirmação válida. Desligada por padrão: nada muda até ligar.
+- **Pacote** (`pacote.js`, `valorCausa.js`, `checklist.js`), modo sombra, não gera peça: reserva única
+  por tarefa e por demanda (índices únicos parciais); relatório com período pedido (por padrão o do
+  ciclo; começar depois é permitido, antes do ciclo nunca), valor da causa como PROPOSTA (8% da
+  remuneração oficial PB/PE; município, outras teses e valor acima do teto do Juizado vão ao advogado;
+  teto = 60 salários mínimos lidos de `SALARIO_MINIMO_VIGENTE`, sem valor fixo em código), checklist
+  (só a identidade se reaproveita; procuração, vínculo e contracheques do período novo são sempre
+  novos; inicial anterior é fonte de dados; residência = regra pendente) e modelos aprovados por
+  ente/tese (`modelos_reprotocolo`). Pendências do relatório: modelos ausentes e valor a informar.
+- **Migrações novas** (via `migrar()`): `2026_09_29_verificacao_reprotocolo` (verificacoes_reprotocolo,
+  reprotocolo_pasta_antiga, reprotocolo_conferencia_oficial) e `2026_09_29_pacote_reprotocolo`
+  (pacotes_reprotocolo, modelos_reprotocolo).
+- **Tela** (`am-plataforma-web`, `VerificacaoReprotocolo.jsx` + encaixes em `tarefas/page.js`, só
+  Master, abas Re-protocolo e Novos ciclos): painel com totais e filtro por grupo, botão para
+  confirmar o grupo Confirmado, selo e motivos em cada card, ações (confirmar, aceitar motivos com
+  observação, liberar protocolo à mão, conferir fonte oficial, vincular pasta antiga colando o link) e
+  botão "Importar apuração" (simula, mostra totais e só grava após confirmação).
+- **Carga inicial:** as tabelas nascem vazias; sem carga todo ciclo apareceria como "pasta não
+  verificada". A apuração de 29/09 (353 clientes com pasta/duplicidade/inventário e 49 conferências
+  oficiais) foi gerada como arquivo JSON local (fora do repositório, contém nomes de pastas) para ser
+  importada pelo botão depois do deploy.
+- **Verificado:** suíte do backend 185/185 (sem `backup.worker.test.js`, que não encerra sem Redis);
+  paridade do motor com a produção somente leitura; relatórios de pacote gerados com dados reais;
+  build isolado do Next.js compila; componente renderizado em servidor nos 5 estados.
+- **Ordem para publicar:** revisar; push do backend (Fase 0 + Fase 2) e depois do frontend; depois do
+  deploy, importar a apuração pelo botão; conferir a fonte oficial dos casos pendentes; só então
+  considerar `REPROTOCOLO_EXIGE_CONFIRMACAO=true` e configurar `SALARIO_MINIMO_VIGENTE`.
+- **Pendências:** indexador do Drive no servidor (hoje a pasta antiga entra por importação ou por
+  vínculo manual); tela do pacote (reservar, montar, ver relatório); geração de inicial e procuração
+  (depende dos modelos aprovados por ente e do modelo de procuração); quem aprova o dossiê; ferramentas
+  de escrita do chat em escopo separado; regra de residência por juízo (das emendas à inicial); piloto
+  no PJe (Fase 3).
