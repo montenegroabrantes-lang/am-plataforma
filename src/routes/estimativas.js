@@ -377,10 +377,10 @@ estimativasRouter.get('/:id/referencia-estadual', apenasMaster, referenciaEstadu
 
 // GET /api/estimativas/leads/:contactId/mensagens — histórico da conversa direto da API do
 // Digisac, pro painel lateral do AM (sem iframe, sem login do Digisac). Só leitura; quem
-// responde por aqui continua passando por POST /leads/:contactId/mensagem (Master). Aberto a
-// qualquer usuário logado (uma das exceções do júnior em S-12/D7) — mesmo alcance que o iframe já tinha na tela de Leads.
+// responde por aqui continua passando por POST /leads/:contactId/mensagem (Master). Era aberto a
+// qualquer usuário logado; S-27 (D6) fechou para o júnior: conversa de lead é só do Master.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-estimativasRouter.get('/leads/:contactId/mensagens', async (req, res) => {
+estimativasRouter.get('/leads/:contactId/mensagens', apenasMaster, async (req, res) => {
   const contactId = String(req.params.contactId || '');
   if (!UUID_RE.test(contactId)) return res.status(400).json({ ok: false, erro: 'contactId inválido.' });
   const paginas = Math.min(10, Math.max(1, Number(req.query.paginas) || 3));

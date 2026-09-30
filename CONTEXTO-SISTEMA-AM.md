@@ -2504,3 +2504,33 @@ de Estimativas feita por outra sessão; deploy `cdc49c2d`; o JavaScript publicad
 variável de produção mesmo com pedido do usuário no chat; o usuário roda esses comandos no próprio
 terminal, e o assistente confere o resultado (deploy, rotas, variáveis) em seguida.
 
+
+### 30/09/2026 — Lote S, Onda 9 (S-27): perfil júnior — PREPARADO, ainda NÃO publicado
+
+Aplicada a matriz D6 na versão recomendada do plano (a decisão D6 ainda não foi respondida pelo
+usuário; ele mandou "execute tudo"). Só código e testes; nada foi ao ar, então **não há estado
+verificado em produção** (a verificação é a do plano: conta de teste júnior, depois que a Onda 8
+permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra a regra
+("não é exatamente `master` = júnior"); os routers só ganharam poucas linhas.
+- **CPF mascarado** (`***.456.789-**`, a máscara de Tarefas) em toda resposta JSON dos routers de
+  clientes, processos, tarefas e triagem, por `router.use(protegerDadosDoJunior)` (mascara qualquer
+  chave `cpf`/`cliente_cpf`; rota nova nesses routers já nasce protegida). Busca por CPF do júnior só
+  com o CPF inteiro (a busca parcial de 6+ dígitos viraria oráculo). O Master segue igual.
+- **Clientes:** o júnior não recebe nem decifra `anotacoes`; PATCH com `anotacoes` ou `ativo` → 403.
+- **CSV de processos** (`/exportar-excel`) do júnior sai sem a coluna CPF.
+- **Processos (IDOR de 11/07 fechado):** `PATCH /:id` e `PATCH /:id/urgente` só em processo em que o
+  júnior tem tarefa atribuída (não cancelada); `PATCH /:id` sem `status`, `valor_causa`, `valor_rpv`
+  (reenviar o valor já gravado passa e é ignorado: o formulário antigo manda `status` sempre).
+  `PATCH /:id/situacao` (classificação do dia a dia) segue aberto, mas sem `valor_homologado` e com
+  urgência só nos processos dele. Lista e ficha de processo ganharam `pode_editar`.
+- **Conversas de lead:** `GET /api/estimativas/leads/:contactId/mensagens` agora é `apenasMaster`
+  (conflita com a exceção "aberta de propósito" da D7; prevaleceu a D6 mais conservadora).
+- **Protocolo:** `PATCH /api/tarefas/:id/concluir-com-numero` deixou de ser `apenasMaster` (voltou a
+  valer a conferência de responsável que já existia na rota, agora antes das demais): o júnior
+  registra o protocolo da tarefa dele; Master registra qualquer um.
+- Testes: `src/routes/junior.acesso.test.js` (26 casos, com o Master ao lado de cada regra).
+- **Limitações/pendências:** Diligências segue só para Master na tela (a página Relatório inteira é
+  Master por decisão de 28/09; o endpoint continua aberto); o júnior perde "Abrir conversa" na aba
+  Processual de Estimativas; `status_rpv`/`status_precatorio` "paga" feitos por júnior ainda geram o
+  honorário automático quando já há valor homologado (não estava na matriz); `cessionario_documento`
+  (cessões) e o CPF do onboarding em que o júnior é responsável não são mascarados.

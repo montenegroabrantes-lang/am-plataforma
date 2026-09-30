@@ -2,6 +2,7 @@ import { Router }   from 'express';
 import { db }        from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
+import { ehMaster, protegerDadosDoJunior, condicaoBuscaCpf, MSG_CAMPOS_DO_CLIENTE } from '../middleware/perfilJunior.js';
 import { criarPastaCliente, criarSubpasta } from '../services/drive/index.js';
 import { documentosRouter } from './clientes.documentos.js';
 import { criarOuBuscarContato } from '../services/digisac/index.js';
@@ -14,6 +15,9 @@ import { somarDiasUteis } from '../utils/diasUteis.js';
 import { filtroVisibilidade } from '../utils/visibilidade.js';
 
 export const clientesRouter = Router();
+
+// S-27: júnior recebe o CPF mascarado em qualquer resposta deste router.
+clientesRouter.use(protegerDadosDoJunior);
 
 // Rejeita :id malformado antes de bater no banco (evita 500 cru do Postgres)
 clientesRouter.param('id', (req, res, next, id) => {
@@ -34,12 +38,8 @@ clientesRouter.get('/', async (req, res) => {
     // CPF é salvo só com dígitos — normaliza a busca (REGEXP_REPLACE no lado da coluna
     // também, por segurança) para casar mesmo digitando com pontos/traço. Segue o mesmo
     // padrão já usado em processos.js.
-    let cpfCond = '';
-    const soDigitos = busca.replace(/\D/g, '');
-    if (soDigitos.length >= 6) {
-      params.push(`%${soDigitos}%`);
-      cpfCond = ` OR REGEXP_REPLACE(c.cpf,'[^0-9]','','g') ILIKE $${params.length}`;
-    }
+    // S-27: o júnior só busca por CPF inteiro (senão a busca parcial desmascara o CPF).
+    const cpfCond = condicaoBuscaCpf(req, busca.replace(/\D/g, ''), params);
     condicoes.push(`(c.nome ILIKE $${iNome}${cpfCond})`);
   }
 
@@ -86,7 +86,8 @@ clientesRouter.get('/:id', async (req, res) => {
   const anotacoesEnc = cliente.anotacoes_enc;
   delete cliente.anotacoes_enc;
   cliente.anotacoes = null;
-  if (anotacoesEnc) {
+  // S-27: o júnior não lê as anotações (podem guardar senhas de portais) — nem chega a decifrar.
+  if (anotacoesEnc && ehMaster(req)) {
     try { cliente.anotacoes = decrypt(anotacoesEnc); }
     catch (e) { console.warn(`[Clientes] Falha ao decifrar anotações ${req.params.id}:`, e.message); }
   }
@@ -353,6 +354,10 @@ clientesRouter.post('/', async (req, res) => {
 
 // PATCH /api/clientes/:id
 clientesRouter.patch('/:id', async (req, res) => {
+  // S-27: anotações e `ativo` (desativar cliente) são do Master.
+  if (!ehMaster(req) && (req.body?.anotacoes !== undefined || req.body?.ativo !== undefined)) {
+    return res.status(403).json({ ok: false, erro: MSG_CAMPOS_DO_CLIENTE });
+  }
   const campos      = ['nome','whatsapp','email','cargo','orgao','periodo_vinculo','vinculo_inicio','vinculo_fim','polo_passivo','ativo','vinculo_ativo'];
   const camposData  = new Set(['vinculo_inicio','vinculo_fim']);
   const updates = [];

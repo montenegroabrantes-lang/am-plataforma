@@ -2,6 +2,10 @@ import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { apenasMaster }       from '../middleware/auth.js';
+import {
+  ehMaster, protegerDadosDoJunior, condicaoBuscaCpf, temTarefaNoProcesso, idsProcessosEditaveis,
+  liberarEdicaoDoJunior, liberarClassificacaoDoJunior, MSG_SO_RESPONSAVEL,
+} from '../middleware/perfilJunior.js';
 import { ETAPA_WHERE, ETAPA_CASE } from '../utils/etapas.js';
 import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
 import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
@@ -15,6 +19,9 @@ import { filtroVisibilidade, usuarioVeVisibilidade, podeVerProcesso } from '../u
 import { criarLimiteIA } from '../middleware/limites.js';
 
 export const processosRouter = Router();
+
+// S-27: júnior recebe o CPF mascarado em qualquer resposta JSON deste router.
+processosRouter.use(protegerDadosDoJunior);
 
 // Rejeita :id malformado antes de bater no banco (evita 500 cru do Postgres — ver auditoria de segurança)
 processosRouter.param('id', (req, res, next, id) => {
@@ -101,12 +108,8 @@ processosRouter.get('/', async (req, res) => {
     params.push(t); const iNome  = params.length;
     params.push(t); const iPAtiv = params.length;
     params.push(t); const iPPass = params.length;
-    let cpfCond = '';
-    const soDigitos = busca.replace(/\D/g, '');
-    if (soDigitos.length >= 6) {
-      params.push(`%${soDigitos}%`);
-      cpfCond = ` OR REGEXP_REPLACE(c.cpf,'[^0-9]','','g') ILIKE $${params.length}`;
-    }
+    // S-27: o júnior só busca por CPF inteiro (senão a busca parcial desmascara o CPF).
+    const cpfCond = condicaoBuscaCpf(req, busca.replace(/\D/g, ''), params);
     condicoes.push(`AND (p.numero ILIKE $${iNum} OR c.nome ILIKE $${iNome} OR p.polo_ativo ILIKE $${iPAtiv} OR p.polo_passivo ILIKE $${iPPass}${cpfCond})`);
   }
 
@@ -178,7 +181,11 @@ processosRouter.get('/', async (req, res) => {
     if (!classifMap[c.processo_id]) classifMap[c.processo_id] = {};
     classifMap[c.processo_id][c.campo_id] = c.valor;
   }
-  const processosComClassif = rows.map(r => ({ ...r, classif_valores: classifMap[r.id] || {} }));
+  // S-27: o júnior só marca urgência (e edita) onde tem tarefa; a tela usa isso para não oferecer o botão.
+  const editaveis = await idsProcessosEditaveis(req, ids);
+  const processosComClassif = rows.map(r => ({
+    ...r, classif_valores: classifMap[r.id] || {}, pode_editar: editaveis ? editaveis.has(r.id) : true,
+  }));
 
   res.json({ ok: true, processos: processosComClassif, total: Number(total), page, limite: limiteSeguro });
 });
@@ -228,12 +235,7 @@ function construirFiltrosExportar(query, user) {
     params.push(t2); const iNome2  = params.length;
     params.push(t2); const iPAtiv2 = params.length;
     params.push(t2); const iPPass2 = params.length;
-    let cpfCond2 = '';
-    const soDigitos2 = busca.replace(/\D/g, '');
-    if (soDigitos2.length >= 6) {
-      params.push(`%${soDigitos2}%`);
-      cpfCond2 = ` OR REGEXP_REPLACE(c.cpf,'[^0-9]','','g') ILIKE $${params.length}`;
-    }
+    const cpfCond2 = condicaoBuscaCpf({ user }, busca.replace(/\D/g, ''), params);
     condicoes.push(`AND (p.numero ILIKE $${iNum2} OR c.nome ILIKE $${iNome2} OR p.polo_ativo ILIKE $${iPAtiv2} OR p.polo_passivo ILIKE $${iPPass2}${cpfCond2})`);
   }
 
@@ -271,9 +273,11 @@ processosRouter.get('/exportar', async (req, res) => {
 // GET /api/processos/exportar-excel — lista filtrada em CSV (abre no Excel)
 processosRouter.get('/exportar-excel', async (req, res) => {
   const { condicoes, params } = construirFiltrosExportar(req.query, req.user);
+  // S-27: o CSV do júnior sai sem a coluna CPF (a coluna some, não fica em branco).
+  const comCpf = ehMaster(req);
 
   const rows = await db.query(
-    `SELECT p.numero, c.nome AS cliente_nome, c.cpf AS cliente_cpf, p.situacao_atual, p.tribunal, p.vara,
+    `SELECT p.numero, c.nome AS cliente_nome, ${comCpf ? 'c.cpf AS cliente_cpf,' : ''} p.situacao_atual, p.tribunal, p.vara,
             p.polo_passivo, p.urgente, p.data_distribuicao,
             EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id) AS tem_cessao,
             (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) AS ultima_movimentacao
@@ -285,10 +289,10 @@ processosRouter.get('/exportar-excel', async (req, res) => {
     params
   );
 
-  const colunas = ['Número', 'Cliente', 'CPF', 'Situação', 'Tribunal', 'Vara', 'Polo Passivo', 'Urgente', 'Cessão de Crédito', 'Distribuição', 'Última Movimentação'];
+  const colunas = ['Número', 'Cliente', ...(comCpf ? ['CPF'] : []), 'Situação', 'Tribunal', 'Vara', 'Polo Passivo', 'Urgente', 'Cessão de Crédito', 'Distribuição', 'Última Movimentação'];
   const escapar = celulaCsv; // S-25: neutraliza células que começam como fórmula (= + - @)
   const linhas = rows.map(r => [
-    r.numero, r.cliente_nome, r.cliente_cpf, formatarSituacao(r.situacao_atual), r.tribunal, r.vara,
+    r.numero, r.cliente_nome, ...(comCpf ? [r.cliente_cpf] : []), formatarSituacao(r.situacao_atual), r.tribunal, r.vara,
     r.polo_passivo, r.urgente ? 'Sim' : 'Não', r.tem_cessao ? 'Sim' : 'Não',
     r.data_distribuicao ? new Date(r.data_distribuicao).toLocaleDateString('pt-BR') : '',
     r.ultima_movimentacao ? new Date(r.ultima_movimentacao).toLocaleDateString('pt-BR') : '',
@@ -425,9 +429,12 @@ processosRouter.get('/:id', async (req, res) => {
       : Promise.resolve([]),
   ]);
 
+  // S-27: a ficha diz se o usuário pode editar (Master sempre; júnior só com tarefa no processo).
+  const podeEditar = ehMaster(req) || await temTarefaNoProcesso(req.user?.id, req.params.id);
+
   res.json({
     ok: true,
-    processo: { ...p, tem_cessao: cessoes.length > 0, acesso_tribunal: obterAcessoTribunal(p) },
+    processo: { ...p, tem_cessao: cessoes.length > 0, pode_editar: podeEditar, acesso_tribunal: obterAcessoTribunal(p) },
     cessoes,
     teses_cliente: tesesCliente,
   });
@@ -571,6 +578,9 @@ processosRouter.patch('/:id', async (req, res) => {
   const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, visibilidade, tribunal, grau FROM processos WHERE id = $1', [req.params.id]);
   if (!dono || !usuarioVeVisibilidade(req.user, dono.visibilidade)) return processoNaoEncontrado(res);
 
+  // S-27 (IDOR de 11/07): júnior só edita processo em que tem tarefa, e sem valor da causa/RPV/status.
+  if (!(await liberarEdicaoDoJunior(req, res, req.params.id))) return;
+
   const campos      = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas', 'periodo_inicio', 'periodo_fim', 'classificacao'];
   const camposData  = new Set(['periodo_inicio', 'periodo_fim']);
   const updates = [];
@@ -710,6 +720,11 @@ processosRouter.patch('/:id/urgente', async (req, res) => {
   const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, visibilidade FROM processos WHERE id = $1', [req.params.id]);
   if (!dono || !usuarioVeVisibilidade(req.user, dono.visibilidade)) return processoNaoEncontrado(res);
 
+  // S-27 (IDOR de 11/07): júnior só marca urgência em processo em que tem tarefa atribuída.
+  if (!ehMaster(req) && !(await temTarefaNoProcesso(req.user?.id, req.params.id))) {
+    return res.status(403).json({ ok: false, erro: MSG_SO_RESPONSAVEL });
+  }
+
   const { urgente } = req.body;
   const antes = await db.queryOne('SELECT urgente FROM processos WHERE id = $1', [req.params.id]);
   await db.execute(
@@ -734,6 +749,9 @@ processosRouter.patch('/:id/situacao', async (req, res, next) => {
     [req.params.id]
   );
   if (!dono || !usuarioVeVisibilidade(req.user, dono.visibilidade)) return processoNaoEncontrado(res);
+
+  // S-27: a classificação segue aberta ao júnior, mas sem o valor homologado e com urgência só nos processos dele.
+  if (!(await liberarClassificacaoDoJunior(req, res, req.params.id))) return;
 
   const campos  = ['situacao_atual','etapa_atual','localizacao_processual','tipo_requisicao',
                    'status_rpv','status_precatorio','status_alvara','valor_homologado','urgente',

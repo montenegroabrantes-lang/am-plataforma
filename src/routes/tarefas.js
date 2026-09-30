@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
+import { protegerDadosDoJunior } from '../middleware/perfilJunior.js';
 import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
 import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
@@ -12,6 +13,9 @@ import { confirmacaoExigida, semConfirmacaoValida } from '../services/reprotocol
 import { daTabela } from '../utils/tabelaSegura.js';
 
 export const tarefasRouter = Router();
+
+// S-27: júnior recebe o CPF mascarado em qualquer resposta JSON deste router.
+tarefasRouter.use(protegerDadosDoJunior);
 
 // Ciclos recorrentes ainda não aceitos (subtipo='ciclo') vivem na própria fila "ciclos";
 // nunca entram nas filas operacionais nem na triagem, para não soterrar o trabalho real.
@@ -721,8 +725,11 @@ tarefasRouter.post('/lote/restaurar', apenasMaster, async (req, res) => {
   res.json({ ok: true, restauradas: restauradas.length, bloqueadas });
 });
 
-// PATCH /api/tarefas/:id/concluir-com-numero — conclui tarefa de protocolo inserindo número CNJ
-tarefasRouter.patch('/:id/concluir-com-numero', apenasMaster, async (req, res) => {
+// PATCH /api/tarefas/:id/concluir-com-numero — conclui tarefa de protocolo inserindo número CNJ.
+// S-27 (D6): Master registra qualquer protocolo; o júnior só o da tarefa atribuída a ele (a
+// conferência de responsável mais abaixo). A rota era apenasMaster desde 28/09, o que travava
+// a tarefa de um júnior responsável.
+tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
   const { numero_processo, periodo_inicio, periodo_fim, vinculo_id } = req.body;
 
   const CNJ_RE = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
@@ -743,13 +750,15 @@ tarefasRouter.patch('/:id/concluir-com-numero', apenasMaster, async (req, res) =
   );
 
   if (!tarefa) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
+  // S-27: a conferência do responsável vem antes das demais, para o júnior não descobrir o estado
+  // de tarefa alheia pelas mensagens de erro.
+  if (req.user.perfil !== 'master' && tarefa.atribuido_a !== req.user.id) {
+    return res.status(403).json({ ok: false, erro: 'Você não é o responsável por esta tarefa.' });
+  }
   if (tarefa.status === 'concluida') return res.status(409).json({ ok: false, erro: 'Tarefa já concluída.' });
   if (tarefa.tipo !== 'protocolar') return res.status(400).json({ ok: false, erro: 'Esta tarefa não é do tipo protocolar.' });
   if (tarefa.status === 'bloqueada') return res.status(409).json({ ok: false, erro: 'Conclua primeiro o cadastro do cliente.' });
   if (tarefa.precisa_triagem) return res.status(409).json({ ok: false, erro: 'Confirme a contratação, o responsável e o prazo antes de protocolar.' });
-  if (req.user.perfil !== 'master' && tarefa.atribuido_a !== req.user.id) {
-    return res.status(403).json({ ok: false, erro: 'Você não é o responsável por esta tarefa.' });
-  }
 
   if (vinculo_id && !uuidValido(vinculo_id)) {
     return res.status(400).json({ ok: false, erro: 'Vínculo inválido.' });
