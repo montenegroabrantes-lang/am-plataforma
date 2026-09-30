@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { ai }      from '../services/ai/index.js';
+import { apenasMaster } from '../middleware/auth.js';
 
 export const movimentacoesRouter = Router();
 
@@ -45,10 +46,10 @@ movimentacoesRouter.get('/:processoId', async (req, res) => {
   res.json({ ok: true, movimentacoes: rows });
 });
 
-// POST /api/movimentacoes/:id/diagnosticar
-movimentacoesRouter.post('/:id/diagnosticar', async (req, res) => {
+// POST /api/movimentacoes/:id/diagnosticar — chamada paga de IA: só Master, e só em processo que ele pode ver
+movimentacoesRouter.post('/:id/diagnosticar', apenasMaster, async (req, res) => {
   const mov = await db.queryOne(
-    `SELECT m.*, p.numero, p.tribunal, pr.nome AS produto
+    `SELECT m.*, p.numero, p.tribunal, p.visibilidade AS processo_visibilidade, pr.nome AS produto
      FROM movimentacoes m
      JOIN processos p  ON p.id = m.processo_id
      LEFT JOIN produtos pr ON pr.id = p.produto_id
@@ -57,6 +58,10 @@ movimentacoesRouter.post('/:id/diagnosticar', async (req, res) => {
   );
 
   if (!mov) return res.status(404).json({ ok: false, erro: 'Movimentação não encontrada.' });
+
+  if (mov.processo_visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
+    return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
+  }
 
   // Retorna diagnóstico já existente sem recalcular
   if (mov.diagnostico_em) {

@@ -5,6 +5,7 @@ import { Router }  from 'express';
 import { db }      from '../db/index.js';
 import { encrypt } from '../utils/crypto.js';
 import { recarregarAiConfig } from '../config/ai.js';
+import { apenasMaster } from '../middleware/auth.js';
 import axios from 'axios';
 
 export const configAiRouter = Router();
@@ -70,8 +71,8 @@ configAiRouter.get('/status', async (req, res) => {
   res.json(ai.status());
 });
 
-// Testa conexão com um provedor
-configAiRouter.get('/test', async (req, res) => {
+// Testa conexão com um provedor (faz chamada paga à API: só Master)
+configAiRouter.get('/test', apenasMaster, async (req, res) => {
   const { provider } = req.query;
 
   try {

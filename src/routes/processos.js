@@ -6,6 +6,7 @@ import { ETAPA_WHERE, ETAPA_CASE } from '../utils/etapas.js';
 import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
 import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
 import { extrairIdProcessoPje, obterAcessoTribunal } from '../services/acessoTribunal.js';
+import { preservarRequisicaoManual } from '../services/ai/tasks/classificacao.js';
 
 export const processosRouter = Router();
 
@@ -892,13 +893,27 @@ processosRouter.patch('/:id/situacao', async (req, res, next) => {
  } catch (err) { next(err); }
 });
 
-// POST /api/processos/:id/classificar — classifica com Claude
-processosRouter.post('/:id/classificar', async (req, res) => {
+// R-07: relê tipo e status da requisição logo antes de gravar (a chamada da IA demora) e deixa a IA só
+// avançar o que já existe, nunca rebaixar nem sobrescrever o que foi definido à mão.
+async function requisicaoPreservandoManual(processoId, resultado) {
+  const atual = await db.queryOne(
+    `SELECT tipo_requisicao, status_rpv, status_precatorio, status_alvara FROM processos WHERE id = $1`,
+    [processoId]
+  );
+  return preservarRequisicaoManual(atual, resultado);
+}
+
+// POST /api/processos/:id/classificar — classifica com Claude (chamada paga: só Master)
+processosRouter.post('/:id/classificar', apenasMaster, async (req, res) => {
   const processo = await db.queryOne(
     `SELECT p.*, pr.nome AS produto_nome FROM processos p LEFT JOIN produtos pr ON pr.id = p.produto_id WHERE p.id = $1`,
     [req.params.id]
   );
   if (!processo) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+
+  if (processo.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
+    return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
+  }
 
   const movimentacoes = await db.query(
     `SELECT texto, data_movimentacao FROM movimentacoes WHERE processo_id = $1 ORDER BY data_movimentacao DESC LIMIT 15`,
@@ -911,6 +926,12 @@ processosRouter.post('/:id/classificar', async (req, res) => {
     produto: processo.produto_nome, movimentacoes,
     situacao_atual: processo.situacao_atual,
   });
+
+  // Resposta ilegível da IA: não grava nada (antes, o fallback gravava 'nao_iniciado'/'a_definir' por cima do manual)
+  if (!resultado) {
+    return res.status(502).json({ ok: false, erro: 'A IA não devolveu uma classificação utilizável. Nada foi alterado no processo.' });
+  }
+  const requisicao = await requisicaoPreservandoManual(req.params.id, resultado);
 
   const situacaoMudou = resultado.situacao_atual && resultado.situacao_atual !== processo.situacao_atual;
 
@@ -931,8 +952,8 @@ processosRouter.post('/:id/classificar', async (req, res) => {
      WHERE id = $10`,
     [
       resultado.situacao_atual, resultado.etapa_atual, resultado.localizacao_processual,
-      resultado.tipo_requisicao, resultado.status_rpv, resultado.status_precatorio,
-      resultado.status_alvara, resultado.confianca === 'BAIXA',
+      requisicao.tipo_requisicao, requisicao.status_rpv, requisicao.status_precatorio,
+      requisicao.status_alvara, resultado.confianca === 'BAIXA',
       situacaoMudou, req.params.id,
     ]
   );
@@ -1101,6 +1122,9 @@ processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
               situacao_atual: proc.situacao_atual,
             });
 
+            if (!resultado) throw new Error('A IA não devolveu uma classificação utilizável.');
+            const requisicao = await requisicaoPreservandoManual(proc.id, resultado);
+
             const mudou = resultado.situacao_atual && resultado.situacao_atual !== proc.situacao_atual;
 
             await db.execute(
@@ -1120,8 +1144,8 @@ processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
                WHERE id = $10`,
               [
                 resultado.situacao_atual, resultado.etapa_atual, resultado.localizacao_processual,
-                resultado.tipo_requisicao, resultado.status_rpv, resultado.status_precatorio,
-                resultado.status_alvara, resultado.confianca === 'BAIXA', mudou, proc.id,
+                requisicao.tipo_requisicao, requisicao.status_rpv, requisicao.status_precatorio,
+                requisicao.status_alvara, resultado.confianca === 'BAIXA', mudou, proc.id,
               ]
             );
 
