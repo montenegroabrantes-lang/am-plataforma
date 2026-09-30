@@ -134,6 +134,20 @@ export async function iniciarWorkers() {
     }
   );
 
+  // R-01 (30/09/2026) — testa o GOOGLE_REFRESH_TOKEN todo dia às 8h de Brasília (renova de verdade,
+  // confere escopos drive+calendar) e alerta os masters por WhatsApp se estiver morto ou incompleto.
+  // Este job já nasce com `tz`; os demais crons seguem em UTC (A5-03, fora deste item).
+  await alertasQueue.add(
+    'verificar-token-google',
+    {},
+    {
+      repeat:           { pattern: '0 8 * * *', tz: 'America/Sao_Paulo' },
+      jobId:            'verificar-token-google-diario',
+      removeOnComplete: 3,
+      removeOnFail:     3,
+    }
+  );
+
   // Fase 3.3 do cronograma (20/09/2026) — reprocessa onboardings cuja sincronização com a
   // Camila falhou (indisponibilidade externa); a cada 15 min é frequente o bastante sem
   // martelar a API da Camila, e a operação já é idempotente (marcarSincronizacaoCamila).
@@ -164,7 +178,7 @@ export async function iniciarWorkers() {
     }
   );
 
-  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h), Alertas WhatsApp (08h), Ciclos Recorrentes (07h), Escalonamento de Véspera (8h30/16h), Reprocessamento de Sync Camila (15/15min) e Reprocessamento de Sync Drive (30/30min) iniciados.');
+  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h), Alertas WhatsApp (08h), Ciclos Recorrentes (07h), Escalonamento de Véspera (8h30/16h), Reprocessamento de Sync Camila (15/15min), Reprocessamento de Sync Drive (30/30min) e Teste do token Google (08h BRT) iniciados.');
 }
 
 // Dispara sync imediato de um processo — fila separada, não bloqueia pelo lote
