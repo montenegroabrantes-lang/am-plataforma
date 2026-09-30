@@ -2525,3 +2525,13 @@ prompt novo). `test:safe` e `test:continuidade` (224) verdes.
   os com 4+ arquivos (Brauney, Michelle, `e4d950be`, Ismania) precisam de um humano, e a Ismania
   segue sem retorno desde 30/09 12:57 (local).
 
+- **CORREÇÃO (30/09/2026, 14:00 local) — deploy da Camila no push:** o registro de 29/09 dizendo que o
+  serviço da Camila "não publica sozinho no push" está DESATUALIZADO/impreciso. Em 30/09 o push de
+  `e2485ca` (só documentos) iniciou sozinho o deploy `7afbff2e` (`SUCCESS`, `/health` ok), e o push
+  de `152c6be` também gerou um build próprio (`4027071b`) além do redeploy manual (`1d5df241`).
+  Após o push de `11bab3c` em 29/09 não apareceu build automático — causa não apurada (gatilho
+  pode ter sido ligado depois). Regra prática: **todo push na `main` da Camila pode reiniciar a
+  produção** — tratar push como deploy; conferir `railway deployment list` depois de cada um.
+  Consequência direta: os 3 commits locais da Camila (`c7ad344`, `ac28a45`, `d14a816`) entrarão em
+  produção no primeiro push que os incluir.
+
