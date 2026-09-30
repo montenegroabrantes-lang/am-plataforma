@@ -165,8 +165,9 @@ export async function criarOuBuscarContato(numero, nome) {
 // código do país (11 dígitos) como se já tivesse — e mandava pro número errado.
 export function normalizarNumeroWhatsapp(numero) {
   const digitos = String(numero ?? '').replace(/\D/g, '');
-  if (digitos.length === 10 || digitos.length === 11) return `55${digitos}`;
-  if ((digitos.length === 12 || digitos.length === 13) && digitos.startsWith('55')) return digitos;
+  // DDD não começa com 0: "0 83 ..." (fixo com o 0 do tronco) viraria um número errado.
+  if ((digitos.length === 10 || digitos.length === 11) && digitos[0] !== '0') return `55${digitos}`;
+  if ((digitos.length === 12 || digitos.length === 13) && digitos.startsWith('55') && digitos[2] !== '0') return digitos;
   return null;
 }
 

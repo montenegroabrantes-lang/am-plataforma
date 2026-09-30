@@ -75,7 +75,7 @@ test('normalizarNumeroWhatsapp: DDD 55 com 11 dígitos recebe o código do país
 });
 
 test('normalizarNumeroWhatsapp: rejeita o que não é telefone brasileiro', () => {
-  for (const ruim of [null, undefined, '', 'abc', '123', '123456789', '083912345678', '558391234567890', '1234567890123456']) {
+  for (const ruim of [null, undefined, '', 'abc', '123', '123456789', '083912345678', '08332145678', '550832145678', '558391234567890', '1234567890123456']) {
     assert.equal(normalizarNumeroWhatsapp(ruim), null, `deveria rejeitar ${JSON.stringify(ruim)}`);
   }
 });
