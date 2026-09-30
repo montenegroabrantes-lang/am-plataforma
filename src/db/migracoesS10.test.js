@@ -88,6 +88,18 @@ test('falha na limpeza propaga (a migração real não é marcada como feita e t
   assert.ok(!executadas.has('2026_10_S10_apagar_credencial_pje'));
 });
 
+test('falha só na auditoria também derruba a limpeza (senão o COMMIT viraria ROLLBACK em silêncio e a migração ficaria "feita" sem apagar nada)', async () => {
+  const { db, migrar, executadas } = ambiente();
+  db.transaction = async (fn) => fn({
+    async execute(sql) {
+      if (/INSERT INTO logs_auditoria/.test(sql)) throw new Error('auditoria indisponível');
+      return { rowCount: 1 };
+    },
+  });
+  await assert.rejects(aplicarMigracoesS10({ db, migrar, env: { APAGAR_CREDENCIAL_PJE_ATIVO: 'true' } }), /auditoria indisponível/);
+  assert.ok(!executadas.has('2026_10_S10_apagar_credencial_pje'));
+});
+
 // ── código: nada mais lê nem grava a senha/2FA/cookie do PJe ─────────────────
 const SRC = fileURLToPath(new URL('..', import.meta.url));
 function arquivosJs(dir) {
@@ -121,4 +133,14 @@ test('a separação de sócios do sync usa só o CPF de credenciais_tribunal (co
   assert.match(trecho, /JOIN credenciais_tribunal ct/);
   assert.match(trecho, /ct\.cpf = ANY/);
   assert.ok(!/senha|totp|cookie/i.test(trecho));
+});
+
+test('todo INSERT em publicacoes do código de produção passa o link por urlHttpsOuNulo (incluindo o serviço comunica.js, hoje sem chamador)', () => {
+  const sitios = arquivosJs(SRC).filter(arq => /INSERT INTO publicacoes/.test(readFileSync(arq, 'utf8')));
+  assert.ok(sitios.length >= 2);
+  for (const arq of sitios) {
+    const fonte = readFileSync(arq, 'utf8');
+    assert.ok(!/item\.link\s*\|\|\s*null/.test(fonte), `${path.relative(SRC, arq)} grava item.link cru`);
+    assert.ok(/urlHttpsOuNulo\(item\.link\)/.test(fonte), `${path.relative(SRC, arq)} não valida o link`);
+  }
 });

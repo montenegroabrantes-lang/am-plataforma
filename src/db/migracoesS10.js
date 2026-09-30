@@ -10,8 +10,6 @@
 //     pode rodar mais tarde, num deploy com a variável ligada. Roda uma única vez e grava auditoria
 //     (`apagar_credencial_tribunal`) só com a contagem, nunca com valores.
 //     O que for apagado NÃO volta pelo sistema (só pelos backups/PITR até saírem da rotação).
-import { registrarAuditoria } from '../middleware/auditoria.js';
-
 export const FLAG_APAGAR_CREDENCIAL_PJE = 'APAGAR_CREDENCIAL_PJE_ATIVO';
 
 export function apagarCredencialPjeLigado(env = process.env) {
@@ -31,10 +29,13 @@ export async function aplicarMigracoesS10({ db, migrar, env = process.env }) {
           SET senha_enc = NULL, totp_secret = NULL, sessao_cookie = NULL
         WHERE senha_enc IS NOT NULL OR totp_secret IS NOT NULL OR sessao_cookie IS NOT NULL`
     );
-    await registrarAuditoria({
-      acao: 'apagar_credencial_tribunal',
-      entidade: 'credenciais_tribunal',
-      valorDepois: { linhas_limpas: r?.rowCount ?? null },
-    }, tx);
+    // Auditoria na MESMA transação e SEM engolir erro (o registrarAuditoria engole): se o INSERT falhasse
+    // dentro do BEGIN, o COMMIT viraria ROLLBACK em silêncio e a migração ficaria marcada como feita sem ter apagado nada.
+    await tx.execute(
+      `INSERT INTO logs_auditoria (usuario_id, acao, entidade, entidade_id, valor_antes, valor_depois, ip)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [null, 'apagar_credencial_tribunal', 'credenciais_tribunal', null, null,
+       JSON.stringify({ linhas_limpas: r?.rowCount ?? null }), null]
+    );
   }));
 }
