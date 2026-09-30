@@ -50,6 +50,9 @@ import { auditar }    from './middleware/auditoria.js';
 import { cabecalhosSeguranca } from './middleware/cabecalhos.js';
 import { limiteLoginPorEmail } from './middleware/limiteLogin.js';
 import { limitesPorIpAtivos }  from './utils/tentativasLogin.js';
+import { tratadorGlobalDeErros } from './middleware/erros.js';
+import { auditoriaRouter } from './routes/auditoria.js';
+import { migrarAuditoriaAutor, protegerAuditoria } from './db/auditoriaMigracao.js';
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -143,16 +146,16 @@ app.use('/api/push-tj',       autenticar, pushTJRouter);
 app.use('/api/onboardings',   autenticar, onboardingsRouter);
 app.use('/api/chaves-api',    autenticar, chavesApiRouter);
 app.use('/api/acervo',        autenticar, acervoRouter);
+// Consulta da trilha de auditoria (somente leitura; apenasMaster01 dentro do router).
+app.use('/api/auditoria',     autenticar, auditoriaRouter);
 // Levantamento de re-protocolo (somente leitura): Master + escopo OAuth "reprotocolo" no conector.
 app.use('/api/reprotocolo',   autenticar, reprotocoloRouter);
 app.use('/mcp',               mcpRouter);
 app.use(oauthRouter); // /.well-known/*, /oauth/authorize, /oauth/token, /oauth/register — sem autenticar
 
-// Global error handler — captura erros não tratados nas rotas
-app.use((err, req, res, next) => {
-  console.error('[ERROR]', err.message, err.stack?.split('\n')[1]);
-  res.status(500).json({ ok: false, erro: err.message || 'Erro interno do servidor.' });
-});
+// Global error handler — captura erros não tratados nas rotas (S-22: 500 genérico com código de
+// correlação; a mensagem e a pilha vão só para o log, sem dados pessoais)
+app.use(tratadorGlobalDeErros);
 
 // Handlers globais — evitam derrubar o processo por erro não tratado
 process.on('unhandledRejection', (reason) => {
@@ -817,6 +820,13 @@ async function iniciar() {
     // S-10: senha do PJe deixa de ser obrigatória; apagar senha/2FA guardados só com a flag APAGAR_CREDENCIAL_PJE_ATIVO=true.
     await aplicarMigracoesS10({ db, migrar })
       .catch(e => console.warn('[Migration] S-10 credenciais_tribunal:', e.message));
+    // S-13 (30/09/2026): a auditoria guarda o retrato do autor (nome e e-mail no momento da ação) e
+    // a tabela passa a aceitar só INSERT. Duas migrações separadas: as colunas são obrigatórias (o
+    // INSERT do log depende delas: se falharem, o boot falha e a versão anterior segue no ar); a
+    // trava contra UPDATE/DELETE é defesa extra e, se falhar, só avisa.
+    await migrar('2026_10_S13_auditoria_autor', () => migrarAuditoriaAutor(db));
+    await migrar('2026_10_S13_auditoria_imutavel', () => protegerAuditoria(db))
+      .catch(e => console.warn('[Migration] Trava de UPDATE/DELETE em logs_auditoria:', e.message));
 
     // Chaves para integrações externas: guarda somente SHA-256, nunca o segredo em texto.
     await db.query(`CREATE TABLE IF NOT EXISTS chaves_api_externas (

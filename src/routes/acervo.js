@@ -3,6 +3,7 @@ import { db } from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { uuidValido, urlHttpsOuNulo } from '../utils/validacao.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
+import { registrarErroInterno, mensagemErroInterno } from '../middleware/erros.js';
 
 export const acervoRouter = Router();
 
@@ -49,7 +50,7 @@ async function gravarTeses(tipo, id, slugs) {
   await db.execute(`DELETE FROM ${tipo}_teses WHERE ${coluna}=$1`, [id]);
   await db.execute(`INSERT INTO ${tipo}_teses (${coluna}, tese_id) SELECT $1,id FROM teses_acervo WHERE slug=ANY($2::text[])`, [id, slugs]);
 }
-function erro(res, err) { res.status(err.status || 500).json({ ok: false, erro: err.status ? 'validacao' : 'interno', mensagem: err.message }); }
+function erro(res, err) { if (err.status) return res.status(err.status).json({ ok: false, erro: 'validacao', mensagem: err.message }); res.status(500).json({ ok: false, erro: 'interno', mensagem: mensagemErroInterno(registrarErroInterno(err, res.req)) }); }
 
 acervoRouter.get('/teses', async (_req, res) => res.json({ ok:true, teses: await db.query('SELECT slug,label,drive_folder_id FROM teses_acervo WHERE ativo=true ORDER BY label') }));
 

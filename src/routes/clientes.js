@@ -1,18 +1,16 @@
 import { Router }   from 'express';
-import multer        from 'multer';
-import { Readable }  from 'stream';
 import { db }        from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
-import { criarPastaCliente, criarSubpasta, uploadPdf } from '../services/drive/index.js';
+import { criarPastaCliente, criarSubpasta } from '../services/drive/index.js';
+import { documentosRouter } from './clientes.documentos.js';
 import { criarOuBuscarContato } from '../services/digisac/index.js';
 import { verificarElegibilidadeCliente } from '../services/elegibilidade.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { cpfValido } from '../utils/cpf.js';
 import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
+import { diferenca, resumirTelefone, resumirEmail } from '../utils/auditoriaCampos.js';
 import { somarDiasUteis } from '../utils/diasUteis.js';
-
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
 export const clientesRouter = Router();
 
@@ -216,24 +214,49 @@ clientesRouter.post('/:id/vinculos', async (req, res) => {
      VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
     [req.params.id, ordem, cargo||null, orgao||null, vinculo_inicio||null, vinculo_fim||null, polo_passivo||null, vinculo_ativo !== false]
   );
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'criar_vinculo', entidade: 'cliente', entidadeId: req.params.id,
+    valorDepois: { vinculo_id: novo.id, ordem, cargo: cargo||null, orgao: orgao||null, vinculo_inicio: vinculo_inicio||null, vinculo_fim: vinculo_fim||null, polo_passivo: polo_passivo||null, vinculo_ativo: vinculo_ativo !== false },
+    ip: req._ip,
+  });
   res.status(201).json({ ok: true, vinculo: novo });
 });
 
 // PATCH /api/clientes/:id/vinculos/:vid — edita vínculo funcional
 clientesRouter.patch('/:id/vinculos/:vid', async (req, res) => {
   const { cargo, orgao, vinculo_inicio, vinculo_fim, polo_passivo, vinculo_ativo } = req.body;
+  const antesVinculo = await db.queryOne(
+    `SELECT cargo, orgao, vinculo_inicio, vinculo_fim, polo_passivo, vinculo_ativo FROM cliente_vinculos WHERE id=$1 AND cliente_id=$2`,
+    [req.params.vid, req.params.id]
+  );
   await db.execute(
     `UPDATE cliente_vinculos SET cargo=$1, orgao=$2, vinculo_inicio=$3, vinculo_fim=$4,
      polo_passivo=$5, vinculo_ativo=$6 WHERE id=$7 AND cliente_id=$8`,
     [cargo||null, orgao||null, vinculo_inicio||null, vinculo_fim||null, polo_passivo||null, vinculo_ativo !== false, req.params.vid, req.params.id]
   );
+  if (antesVinculo) {
+    // Esta rota grava os 6 campos de uma vez (ausente = vazio): o log traz só o que de fato mudou.
+    const mudancas = diferenca(antesVinculo,
+      { cargo: cargo||null, orgao: orgao||null, vinculo_inicio: vinculo_inicio||null, vinculo_fim: vinculo_fim||null, polo_passivo: polo_passivo||null, vinculo_ativo: vinculo_ativo !== false },
+      ['cargo', 'orgao', 'vinculo_inicio', 'vinculo_fim', 'polo_passivo', 'vinculo_ativo']);
+    if (mudancas.mudou) {
+      await registrarAuditoria({
+        usuarioId: req.user.id, acao: 'editar_vinculo', entidade: 'cliente', entidadeId: req.params.id,
+        valorAntes: { vinculo_id: req.params.vid, ...mudancas.antes }, valorDepois: { vinculo_id: req.params.vid, ...mudancas.depois }, ip: req._ip,
+      });
+    }
+  }
   res.json({ ok: true });
 });
 
 // DELETE /api/clientes/:id/vinculos/:vid — remove vínculo funcional
 clientesRouter.delete('/:id/vinculos/:vid', async (req, res) => {
-  const r = await db.execute(`DELETE FROM cliente_vinculos WHERE id=$1 AND cliente_id=$2`, [req.params.vid, req.params.id]);
+  const r = await db.execute(`DELETE FROM cliente_vinculos WHERE id=$1 AND cliente_id=$2 RETURNING cargo, orgao, vinculo_inicio, vinculo_fim, polo_passivo, vinculo_ativo`, [req.params.vid, req.params.id]);
   if (r.rowCount === 0) return res.status(404).json({ ok: false, erro: 'Vínculo não encontrado.' });
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'excluir_vinculo', entidade: 'cliente', entidadeId: req.params.id,
+    valorAntes: { vinculo_id: req.params.vid, ...(r.rows?.[0] || {}) }, ip: req._ip,
+  });
   res.json({ ok: true });
 });
 
@@ -350,10 +373,29 @@ clientesRouter.patch('/:id', async (req, res) => {
 
   if (!updates.length) return res.status(400).json({ ok: false, erro: 'Nenhum campo para atualizar.' });
 
+  // S-13: retrato dos campos enviados antes de gravar, para o log trazer só o antes e o depois deles.
+  // (`camposEnviados` sai da lista fixa `campos`: nada vindo do cliente entra no SQL.)
+  const camposEnviados = campos.filter(c => req.body[c] !== undefined);
+  const antes = camposEnviados.length
+    ? await db.queryOne(`SELECT ${camposEnviados.join(', ')} FROM clientes WHERE id = $1`, [req.params.id])
+    : null;
+
   params.push(req.params.id);
   updates.push('atualizado_em = NOW()');
 
   await db.execute(`UPDATE clientes SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
+
+  if (antes || req.body.anotacoes !== undefined) {
+    const mudancas = diferenca(antes, req.body, camposEnviados, { resumir: { whatsapp: resumirTelefone, email: resumirEmail } });
+    // As anotações são cifradas (podem ter senha de portal do servidor): o log só marca que mudaram.
+    if (req.body.anotacoes !== undefined) mudancas.depois.anotacoes = '[alteradas]';
+    if (mudancas.mudou || req.body.anotacoes !== undefined) {
+      await registrarAuditoria({
+        usuarioId: req.user.id, acao: 'editar', entidade: 'cliente', entidadeId: req.params.id,
+        valorAntes: mudancas.antes, valorDepois: mudancas.depois, ip: req._ip,
+      });
+    }
+  }
 
   // Se atualizou cargo ou órgão, re-verificar elegibilidade
   if (req.body.cargo !== undefined || req.body.orgao !== undefined) {
@@ -365,74 +407,5 @@ clientesRouter.patch('/:id', async (req, res) => {
 });
 
 // ─── DOCUMENTOS ───────────────────────────────────────────────────────────────
-
-const CATS_VALIDAS = ['pessoais', 'vinculo', 'procuracao', 'outro'];
-
-// GET /api/clientes/:id/documentos
-clientesRouter.get('/:id/documentos', async (req, res) => {
-  const rows = await db.query(
-    `SELECT id, nome, categoria, drive_url, criado_em
-     FROM documentos WHERE cliente_id = $1 AND deletado = false
-     ORDER BY categoria, criado_em DESC`,
-    [req.params.id]
-  );
-  res.json({ ok: true, documentos: rows });
-});
-
-// POST /api/clientes/:id/documentos — upload PDF para o Drive
-clientesRouter.post('/:id/documentos', upload.single('arquivo'), async (req, res) => {
-  const clienteId = req.params.id;
-  const { categoria = 'outro', nome } = req.body;
-
-  if (!CATS_VALIDAS.includes(categoria)) {
-    return res.status(400).json({ ok: false, erro: 'Categoria inválida.' });
-  }
-  if (!req.file) {
-    return res.status(400).json({ ok: false, erro: 'Nenhum arquivo enviado.' });
-  }
-
-  const cliente = await db.queryOne(
-    `SELECT id, nome, cpf, drive_pasta_id FROM clientes WHERE id = $1`, [clienteId]
-  );
-  if (!cliente) return res.status(404).json({ ok: false, erro: 'Cliente não encontrado.' });
-
-  let pastaId = cliente.drive_pasta_id;
-  if (!pastaId) {
-    try {
-      const { id, url } = await criarPastaCliente(cliente.cpf || clienteId, cliente.nome);
-      pastaId = id;
-      await db.execute(`UPDATE clientes SET drive_pasta_id=$1, drive_pasta_url=$2 WHERE id=$3`, [id, url, clienteId]);
-    } catch (err) {
-      return res.status(500).json({ ok: false, erro: 'Criação de pasta falhou: ' + err.message });
-    }
-  }
-
-  const nomeArquivo = (nome || `${categoria}_${Date.now()}`).replace(/[^\w\-. ]/g, '_') + '.pdf';
-  let driveUrl = null, driveFileId = null;
-  try {
-    const stream    = Readable.from(req.file.buffer);
-    const uploaded  = await uploadPdf(pastaId, nomeArquivo, stream);
-    driveUrl        = uploaded.url;
-    driveFileId     = uploaded.id;
-  } catch (err) {
-    return res.status(500).json({ ok: false, erro: 'Upload falhou: ' + err.message });
-  }
-
-  const [doc] = await db.query(
-    `INSERT INTO documentos (cliente_id, nome, categoria, drive_file_id, drive_url)
-     VALUES ($1,$2,$3,$4,$5) RETURNING id, nome, categoria, drive_url, criado_em`,
-    [clienteId, nome || nomeArquivo, categoria, driveFileId, driveUrl]
-  );
-
-  res.status(201).json({ ok: true, documento: doc });
-});
-
-// DELETE /api/clientes/:id/documentos/:docId
-clientesRouter.delete('/:id/documentos/:docId', async (req, res) => {
-  const r = await db.execute(
-    `UPDATE documentos SET deletado = true WHERE id = $1 AND cliente_id = $2`,
-    [req.params.docId, req.params.id]
-  );
-  if (r.rowCount === 0) return res.status(404).json({ ok: false, erro: 'Documento não encontrado.' });
-  res.json({ ok: true });
-});
+// Upload, listagem e exclusão de PDFs do cliente (S-24): ver clientes.documentos.js.
+clientesRouter.use('/:id/documentos', documentosRouter);

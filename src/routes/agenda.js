@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { criarEventoCalendar, atualizarEventoCalendar } from '../services/calendar/index.js';
+import { registrarAuditoria } from '../middleware/auditoria.js';
+import { diferenca } from '../utils/auditoriaCampos.js';
 
 export const agendaRouter = Router();
 
@@ -51,6 +53,12 @@ agendaRouter.post('/', async (req, res) => {
     [processo_id, data_hora, tipo || null, vara || null, advogado_id || null]
   );
 
+  // S-13: quem cadastrou a audiência.
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'criar', entidade: 'audiencia', entidadeId: nova.id,
+    valorDepois: { processo_id, data_hora, tipo: tipo || null, vara: vara || null, advogado_id: advogado_id || null }, ip: req._ip,
+  });
+
   // Cria evento no Google Calendar em background
   criarEventoCalendar({
     titulo:    `Audiência — ${processo.numero} (${processo.cliente_nome || 'cliente'})`,
@@ -89,8 +97,20 @@ agendaRouter.patch('/:id', async (req, res) => {
 
   if (!updates.length) return res.status(400).json({ ok: false, erro: 'Nenhum campo para atualizar.' });
 
+  // S-13: retrato dos campos enviados (nomes fixos do objeto acima) para o log trazer só o que mudou.
+  const camposEnviados = Object.keys(campos).filter(c => campos[c] !== undefined);
+  const antes = await db.queryOne(`SELECT ${camposEnviados.join(', ')} FROM audiencias WHERE id = $1`, [req.params.id]);
+
   params.push(req.params.id);
   await db.execute(`UPDATE audiencias SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
+
+  const mudancas = diferenca(antes, campos, camposEnviados);
+  if (antes && mudancas.mudou) {
+    await registrarAuditoria({
+      usuarioId: req.user.id, acao: 'editar', entidade: 'audiencia', entidadeId: req.params.id,
+      valorAntes: mudancas.antes, valorDepois: mudancas.depois, ip: req._ip,
+    });
+  }
 
   // Atualiza no Google Calendar se houver event_id
   const aud = await db.queryOne('SELECT google_event_id FROM audiencias WHERE id = $1', [req.params.id]);

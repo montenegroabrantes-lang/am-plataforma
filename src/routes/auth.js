@@ -55,9 +55,10 @@ authRouter.post('/login', async (req, res) => {
   );
 
   if (!user || !(await bcrypt.compare(senha, user.senha_hash))) {
+    // S-13: registra a origem e o e-mail tentado (com o usuário, quando a conta existe)
     await registrarAuditoria({
-      acao: 'login_falhou', entidade: 'usuario',
-      valorDepois: { origem: 'login', email_tentado: normalizarEmailTentado(email) }, ip: req._ip,
+      usuarioId: user?.id, acao: 'login_falhou', entidade: 'usuario',
+      valorDepois: { origem: 'senha', email_tentado: String(email).toLowerCase().trim().slice(0, 254) }, ip: req._ip,
     });
     return res.status(401).json({ ok: false, erro: 'Credenciais inválidas.' });
   }
@@ -71,7 +72,13 @@ authRouter.post('/login', async (req, res) => {
   if (user.totp_ativo) {
     if (!totp) return res.status(200).json({ ok: false, requer_totp: true });
     const valid = authenticator.verify({ token: totp, secret: user.totp_secret });
-    if (!valid) return res.status(401).json({ ok: false, erro: 'Código 2FA inválido.' });
+    if (!valid) {
+      await registrarAuditoria({
+        usuarioId: user.id, acao: 'login_falhou', entidade: 'usuario',
+        valorDepois: { origem: 'senha', motivo: '2fa_invalido' }, ip: req._ip,
+      });
+      return res.status(401).json({ ok: false, erro: 'Código 2FA inválido.' });
+    }
   }
 
   const payload = {
@@ -128,6 +135,10 @@ authRouter.post('/trocar-senha', async (req, res) => {
     'UPDATE usuarios SET senha_hash = $1, senha_temporaria = false, ultimo_acesso = NOW() WHERE id = $2',
     [hash, userId]
   );
+  await registrarAuditoria({
+    usuarioId: user.id, acao: 'trocar_senha', entidade: 'usuario', entidadeId: user.id,
+    valorDepois: { origem: 'primeiro_acesso' }, ip: req._ip,
+  });
   res.json({ ok: true, mensagem: 'Senha atualizada.' });
 });
 
@@ -136,6 +147,7 @@ authRouter.get('/2fa/setup', autenticar, async (req, res) => {
   const secret = authenticator.generateSecret();
   const otpauth = authenticator.keyuri(req.user.email, 'AM Advogados', secret);
   await db.execute('UPDATE usuarios SET totp_secret = $1 WHERE id = $2', [secret, req.user.id]);
+  await registrarAuditoria({ usuarioId: req.user.id, acao: 'configurar_2fa', entidade: 'usuario', entidadeId: req.user.id, ip: req._ip });
   res.json({ ok: true, secret, otpauth });
 });
 
@@ -158,6 +170,7 @@ authRouter.post('/2fa/ativar', autenticar, async (req, res) => {
     'UPDATE usuarios SET totp_ativo = true, totp_codigos_recuperacao = $1 WHERE id = $2',
     [codigos, user.id]
   );
+  await registrarAuditoria({ usuarioId: user.id, acao: 'ativar_2fa', entidade: 'usuario', entidadeId: user.id, ip: req._ip });
 
   res.json({ ok: true, codigos_recuperacao: codigos });
 });

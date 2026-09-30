@@ -9,6 +9,7 @@ import { vinculoUnicoAtivo } from '../utils/vinculos.js';
 import { resolverTribunalCnj } from '../utils/cnj.js';
 import { resolverPeriodoProtocolo } from '../utils/periodoProtocolo.js';
 import { confirmacaoExigida, semConfirmacaoValida } from '../services/reprotocolo/verificacao.js';
+import { daTabela } from '../utils/tabelaSegura.js';
 
 export const tarefasRouter = Router();
 
@@ -105,7 +106,7 @@ tarefasRouter.get('/', async (req, res) => {
     concluida: () => condicoes.push(`t.status='concluida'`),
     cancelada: () => condicoes.push(`t.status='cancelada'`),
   };
-  if (fila && filas[fila]) filas[fila]();
+  if (fila && daTabela(filas, fila)) filas[fila]();
   else if (fila) return res.status(400).json({ ok: false, erro: 'Fila de tarefas inválida.' });
 
   if (triagem_motivo) {
@@ -115,7 +116,7 @@ tarefasRouter.get('/', async (req, res) => {
       sem_prazo: `t.prazo_data IS NULL AND t.tipo IN ('prazo','prazo_pagamento','protocolar','demanda','assinatura','diligencia')`,
       sem_tese: `t.processo_id IS NOT NULL AND COALESCE(pr.id,opr.id,ppr.id) IS NULL`,
     };
-    if (fila !== 'triagem' || !motivos[triagem_motivo]) {
+    if (fila !== 'triagem' || !daTabela(motivos, triagem_motivo)) {
       return res.status(400).json({ ok: false, erro: 'Motivo de triagem inválido.' });
     }
     condicoes.push(`(${motivos[triagem_motivo]})`);
@@ -129,7 +130,7 @@ tarefasRouter.get('/', async (req, res) => {
       administrativas: `t.processo_id IS NULL AND t.publicacao_id IS NULL AND t.onboarding_id IS NULL`,
       manuais: `t.tipo='geral' AND t.publicacao_id IS NULL AND t.onboarding_id IS NULL`,
     };
-    if (!origens[origem]) return res.status(400).json({ ok: false, erro: 'Origem de tarefa inválida.' });
+    if (!daTabela(origens, origem)) return res.status(400).json({ ok: false, erro: 'Origem de tarefa inválida.' });
     condicoes.push(`(${origens[origem]})`);
   }
 
@@ -141,7 +142,7 @@ tarefasRouter.get('/', async (req, res) => {
       sete_dias: `t.prazo_data BETWEEN CURRENT_DATE AND CURRENT_DATE + INTERVAL '7 days' AND t.status NOT IN ('concluida','cancelada')`,
       sem_prazo: `t.prazo_data IS NULL AND t.status NOT IN ('concluida','cancelada')`,
     };
-    if (!horizontes[horizonte]) return res.status(400).json({ ok: false, erro: 'Período de tarefa inválido.' });
+    if (!daTabela(horizontes, horizonte)) return res.status(400).json({ ok: false, erro: 'Período de tarefa inválido.' });
     condicoes.push(`(${horizontes[horizonte]})`);
   }
 
@@ -437,7 +438,7 @@ tarefasRouter.get('/resumo-teses', async (req, res) => {
     )`); },
     concluida: () => condicoes.push(`t.status='concluida'`),
   };
-  if (!filas[fila]) return res.status(400).json({ ok: false, erro: 'Fila de tarefas inválida.' });
+  if (!daTabela(filas, fila)) return res.status(400).json({ ok: false, erro: 'Fila de tarefas inválida.' });
   filas[fila]();
 
   if (status && status !== 'abertas' && fila !== 'concluida') {
@@ -451,7 +452,7 @@ tarefasRouter.get('/resumo-teses', async (req, res) => {
     manuais: `t.tipo='geral' AND t.publicacao_id IS NULL AND t.onboarding_id IS NULL`,
   };
   if (origem) {
-    if (!origens[origem]) return res.status(400).json({ ok: false, erro: 'Origem de tarefa inválida.' });
+    if (!daTabela(origens, origem)) return res.status(400).json({ ok: false, erro: 'Origem de tarefa inválida.' });
     condicoes.push(`(${origens[origem]})`);
   }
   const horizontes = {
@@ -462,7 +463,7 @@ tarefasRouter.get('/resumo-teses', async (req, res) => {
     sem_prazo: `t.prazo_data IS NULL AND t.status NOT IN ('concluida','cancelada')`,
   };
   if (horizonte) {
-    if (!horizontes[horizonte]) return res.status(400).json({ ok: false, erro: 'Período de tarefa inválido.' });
+    if (!daTabela(horizontes, horizonte)) return res.status(400).json({ ok: false, erro: 'Período de tarefa inválido.' });
     condicoes.push(`(${horizontes[horizonte]})`);
   }
   if (cliente_id) { params.push(cliente_id); condicoes.push(`COALESCE(cl.id,tc.id,oc.id,pc.id)=$${params.length}`); }

@@ -7,6 +7,11 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import express from 'express';
 import { estimativasRouter } from './estimativas.js';
+import { db } from '../db/index.js';
+
+// S-13: o router agora grava auditoria das escritas. Esta dublê garante que nenhuma gravação chegue a
+// um banco de verdade (o `.env` local pode apontar para um).
+db.execute = async () => ({ rowCount: 1 });
 
 let camilaFalsa, portaCamila, servidorApp, portaApp;
 let recebidas = [];

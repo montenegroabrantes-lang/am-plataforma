@@ -25,8 +25,13 @@ import {
   parseValorBR, numeroPositivo, completarVinculos, avaliarFaixa, respostaForaDaFaixa,
   referenciaDaEstimativa, referenciaDosVinculos,
 } from '../utils/conferenciaProposta.js';
+import { auditarEstimativas } from './estimativas.auditoria.js';
+import { responderErro } from '../middleware/erros.js';
 
 export const estimativasRouter = Router();
+
+// S-13: toda escrita deste router que terminar com sucesso entra na trilha de auditoria.
+estimativasRouter.use(auditarEstimativas);
 
 const semConfig = res => res.status(503).json({
   ok: false, erro: 'Integração com a Camila não configurada (CAMILA_API_URL / CAMILA_API_KEY).',
@@ -562,7 +567,7 @@ estimativasRouter.post('/leads/:contactId/desfecho', apenasMaster, async (req, r
         ip: req._ip,
       });
     } catch (err) {
-      return res.status(err.status || 500).json({ ok: false, erro: err.message, detalhes: err.detalhes });
+      return responderErro(res, err);
     }
 
     try {
@@ -633,7 +638,7 @@ estimativasRouter.post('/onboarding-manual', apenasMaster, async (req, res) => {
     });
     res.status(201).json({ ok: true, onboarding: registro });
   } catch (err) {
-    res.status(err.status || 500).json({ ok: false, erro: err.message, detalhes: err.detalhes });
+    responderErro(res, err);
   }
 });
 
@@ -646,7 +651,7 @@ estimativasRouter.post('/onboardings/:id/sincronizar-camila', apenasMaster, asyn
     await sincronizarOnboardingComCamila(req.params.id, req.user?.nome || req.user?.email || req.user?.id);
     res.json({ ok: true });
   } catch (err) {
-    res.status(err.status || 500).json({ ok: false, erro: err.message });
+    responderErro(res, err);
   }
 });
 
@@ -660,7 +665,7 @@ estimativasRouter.post('/onboardings/:id/sincronizar-drive', apenasMaster, async
     await sincronizarDriveOnboarding(req.params.id);
     res.json({ ok: true });
   } catch (err) {
-    res.status(err.status || 500).json({ ok: false, erro: err.message });
+    responderErro(res, err);
   }
 });
 
@@ -684,7 +689,7 @@ estimativasRouter.delete('/leads/:contactId/desfecho', apenasMaster, async (req,
     try {
       await cancelarOnboardingPendente(req.params.contactId, req.user.id, req._ip);
     } catch (err) {
-      return res.status(err.status || 500).json({ ok: false, erro: err.message });
+      return responderErro(res, err);
     }
   }
   try {

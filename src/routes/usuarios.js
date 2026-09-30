@@ -126,6 +126,11 @@ usuariosRouter.patch('/:id/senha', apenasMaster, async (req, res) => {
 
   const hash = await bcrypt.hash(senha, 12);
   await db.execute('UPDATE usuarios SET senha_hash = $1 WHERE id = $2', [hash, req.params.id]);
+  // S-13: quem redefiniu a senha de quem (a senha nunca vai para o log)
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'redefinir_senha', entidade: 'usuario', entidadeId: req.params.id,
+    valorDepois: { propria: req.params.id === req.user.id }, ip: req._ip,
+  });
   res.json({ ok: true });
 });
 
@@ -136,11 +141,20 @@ usuariosRouter.delete('/:id', apenasMaster, async (req, res) => {
   if (!alvo) return res.status(404).json({ ok: false, erro: 'Usuário não encontrado.' });
   if (alvo.id === req.user.id) return res.status(400).json({ ok: false, erro: 'Não é possível excluir a própria conta.' });
 
+  // S-13 / D-S3: quem já tem registro na trilha de auditoria (todo usuário que já entrou tem o
+  // `login`) não é excluído: o autor não pode ser apagado do log, e o log agora só aceita INSERT.
+  // A conta é desativada, o que tira o acesso do mesmo jeito. A exclusão fica para conta sem uso.
+  const historico = await db.queryOne('SELECT 1 AS existe FROM logs_auditoria WHERE usuario_id = $1 LIMIT 1', [req.params.id]);
+  if (historico) {
+    return res.status(409).json({ ok: false, erro: 'Este usuário tem histórico de ações no sistema e não pode ser excluído. Desative a conta em vez de excluir.' });
+  }
+
   // Tudo numa única transação: as anulações de FK, a exclusão e o log de
   // auditoria caem juntos ou nenhum cai -- antes, uma queda no meio (ex.: pool
   // sem conexão livre) podia deixar FKs anuladas com o usuário ainda existindo,
   // ou excluir o usuário e perder o registro de quem fez a exclusão.
   const uid = req.params.id;
+  let vinculado = false;
   await db.transaction(async (tx) => {
     await Promise.all([
       tx.execute(`UPDATE tarefas        SET atribuido_a           = NULL WHERE atribuido_a           = $1`, [uid]),
@@ -155,7 +169,6 @@ usuariosRouter.delete('/:id', apenasMaster, async (req, res) => {
       tx.execute(`UPDATE documentos     SET enviado_por           = NULL WHERE enviado_por           = $1`, [uid]),
       tx.execute(`UPDATE leads          SET master_responsavel_id = NULL WHERE master_responsavel_id = $1`, [uid]),
       tx.execute(`UPDATE leads          SET atribuido_a           = NULL WHERE atribuido_a           = $1`, [uid]),
-      tx.execute(`UPDATE logs_auditoria SET usuario_id            = NULL WHERE usuario_id            = $1`, [uid]),
       tx.execute(`UPDATE audiencias     SET advogado_id           = NULL WHERE advogado_id           = $1`, [uid]),
       tx.execute(`UPDATE pecas          SET aprovada_por          = NULL WHERE aprovada_por          = $1`, [uid]),
       tx.execute(`UPDATE honorarios     SET master_responsavel_id = NULL WHERE master_responsavel_id = $1`, [uid]),
@@ -166,7 +179,14 @@ usuariosRouter.delete('/:id', apenasMaster, async (req, res) => {
 
     await tx.execute('DELETE FROM usuarios WHERE id = $1', [uid]);
     await registrarAuditoria({ usuarioId: req.user.id, acao: 'excluir', entidade: 'usuario', entidadeId: uid, valorAntes: alvo, ip: req._ip }, tx);
+  }).catch((e) => {
+    // Ainda há registro que aponta para este usuário (ex.: chave de API): o Postgres recusa a exclusão.
+    if (e.code !== '23503') throw e;
+    vinculado = true;
   });
+  if (vinculado) {
+    return res.status(409).json({ ok: false, erro: 'Este usuário está ligado a outros registros do sistema e não pode ser excluído. Desative a conta em vez de excluir.' });
+  }
 
   res.json({ ok: true });
 });

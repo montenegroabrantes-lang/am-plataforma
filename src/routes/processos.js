@@ -7,6 +7,10 @@ import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } f
 import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
 import { extrairIdProcessoPje, obterAcessoTribunal } from '../services/acessoTribunal.js';
 import { preservarRequisicaoManual } from '../services/ai/tasks/classificacao.js';
+import { daTabela } from '../utils/tabelaSegura.js';
+import { erroInterno } from '../middleware/erros.js';
+import { celulaCsv } from '../utils/csv.js';
+import { diferenca } from '../utils/auditoriaCampos.js';
 
 export const processosRouter = Router();
 
@@ -67,14 +71,14 @@ processosRouter.get('/', async (req, res) => {
   if (tipo_requisicao)       { params.push(tipo_requisicao);       condicoes.push(`AND p.tipo_requisicao = $${params.length}`); }
   if (produto_id)            { params.push(produto_id);            condicoes.push(`AND p.produto_id = $${params.length}`); }
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
-  if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
+  if (daTabela(FILTROS_PERIODO, periodo)) condicoes.push(FILTROS_PERIODO[periodo]);
   if (etapa) {
     // etapa_atual é texto livre (gerado pela IA) e nunca é igual a um rótulo fixo de
     // ETAPA_WHERE — o fallback abaixo só entra quando `etapa` é uma etapa customizada
     // (salva via /api/processos/etapas-custom), que não tem entrada em ETAPA_WHERE.
     // Só empurra o parâmetro quando o fallback de fato o usa, senão o bind do
     // Postgres quebra por parâmetro sobrando sem placeholder correspondente.
-    if (ETAPA_WHERE[etapa]) {
+    if (daTabela(ETAPA_WHERE, etapa)) {
       condicoes.push(`AND ${ETAPA_WHERE[etapa]}`);
     } else {
       params.push(etapa);
@@ -198,7 +202,7 @@ function construirFiltrosExportar(query, user) {
     // (salva via /api/processos/etapas-custom), que não tem entrada em ETAPA_WHERE.
     // Só empurra o parâmetro quando o fallback de fato o usa, senão o bind do
     // Postgres quebra por parâmetro sobrando sem placeholder correspondente.
-    if (ETAPA_WHERE[etapa]) {
+    if (daTabela(ETAPA_WHERE, etapa)) {
       condicoes.push(`AND ${ETAPA_WHERE[etapa]}`);
     } else {
       params.push(etapa);
@@ -213,7 +217,7 @@ function construirFiltrosExportar(query, user) {
     condicoes.push(`AND EXTRACT(DAY FROM NOW() - (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id)) >= $${params.length}`);
   }
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
-  if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
+  if (daTabela(FILTROS_PERIODO, periodo)) condicoes.push(FILTROS_PERIODO[periodo]);
   if (movimentacao_pendente === 'true') condicoes.push(`AND p.requer_revisao = true`);
   if (cessao === 'true') condicoes.push(`AND EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id)`);
   if (busca) {
@@ -280,7 +284,7 @@ processosRouter.get('/exportar-excel', async (req, res) => {
   );
 
   const colunas = ['Número', 'Cliente', 'CPF', 'Situação', 'Tribunal', 'Vara', 'Polo Passivo', 'Urgente', 'Cessão de Crédito', 'Distribuição', 'Última Movimentação'];
-  const escapar = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const escapar = celulaCsv; // S-25: neutraliza células que começam como fórmula (= + - @)
   const linhas = rows.map(r => [
     r.numero, r.cliente_nome, r.cliente_cpf, formatarSituacao(r.situacao_atual), r.tribunal, r.vara,
     r.polo_passivo, r.urgente ? 'Sim' : 'Não', r.tem_cessao ? 'Sim' : 'Não',
@@ -376,8 +380,7 @@ processosRouter.post('/etapas-custom', async (req, res) => {
     }
     res.json({ ok: true, opcoes });
   } catch (err) {
-    console.error('[etapas-custom POST]', err.message);
-    res.status(500).json({ ok: false, erro: err.message });
+    erroInterno(res, err);
   }
 });
 
@@ -606,6 +609,13 @@ processosRouter.patch('/:id', async (req, res) => {
 
   if (updates.length === 0) return res.status(400).json({ ok: false, erro: 'Nenhum campo para atualizar.' });
 
+  // S-13: retrato dos campos que vão mudar, para o log trazer só o antes e o depois deles. Os nomes
+  // das colunas saem dos próprios `updates` montados acima (literais do código, nada do cliente), e
+  // os valores são os de fato gravados (ex.: o id extraído de `pje_id_processo`).
+  const gravados = Object.fromEntries(updates.map(u => { const [campo, marca] = u.split(' = $'); return [campo, params[Number(marca) - 1]]; }));
+  const camposGravados = Object.keys(gravados);
+  const antes = await db.queryOne(`SELECT ${camposGravados.join(', ')} FROM processos WHERE id = $1`, [req.params.id]);
+
   params.push(req.params.id);
   updates.push(`atualizado_em = NOW()`);
 
@@ -613,6 +623,15 @@ processosRouter.patch('/:id', async (req, res) => {
     `UPDATE processos SET ${updates.join(', ')} WHERE id = $${params.length}`,
     params
   );
+
+  // `notas` é texto livre: o log só marca que mudou. O resto entra com antes e depois.
+  const mudancas = diferenca(antes, gravados, camposGravados, { ocultar: ['notas'] });
+  if (mudancas.mudou) {
+    await registrarAuditoria({
+      usuarioId: req.user.id, acao: 'editar', entidade: 'processo', entidadeId: req.params.id,
+      valorAntes: mudancas.antes, valorDepois: mudancas.depois, ip: req._ip,
+    });
+  }
 
   res.json({ ok: true });
 });
@@ -661,8 +680,7 @@ processosRouter.post('/sync-todos', apenasMaster, async (req, res) => {
     const fail = resultado.filter(r => !r.ok).length;
     res.json({ ok: true, total: resultado.length, sincronizados: ok, falhas: fail });
   } catch (err) {
-    console.error('[Sync todos]', err.message);
-    res.status(500).json({ ok: false, erro: err.message });
+    erroInterno(res, err);
   }
 });
 
@@ -682,8 +700,7 @@ processosRouter.post('/:id/sync', async (req, res) => {
     const resultado = await sincronizarProcesso(id);
     res.json({ ok: true, ...resultado });
   } catch (err) {
-    console.error('[Sync individual]', err.message);
-    res.status(500).json({ ok: false, erro: err.message });
+    erroInterno(res, err);
   }
 });
 
@@ -693,10 +710,15 @@ processosRouter.patch('/:id/urgente', async (req, res) => {
   if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
 
   const { urgente } = req.body;
+  const antes = await db.queryOne('SELECT urgente FROM processos WHERE id = $1', [req.params.id]);
   await db.execute(
     `UPDATE processos SET urgente = $1, classificado_por = $2, classificado_em = NOW(), atualizado_em = NOW() WHERE id = $3`,
     [!!urgente, req.user.id, req.params.id]
   );
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'urgente', entidade: 'processo', entidadeId: req.params.id,
+    valorAntes: { urgente: !!antes?.urgente }, valorDepois: { urgente: !!urgente }, ip: req._ip,
+  });
   res.json({ ok: true });
 });
 
@@ -1002,7 +1024,7 @@ processosRouter.post('/completar-polos/reset', apenasMaster, async (req, res) =>
     await redis.del('polos:progress');
     res.json({ ok: true, mensagem: 'Flag de polos resetado.' });
   } catch (err) {
-    res.status(500).json({ ok: false, erro: err.message });
+    erroInterno(res, err);
   }
 });
 
@@ -1201,8 +1223,7 @@ processosRouter.delete('/:id', apenasMaster, async (req, res) => {
     await db.execute('UPDATE tarefas SET processo_id = NULL WHERE processo_id = $1', [pid]).catch(e => console.error('[DEL] tarefas:', e.message));
     await db.execute('DELETE FROM processos WHERE id = $1', [pid]);
   } catch(e) {
-    console.error('[DEL] ERRO FINAL:', e.message);
-    return res.status(500).json({ ok: false, erro: e.message });
+    return erroInterno(res, e);
   }
 
   await registrarAuditoria({

@@ -31,6 +31,7 @@ import { authenticator } from 'otplib';
 import { db } from '../db/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { normalizarEmailTentado, tentativasLogin, limitesPorIpAtivos } from '../utils/tentativasLogin.js';
+import { registrarErroInterno } from '../middleware/erros.js';
 import { CONTA_SERVICO_EMAIL, ESCOPOS, ESCOPOS_PADRAO, ESCOPOS_VALIDOS, normalizarEscopos } from './escopos.js';
 import { lerRedirectsPermitidos, redirectPermitido, fontesFormAction, hostDoRetorno } from './redirects.js';
 

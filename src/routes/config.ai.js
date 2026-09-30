@@ -7,6 +7,9 @@ import { encrypt } from '../utils/crypto.js';
 import { recarregarAiConfig } from '../config/ai.js';
 import { apenasMaster } from '../middleware/auth.js';
 import axios from 'axios';
+import { erroInterno } from '../middleware/erros.js';
+import { registrarAuditoria } from '../middleware/auditoria.js';
+import { diferenca } from '../utils/auditoriaCampos.js';
 
 export const configAiRouter = Router();
 
@@ -20,7 +23,7 @@ configAiRouter.get('/', async (req, res) => {
     rows.forEach(r => { config[r.chave] = r.valor; });
     res.json({ ok: true, config });
   } catch (e) {
-    res.status(500).json({ ok: false, erro: e.message });
+    erroInterno(res, e);
   }
 });
 
@@ -45,6 +48,11 @@ configAiRouter.post('/', async (req, res) => {
   ];
 
   try {
+    // S-13: valores anteriores das chaves que serão gravadas (para o log trazer só o que mudou)
+    const anteriores = await db.query(
+      `SELECT chave, valor FROM configuracoes WHERE categoria = 'ia' AND chave = ANY($1::text[])`,
+      [pares.map(p => p.chave)]
+    );
     // UPSERT — insere ou atualiza cada par
     for (const { chave, valor } of pares) {
       await db.query(
@@ -59,9 +67,19 @@ configAiRouter.post('/', async (req, res) => {
     // Recarrega o aiConfig em memória sem reiniciar o servidor
     await recarregarConfigAI();
 
+    const mudancas = diferenca(
+      Object.fromEntries(anteriores.map(r => [r.chave, r.valor])),
+      Object.fromEntries(pares.map(p => [p.chave, p.valor])),
+      pares.map(p => p.chave)
+    );
+    await registrarAuditoria({
+      usuarioId: req.user.id, acao: 'alterar_config_ia', entidade: 'configuracao',
+      valorAntes: mudancas.antes, valorDepois: mudancas.depois, ip: req._ip,
+    });
+
     res.json({ ok: true, mensagem: 'Configurações salvas com sucesso.' });
   } catch (e) {
-    res.status(500).json({ ok: false, erro: e.message });
+    erroInterno(res, e);
   }
 });
 
@@ -136,6 +154,12 @@ configAiRouter.post('/camila', async (req, res) => {
     if (payload.openai_modelo          && !MODELOS_OPENAI.includes(payload.openai_modelo))          delete payload.openai_modelo;
     const { data } = await axios.post(`${url}/admin/ia-config`, payload, {
       headers: { 'x-admin-secret': secret || '', 'Content-Type': 'application/json' }, timeout: 5000,
+    });
+    // S-13: só escalares curtos (rotas e modelos de IA) vão para o log
+    await registrarAuditoria({
+      usuarioId: req.user.id, acao: 'alterar_config_ia_camila', entidade: 'configuracao',
+      valorDepois: Object.fromEntries(Object.entries(req.body || {}).filter(([, v]) => typeof v === 'boolean' || typeof v === 'number' || (typeof v === 'string' && v.length <= 60))),
+      ip: req._ip,
     });
     res.json(data);
   } catch (err) {
