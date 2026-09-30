@@ -1,6 +1,6 @@
 # Contexto permanente — Sistema AM
 
-**Última atualização:** 28/09/2026 (Camila: sem transferência ao Jurídico por outro advogado/sindicato, prazo 6 a 11 meses, trava do fechamento genérico; worker de backup corrigido e publicado — ver as seções de 28/09/2026 no fim)
+**Última atualização:** 30/09/2026 (Camila: prazo e documentos publicados; 29/09: consulta oficial PB/PE agora roda no navegador; Camila: acuse curto após valor+PDF passa a conduzir aos documentos — ver seção de 29/09/2026 no fim; antes, 28/09/2026 — Camila: sem transferência ao Jurídico por outro advogado/sindicato, prazo 6 a 11 meses, trava do fechamento genérico; worker de backup corrigido e publicado — ver as seções de 28/09/2026 no fim)
 **Finalidade:** continuidade segura do desenvolvimento em outros chats e sessões.
 
 Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
@@ -2284,3 +2284,244 @@ prompt novo). `test:safe` e `test:continuidade` (224) verdes.
   (API e workers rodam juntos em `node src/index.js`); (3) se o `pg_dump` nem iniciar (ENOENT), o
   gzip pode ficar vivo esperando stdin — na falha, matar o outro processo. Sugestão: tornar o gzip
   injetável como o `comando`, cobrir os 3 casos em `backup.worker.test.js` e conferir o backup das 2h.
+  (4) `npm test` (`node --test`) nunca encerra quando o Redis não é alcançável: `backup.worker.test.js`
+  importa `backup.worker.js`, que importa `src/cache/redis.js`, que cria a conexão ioredis no próprio
+  import e fica reconectando para sempre ("[Redis] Erro:" em loop; o teste passa 4/4, mas o processo
+  trava — observado por 38 min). Sugestão: mover `gerarDumpComprimido`/`backupTemTamanhoPlausivel` para
+  um arquivo sem imports de redis/db, ou chamar `redis.disconnect()` num `after()` do teste.
+
+### 29/09/2026 — Camila: "Ok" logo após a proposta não trava mais a venda
+
+- **Caso real:** Samuel Amorim da Silva (contact `7174f833`, estimativa 149, R$ 12.474,87,
+  entrega imediata, `conduzir_ate=documentos`). Valor + PDF saíram às 16:51:32 UTC; o cliente
+  respondeu "Ok" às 16:51:48. Esse "Ok" cancelou a abordagem `pos_proposta` agendada para +40s
+  (`abordagens_contextuais`, `motivo=cliente_respondeu`) e, em seguida, foi silenciado por
+  `camila/encerramento-social.js` (acuse curto + última fala da Camila sem "?"). Nenhum erro:
+  as duas regras contavam uma com a outra e a venda parou sem condução.
+- **Correção (Camila, `server.js`):** `enviarPropostaImediata` marca `estado.aguardandoFechamento`
+  (quando não há passagem ao atendente). A primeira mensagem seguinte consome a marca: não é
+  silenciada como cortesia e, se for só um acuse ("ok", "certo", "obrigado"...), a IA recebe o
+  contexto `FECHAMENTO_POS_PROPOSTA` — tom elegante e acolhedor, sem exclamações, abre perguntando
+  se o cliente conseguiu verificar a proposta (única pergunta), lista numerada um por linha
+  (1. identidade com foto RG/CNH, 2. CPF, 3. comprovante de residência, 4. último contracheque),
+  fecha pedindo envio em foto ou PDF e inclui `[ACAO:SOLICITAR_DOCS]`. Log: `[FECHAMENTO]`.
+- **Validação:** `test:continuidade` 226/226 e `test:safe` sem falhas. Texto final depende da IA —
+  não houve teste com conversa real.
+- **Publicação:** commits `b35fd1a`, `7e671f9`, `3420cd6`, `11bab3c` (push só deles por refspec;
+  os 3 commits locais da `main` da Camila — `c7ad344`, `ac28a45`, `d14a816` — seguem NÃO
+  publicados). Deploy Railway `1644cd06-abb2-4fc5-b241-bc9bb6a0f225` `SUCCESS` (disparado pelo
+  usuário com `railway redeploy --from-source`). `/health` 200 durante e após o build.
+- **Atenção operacional:** o serviço da Camila no Railway **não publica sozinho no push** — é
+  preciso `railway redeploy --from-source` (passando `-p/-e/-s` se rodar fora da pasta da Camila,
+  que é a única vinculada a esse projeto).
+- **Pendente:** (1) o Samuel ainda não recebeu o pedido de documentos — a correção não age
+  retroativamente; enviar pela equipe no Digisac (texto combinado no chat de 29/09) ou aguardar a
+  retomada de 48h; (2) confirmar o log `[FECHAMENTO]` no primeiro caso real.
+
+### 29/09/2026 (tarde) — Consulta oficial PB/PE (aba Estimativas) passa a rodar no navegador
+
+- **Problema:** o botão "Consultar fonte oficial" chamava `GET /api/estimativas/:id/referencia-estadual`,
+  que consulta as folhas de PB e PE mês a mês (60 competências) a partir do backend no Railway
+  (us-west2). Estimativa 150 (PE) deu 502 após 180 s (12 lotes × 15 s, nenhuma competência
+  respondeu). A mesma busca do Brasil leva 1–9 s. Causa provável: portal de PE não responde a IPs
+  dos EUA — hipótese forte, NÃO confirmada de dentro do container (`railway ssh` exige chave SSH).
+  PB funcionou em produção no mesmo dia (estimativa 149), embora lenta (~46 s, 3/60 meses falhando
+  na medição local).
+- **Correção (frontend, commit `13c44e9`):** novo `src/lib/remuneracaoEstadual.js` (porte do
+  serviço do backend, `fetch` sem cabeçalhos customizados → sem preflight; timeout 12 s; lotes
+  de 6; desiste cedo se os 2 primeiros lotes falham por inteiro). `estimativas/page.js` usa o
+  módulo em vez da rota, com os dados salvos do lead. As duas APIs devolvem CORS para o domínio
+  do AM (testado no navegador em produção: PE e PB 200 em < 3 s).
+- **Validação:** os 5 testes do serviço original passam contra o módulo novo; estimativas 148
+  (0 vínculos) e 150 (4 vínculos) com dados reais; build do Next OK. Deploy Railway do frontend
+  `7b10c6c5` `SUCCESS`. Clique real no botão NÃO testado (exige login Master).
+- **Limitações:** só funciona para quem está no Brasil e sem VPN estrangeira; a tela precisa ficar
+  aberta durante a consulta. A rota antiga do backend e `src/services/remuneracaoEstadual.js`
+  continuam no código (o serviço também é usado pelo re-protocolo); a rota está sem uso e pode
+  ser removida. Se o re-protocolo (`levantamento.js`, `vinculoOficial.js`) consultar PE pelo
+  backend, sofrerá do mesmo bloqueio.
+- **Nota de publicação:** o push inicial foi rejeitado (non-fast-forward) porque a `main` remota
+  já tinha 3 commits do re-protocolo; o commit foi reposicionado com `git rebase origin/main`
+  (`ab8e3da` → `13c44e9`) antes do push por refspec.
+
+
+### 29–30/09/2026 — Análise geral do sistema e da jornada (somente leitura, nada executado)
+
+- **O que foi feito:** análise multiagente somente leitura aprovada pelo usuário (plano em
+  `PLANO-ANALISE-MELHORIA-SISTEMA-AM.md`): inventário, 9 frentes (segurança, resiliência,
+  usabilidade, funcionalidades, gestão/financeiro, bom dia no WhatsApp, e-mail, telefonia OPT, IA),
+  jornada estimativa → proposta → cadastro → documentos → protocolo, e funil de vendas medido no
+  banco da Camila. Cada frente teve verificador independente. Código analisado = produção
+  (backend `42b9cb7`, frontend `eb13304`, Camila `11bab3c`).
+- **Leitura dos bancos:** só SELECT, autorizada pelo usuário em 29/09 para o AM e para a Camila
+  (transação READ ONLY, 1 comando por vez). Leitura das variáveis do Railway foi negada pelo
+  classificador e não foi contornada.
+- **Resultado:** `analise/RELATORIO-FINAL.md` (Onda 0 de ações humanas, Onda 1 de código urgente,
+  11 lotes na ordem S, R, W, E, G, U, F, T, I, J, C; 77 decisões pendentes ordenadas) e
+  `analise/PLANO-LOTE-S-SEGURANCA.md` (11 ondas). Os arquivos de `analise/` não estão no Git.
+- **Achados mais graves (a confirmar na execução):** captura de andamentos parada desde 01/09;
+  credencial Google morta em 29/09 (Drive e backup); backup nunca restaurado; CSRF, OAuth sem
+  limite de senha e sessão não revogável; valor da causa ×100 na aprovação do re-protocolo
+  (S-17 — não aprovar pacote antes da correção); PDF da proposta com "undefined meses" (JN-01,
+  conferido no código); 13 de 20 contratos de 18/08–29/09 sem protocolo.
+- **Correção de registro:** a rotação do `JWT_SECRET` em 28/09 invalidou os tokens da falha do
+  refresh_token, mas NÃO derrubou as sessões normais (a renovação usa `JWT_REFRESH_SECRET`); o
+  roteiro de incidente deve trocar os dois. Conferido em 30/09: na janela 18–28/09 nenhuma conta
+  (além da conta de serviço `integracao-claude`, criada em 18/09 às 10h58) nem chave de API foi
+  criada.
+- **Pendente:** respostas do usuário à Onda 0 e às decisões da seção 6 do relatório; "sim" para a
+  Onda 1.
+
+### 30/09/2026 (madrugada) — Onda 1 implementada e revisada, NÃO publicada
+
+- **Estado:** 7 grupos da Onda 1 prontos em cópias isoladas do código publicado (base: backend `42b9cb7`,
+  frontend `eb13304`, Camila `11bab3c`), exportados como patches em `analise/onda1-entrega/` (backend 10,
+  frontend 5, Camila 2; não estão no Git). **Nenhuma alteração publicada em produção; nenhum arquivo dos
+  repositórios foi tocado.** O classificador negou criar worktree/branch nos repositórios e escrever script de
+  publicação; a publicação (push) é feita pelo usuário, e a Camila exige `railway redeploy --from-source`.
+- **Conteúdo:** S-17 (trava 409 de valor da causa 5× diferente da proposta + tela em pt-BR com confirmação);
+  JN-01/JN-02 (período do vínculo completo no PDF e trava de faixa 0,2–5× / R$ 100 mil, DN-2); JN-09/JL-08 (datas
+  AAAA-MM do rascunho davam 500; auditoria `concluir_cadastro_falhou`); R-22 (motor de prazo usa a menor data e marca
+  "conferir"); U-02 (lote "Atribuir" mantém prazos judiciais); R-07 (IA só para Master, fallback não apaga o
+  manual); R-14 (execuções do sync sempre fecham); R-12 (`/health` só 200 depois do boot); JC-02 (Camila não cobra
+  documento de quem já está na contratação).
+- **Verificado:** backend 343/343 testes; frontend 28 testes + build ok; Camila 10/10 novos (1 falha já existente
+  no código publicado, teste dependente de horário). Cada grupo passou por revisor independente.
+- **Em espera (não publicar ainda):** R-05 + R-01 código (`em-espera-alertas/`): faria os alertas chegarem pela
+  primeira vez com os crons ainda em UTC (05h BRT, inclusive fim de semana) e com o nome completo do cliente na
+  véspera; depende de D8 e do fuso dos crons.
+- **Pendências:** publicação (backend → frontend → Camila); decisões registradas em `analise/onda1-entrega/LEIA-ME.md`;
+  D10 (Google), D14 (DataJud), teste real do alerta ao Ramon após publicar o lote de alertas; R-06 e CSRF seguem.
+
+### 30/09/2026 — Onda 1 PUBLICADA (push feito pelo usuário)
+
+- **Commits em produção:** backend `42b9cb7..79bf50e` (10 commits), frontend `eb13304..36dde69` (5),
+  Camila `11bab3c..b44b4aa` (2). O conteúdo publicado é idêntico (byte a byte, exceto `.env.example`, que a cópia de
+  teste excluía) ao integrado e testado (backend 343/343, frontend 28 testes + build, Camila 10/10 novos).
+- **Verificado em produção (leitura pública, sem login):** `/health` do backend responde 200 (formato igual ao
+  anterior, então NÃO prova sozinho a versão nova — falta o status `SUCCESS` do deploy e a linha
+  `[BOOT] Esquema pronto em Xs` no log, a conferir no Railway); o JS publicado do frontend contém a tela nova do valor
+  da causa (`valor_divergente_ciente`, "Proposta do sistema") e a trava de faixa/período do vínculo
+  (`valor_fora_da_faixa`, `numMeses`).
+- **Pendente:** `railway redeploy --from-source` da Camila (não publica no push) e conferir o `/health` dela;
+  conferir `DIGISAC_CONTRATACAO_DEPARTMENT_ID` no Railway da Camila e se a fila CONTRATAÇÃO tem usuário; testar na tela
+  o campo "812,35" no pacote do re-protocolo e um PDF de estimativa sem "undefined meses" antes de o Luciano aprovar
+  pacotes. Em espera: lote de alertas (R-05/R-01 código) — ver seção anterior e `analise/onda1-entrega/LEIA-ME.md`.
+
+### 30/09/2026 (01h30) — Onda 1: deploys verificados no Railway
+
+- **Confirmado pelo `railway deployment list`:** backend `5a9ee431` `SUCCESS` (commit `79bf50e`, 01:20 BRT);
+  frontend `f767bb27` `SUCCESS` (commit `36dde69`, 01:21); Camila `d89a1045` `SUCCESS` (commit `b44b4aa`, 01:26,
+  substituindo `80d370af`, do mesmo commit). O deploy do backend só é promovido depois de o `/health` passar, então o
+  boot novo (R-12) concluiu.
+- **Redeploy da Camila:** disparado com `railway redeploy --from-source --yes` (a CLI exige `--yes` fora de terminal
+  interativo).
+- **Ainda a conferir pelo usuário:** `DIGISAC_CONTRATACAO_DEPARTMENT_ID` no Railway da Camila e usuário na fila
+  CONTRATAÇÃO; teste nas telas (campo "812,35" no pacote do re-protocolo; PDF de estimativa sem "undefined meses")
+  antes de o Luciano aprovar pacotes.
+
+### 30/09/2026 (manhã) — Onda 2 implementada, integrada e revisada, NÃO publicada
+
+- **O que é:** restante do Lote S (S-01 CSRF, S-02/S-07/S-18/S-19 OAuth e cabeçalhos, S-05/S-12/S-20/S-21 permissões, S-06/S-08/S-10/S-23/S-26
+  portas e segredos, S-13/S-22/S-24/S-25 auditoria e erros, S-03/S-04 sessão revogável e primeiro acesso, S-15 parcial/S-16/S-19 build e cabeçalhos,
+  S-27 júnior), alertas do WhatsApp (R-05, R-01 código, fuso dos crons, S-14) e a correção do sync de andamentos (R-06).
+- **Estado:** série linear de patches sobre a produção pós-Onda 1 (backend `79bf50e`: 26 commits; frontend `36dde69`: 10) em
+  `analise/onda2-entrega/` (fora do Git), com `LEIA-ME.md` (ordem de publicação, verificações, reversão, decisões assumidas).
+  **Nada publicado; nenhum repositório do usuário foi tocado.**
+- **Verificado:** backend 979/979 testes; frontend 99 testes + build; patches aplicados num repositório de teste local (sem conflito, conteúdo idêntico ao
+  testado). Cada grupo teve revisor independente; a integração teve revisão de migrações e de mesclagem (achados M-01, A1, A2 corrigidos).
+- **Limites:** as migrações de banco (S-03, S-13 com gatilho, S-05, R-06, S-10 atrás de flag) nunca rodaram em Postgres real; falham de forma segura
+  (o boot cai e a versão anterior segue). Publicar exige antes: escopo `workflow` do `gh`, `FRONTEND_URL` exata no Railway (senão toda escrita dá 403),
+  troca da `SYNC_KEY` e reconexão do conector do Claude depois do deploy.
+- **Políticas conflitantes resolvidas pela mais segura:** token antigo do conector sem escopos é recusado (S-18 sobre S-03); usuário com histórico
+  na auditoria não é excluído (D-S3).
+
+### 30/09/2026 — Onda 2 PUBLICADA e verificada
+
+- **Em produção:** backend `79bf50e..8f282de` (deploy `3c49ba57` SUCCESS, 26 commits) e frontend `36dde69..bf857f1` (deploy `6d6e1594` SUCCESS, 11 commits). Pushes feitos
+  pelo usuário; o token do GitHub precisou do escopo `workflow` (o GitHub recusa push que altera `.github/workflows` sem ele).
+- **Verificado de fora:** `/health` 200; cabeçalhos de segurança no backend e no frontend (HSTS, X-Frame-Options, nosniff, CSP em modo só-relatar) e sem
+  `X-Powered-By`; POST com origem forjada → 403.
+- **Ainda a conferir pelo usuário:** escrita normal no AM (senão `FRONTEND_URL` errada → 403; voltar ao deploy `5a9ee431`); reconectar o conector do
+  Claude; IP real do cliente no log (limites por IP); sync geral (R-06) e amostra no PJe; alerta de teste ao Ramon; Google (novo refresh token e app
+  fora do modo Teste); trocar `SYNC_KEY`; apagar `MASTER_*`. Um token do GitHub foi colado no chat e deve ser revogado.
+
+### 30/09/2026 (tarde) — Fechamento da sessão: estado e pendências (LER PRIMEIRO)
+
+- **No ar e verificado:** Onda 1 e Onda 2 (backend `8f282de`, deploy `3c49ba57`; frontend `bf857f1`, deploy `6d6e1594`); conector do AM reconectado
+  (listar_teses 200); SYNC_KEY trocada no Railway e no GitHub (workflow manual deu Success); alerta de teste do WhatsApp chegou ao Ramon (R-05 ok);
+  app OAuth do Google publicado "Em produção" (marca preenchida; e-mail do desenvolvedor corrigido).
+- **DataJud (R-06) funciona pela metade:** 11h00 casou 113 processos e gravou 567 andamentos (os primeiros desde 01/09); depois o DataJud devolveu 429 e
+  698 processos ficaram `erro_sync` (a marca só avança no sucesso, então nada se perde). Reavaliar em 13h/14h; se não convergir, baixar
+  `DATAJUD_TAMANHO_LOTE` (padrão 100) no Railway.
+- **Pendências do usuário:** (1) rodar `railway run node obter-novo-refresh-token.mjs` DENTRO de `/tmp/am-onda2-backend` (o script da pasta principal é antigo e
+  só pede Drive; o novo pede Drive + Agenda), gravar `GOOGLE_REFRESH_TOKEN` no Railway e clicar Deploy — hoje 6 clientes sem pasta no Drive e backup sem destino;
+  (2) confirmar que `MASTER_NOME/EMAIL/SENHA` foram apagadas do Railway; (3) cadastrar o WhatsApp dos 3 usuários que faltam (bom dia às 8h);
+  (4) a conta ramonoliveiraabrantes@hotmail.com está como `junior` no banco (o usuário se diz Master): decidir; (5) apagar as pastas temporárias
+  (`git worktree remove /tmp/am-onda2-backend` e `/tmp/am-onda2-frontend`).
+- **Segurança de processo:** um token do GitHub e uma SYNC_KEY foram colados no chat e foram revogados/trocados; nunca colar segredos no chat.
+- **Próximos lotes (com "sim" a cada um):** W bom dia, E e-mail (IMAP/SMTP na whn.host, caixas comercial@/atendimento@/juridico@), G financeiro+painel, U, F,
+  T telefonia OPT, I IA, J/C jornada e Camila. Relatório e ordem em `analise/RELATORIO-FINAL.md`; entregas em `analise/onda1-entrega/` e `analise/onda2-entrega/`.
+
+### 30/09/2026 — Camila: prazo "alguns anos" (caso Brauney) e documentos não contados desde 14/09 — PUBLICADO
+
+- **Status:** PUBLICADO em 30/09/2026 (13:34 local). Commits `1b7d7bf`, `7a43f85`, `152c6be` na
+  `main` da Camila (push por refspec, sem levar mais nada). Deploy Railway
+  `1d5df241` `SUCCESS` (commit `152c6be`); o build paralelo `4027071b` foi removido pelo próprio
+  Railway. Verificado: `/health` 200 três vezes seguidas, sem erros nos logs de inicialização,
+  `prompt_versao` passou de `6718306cab97` para `44a05ce12813` (hash novo do SYSTEM_PROMPT =
+  prova de que o código novo roda). Ainda NÃO observado em conversa real: procurar nos logs
+  `[VERIFICACAO] saída corrigida` e, na tabela `documentos_atendimento`, o primeiro registro após
+  14/09.
+- **Caso Brauney (contact `65a2b694`):** "Então deve demorar né?" não casava com a intenção de
+  prazo; a IA improvisou "costumam levar alguns anos" e contradisse o prazo aprovado (6 a 11
+  meses, `FIXA-PRAZO`). Correções: (1) seletor reconhece "deve demorar", "vai levar anos", "é
+  demorado", "tem previsão?", "é rápido?", "isso vai longe", "sai rápido?" (sem confundir com
+  "desculpa a demora"); (2) prompt: nunca confirmar demora nem citar anos; (3) `corrigirSaida`
+  (camila/verificacao.js, chamada em `enviar()` só para `camila_ia`) troca frase de duração em
+  anos ou de lentidão do processo pelo prazo aprovado e `!` por `.` antes do envio; evento
+  `saida_corrigida`. As demais violações (senhor/senhora, frases proibidas, markdown) continuam
+  só alertadas, por decisão de projeto da Fase 7 (fail-open) — ampliar exige nova decisão.
+- **Bug de documentos (regressão de `292561f`, 14/09/2026):** a checagem de "cortesia final"
+  (`deveSilenciarEncerramentoSocial`) rodava antes do ramo de arquivos e tratava texto vazio como
+  despedida; todo documento/imagem sem legenda enviado após fala da Camila sem "?" era descartado
+  em silêncio. Medido: 0 de 35 arquivos contados em 9 leads desde 14/09 (antes 15 de 24); efeitos:
+  sem `documentos_atendimento`, sem `docs_recebidos`, sem passagem automática à equipe. Correção:
+  arquivo nunca é cortesia (`ehArquivo`), também no ramo de contato suspenso. Teste ponta a ponta
+  TESTE 13B falha sem a correção e passa com ela.
+- **Validação:** `test:continuidade` 248/248; `test:safe` sem falhas. Hash do SYSTEM_PROMPT
+  rebaselinado de propósito (`44a05ce1...`); `teste-calculadora.js` TESTE 13 ajustado (exclamação
+  agora corrigida).
+- **Pendências:** (1) ~~publicar~~ feito; (2) ~~backfill dos 35 arquivos / 9 leads~~ FEITO em 30/09/2026 (ver abaixo);
+  (3) lead `e5e5fb77` (Ismania) enviou 8 arquivos em 30/09 e ninguém da equipe escreveu;
+  (4) respostas duplicadas/fora de ordem (caso Brauney 15:10-15:11) não investigadas;
+  (5) Roteador V3: não ativar como está — a regra "humano escreveu nas últimas 48h = dono humano"
+  calaria a Camila em conversas iniciadas pela equipe, e a comparação em sombra usa a mesma regra.
+
+#### Backfill dos 35 arquivos (30/09/2026, ~13:45 local) — gravação em produção, autorizada pelo usuário
+
+- **O que foi gravado:** 35 linhas em `documentos_atendimento` (9 clientes), com `message_id` e
+  `recebido_em` originais da conversa e o nome real do arquivo lido do Digisac; mais
+  `propostas_enviadas.docs_recebidos=true` nos 9 contatos. Numa única transação (desfaz tudo se
+  o total divergir). Critério: mensagens de cliente `[document]`/`[image]` posteriores à proposta
+  e a 14/09/2026 17:31 UTC, sem registro em `documentos_atendimento`. Nenhuma mensagem foi
+  enviada, nenhum ticket transferido, nenhuma passagem (`registrarPassagem`) executada.
+- **Contatos e arquivos:** `13f146c2` 3, `5d34de0d` 3, `65a2b694` 4 (Brauney), `7174f833` 1
+  (Samuel), `b1363278` 3, `bde58d63` 3 (já `assinado`), `c3fb6942` 4 (Michelle), `e4d950be` 6,
+  `e5e5fb77` 8 (Ismania). Verificado depois: 0 arquivos ainda não contados; 9/9 com
+  `docs_recebidos=true`; 0 mensagens da Camila a esses contatos no período.
+- **Reversão:** lista dos `message_id` inseridos e dos contatos cujo `docs_recebidos` virou true em
+  `scratchpad/backfill-docs/reversao.json` (sessão de 30/09; não versionado).
+- **Efeitos automáticos esperados:** (a) as etapas dos leads passam a `documentos_parciais`
+  (quadro/etiquetas do Digisac acompanham pela sincronização de 1 min; última execução sem falhas);
+  (b) a retomada de 48h deixa de considerar esses leads; (c) cobranças `documentos` já agendadas
+  (14 pendentes, a mais próxima hoje 21:35 UTC para `c3fb6942`) passam pela regra JC-02: com 4+
+  arquivos (`65a2b694`, `c3fb6942`, `e4d950be`, `e5e5fb77`) são canceladas (`passagem_contratacao`)
+  e a equipe recebe alerta interno se ninguém assumiu; com 3 arquivos a Camila ainda pode cobrir o
+  que falta; `bde58d63` (assinado) é cancelada.
+- **Limites (NÃO feito):** as categorias (RG/CPF/comprovante/contracheque) seguem sem conferência —
+  a equipe confere na tela de Leads; o evento `documento_recebido` não foi recriado (métricas por
+  evento continuam sem esses 35); a passagem à equipe/contratação desses clientes não foi feita —
+  os com 4+ arquivos (Brauney, Michelle, `e4d950be`, Ismania) precisam de um humano, e a Ismania
+  segue sem retorno desde 30/09 12:57 (local).
+
