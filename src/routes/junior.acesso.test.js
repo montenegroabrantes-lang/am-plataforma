@@ -442,6 +442,26 @@ test('situação: urgência do júnior só onde tem tarefa (mudança); o mesmo v
   assert.equal(consultouTarefas(), false);
 });
 
+test('situação: urgência enviada como texto ("false", "f", "0") não contorna a regra do responsável', async () => {
+  // Processo urgente que não é do júnior: a rota grava o valor cru e o Postgres lê "false" como falso.
+  for (const valor of ['false', 'f', '0', 'off', 0, null, [], {}]) {
+    regras = []; consultas = [];
+    prepararSituacao({ tarefa: false, urgenteAtual: true });
+    const r = await chamar('PATCH', `/api/processos/${PROC}/situacao`, { token: JUNIOR, corpo: { urgente: valor } });
+    assert.equal(r.status, 403, `urgente=${JSON.stringify(valor)} deve ser tratado como mudança`);
+    assert.equal(houveUpdate('processos'), false);
+  }
+  // O mesmo valor booleano continua passando (formulário antigo) e o Master não é afetado.
+  regras = []; consultas = [];
+  prepararSituacao({ tarefa: false, urgenteAtual: true });
+  const igual = await chamar('PATCH', `/api/processos/${PROC}/situacao`, { token: JUNIOR, corpo: { situacao_atual: 'em_recurso', urgente: true } });
+  assert.equal(igual.status, 200);
+  regras = []; consultas = [];
+  prepararSituacao({ tarefa: false, urgenteAtual: true });
+  const m = await chamar('PATCH', `/api/processos/${PROC}/situacao`, { token: MASTER, corpo: { urgente: 'false' } });
+  assert.equal(m.status, 200);
+});
+
 // ── Conversas de lead ────────────────────────────────────────────────────────
 
 test('conversas de lead: 403 para o júnior; o Master passa da guarda (segue para a validação do id)', async () => {

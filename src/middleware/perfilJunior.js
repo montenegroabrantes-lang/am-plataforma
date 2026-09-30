@@ -32,7 +32,7 @@ export function mascararCpf(valor) {
   return `***.${digitos.slice(3, 6)}.${digitos.slice(6, 9)}-**`;
 }
 
-// Chaves de JSON que carregam o CPF de um cliente: `cpf`, `cliente_cpf`, `cpfCliente`...
+// Chaves de JSON que carregam o CPF de um cliente: `cpf`, `cliente_cpf`, `clienteCpf`...
 const CHAVE_CPF = /(^|_)cpf$|Cpf$/;
 
 const ehObjetoSimples = (v) => Object.prototype.toString.call(v) === '[object Object]';
@@ -160,7 +160,10 @@ export async function liberarClassificacaoDoJunior(req, res, processoId, conexao
   }
   if (req.body?.urgente !== undefined) {
     const atual = await conexao.queryOne('SELECT urgente FROM processos WHERE id = $1', [processoId]);
-    const mudou = !!req.body.urgente !== !!atual?.urgente;
+    // Só um booleano idêntico ao gravado conta como "sem mudança": a rota grava o valor cru e o
+    // Postgres lê 'false', 'f', '0', 'no' e 'off' como falso, então "false" (texto) passaria por
+    // `!!` como verdadeiro e desmarcaria a urgência de um processo que não é do júnior.
+    const mudou = typeof req.body.urgente !== 'boolean' || req.body.urgente !== !!atual?.urgente;
     if (mudou && !(await temTarefaNoProcesso(req.user?.id, processoId, conexao))) {
       res.status(403).json({ ok: false, erro: MSG_SO_RESPONSAVEL });
       return false;
