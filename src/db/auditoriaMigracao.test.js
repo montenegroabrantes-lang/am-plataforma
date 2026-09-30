@@ -91,3 +91,13 @@ test('o boot registra as duas migrações pelo mecanismo migrar(); só a das col
   // a das colunas NÃO engole o erro: sem elas o INSERT do log falharia em silêncio
   assert.equal(/migrarAuditoriaAutor\(db\)\)\s*\.catch/.test(index), false);
 });
+
+test('A1 (revisão): o gatilho de só-inserção é criado DEPOIS de todas as migrações obrigatórias (S-03 e R-06)', () => {
+  const index = readFileSync(new URL('../index.js', import.meta.url), 'utf8');
+  const pos = (marca) => index.indexOf(marca);
+  const gatilho = pos("migrar('2026_10_S13_auditoria_imutavel'");
+  assert.ok(gatilho > 0);
+  assert.ok(gatilho > pos("migrar('2026_10_S03_sessao_revogavel'"), 'depois da migração da sessão');
+  assert.ok(gatilho > pos("migrar('2026_09_30_sync_datajud_r06'"), 'depois da migração do sync');
+  assert.ok(gatilho < pos('dbOk = true'), 'antes de liberar as rotas');
+});

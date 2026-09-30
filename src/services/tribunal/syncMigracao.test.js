@@ -51,9 +51,10 @@ test('toda coluna nova que o sync usa está na migração', () => {
   for (const col of ['status_http', 'hits', 'casados']) assert.match(exec, new RegExp(col));
 });
 
-test('index.js aplica a migração pelo mecanismo versionado (migrar) e uma falha dela não impede o boot', () => {
+test('index.js aplica a migração pelo mecanismo versionado (migrar) e uma falha dela DERRUBA o boot (o sync novo depende da coluna)', () => {
   const fonte = lerFonte('../../index.js');
   assert.match(fonte, /migrar\('2026_09_30_sync_datajud_r06', \(\) => aplicarMigracaoSyncR06\(db\)\)/);
-  assert.match(fonte, /aplicarMigracaoSyncR06\(db\)\)\s*\n\s*\.catch\(e => console\.warn/);
+  // sem .catch: se falhar, o boot falha e o Railway mantém a versão anterior no ar
+  assert.doesNotMatch(fonte, /aplicarMigracaoSyncR06\(db\)\)\s*\n\s*\.catch/);
   assert.match(fonte, /import \{ aplicarMigracaoSyncR06 \} from '\.\/services\/tribunal\/syncMigracao\.js'/);
 });

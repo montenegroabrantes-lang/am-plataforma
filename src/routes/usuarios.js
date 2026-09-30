@@ -3,6 +3,7 @@ import bcrypt      from 'bcrypt';
 import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
+import { aprovadoresConfigurados } from '../services/reprotocolo/pacote.js';
 import { uuidValido } from '../utils/validacao.js';
 import { invalidarSessao } from '../middleware/sessao.js';
 import { derrubarSessoes, revogarSessoesDoUsuario, SENHA_MIN, SENHA_MAX } from '../services/sessao.js';
@@ -199,6 +200,13 @@ usuariosRouter.patch('/:id', apenasMaster, async (req, res) => {
     });
   }
 
+  // D-S4 (união): a variável REPROTOCOLO_APROVADORES segue valendo, então desmarcar aqui NÃO revoga quem ainda está nela.
+  // Avisa na hora, em vez de deixar a tela sugerir que o acesso foi retirado (revisão M-01).
+  const aindaPelaVariavel = antes.aprova_reprotocolo === true && novoAprova === false
+    && aprovadoresConfigurados().includes(String(novoEmail).toLowerCase());
+  if (aindaPelaVariavel) {
+    return res.json({ ok: true, aviso: 'A marcação foi retirada, mas esta pessoa ainda aprova o re-protocolo pela variável REPROTOCOLO_APROVADORES do Railway. Para revogar de fato, remova o e-mail dela dessa variável.' });
+  }
   res.json({ ok: true });
 });
 

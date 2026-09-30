@@ -873,22 +873,24 @@ async function iniciar() {
     // S-13 (30/09/2026): a auditoria guarda o retrato do autor (nome e e-mail no momento da ação) e
     // a tabela passa a aceitar só INSERT. Duas migrações separadas: as colunas são obrigatórias (o
     // INSERT do log depende delas: se falharem, o boot falha e a versão anterior segue no ar); a
-    // trava contra UPDATE/DELETE é defesa extra e, se falhar, só avisa.
+    // trava contra UPDATE/DELETE é defesa extra e, se falhar, só avisa; ela é criada por ÚLTIMO (depois da migração
+    // do S-03, ver abaixo): enquanto a versão anterior ainda atende, ou se o boot falhar antes, o gatilho não existe
+    // e o código antigo (que anula usuario_id ao excluir usuário) segue funcionando.
     await migrar('2026_10_S13_auditoria_autor', () => migrarAuditoriaAutor(db));
-    await migrar('2026_10_S13_auditoria_imutavel', () => protegerAuditoria(db))
-      .catch(e => console.warn('[Migration] Trava de UPDATE/DELETE em logs_auditoria:', e.message));
     // S-05 / D-S4 (30/09/2026): aprovador do re-protocolo marcado no cadastro (usuarios.aprova_reprotocolo),
     // COMBINADO com REPROTOCOLO_APROVADORES (união: quem aprova hoje continua aprovando). A migração cria a
     // coluna e marca, uma única vez, os Masters ativos cujo e-mail está na variável; depois disso a marcação
     // se altera pela tela (só o Master 01). O ALTER solto garante a coluna a cada boot, mesmo que a marcação falhe.
-    await db.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS aprova_reprotocolo BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
+    await db.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS aprova_reprotocolo BOOLEAN NOT NULL DEFAULT false`)
+      .catch(e => console.warn('[Migration] usuarios.aprova_reprotocolo:', e.message));
     await migrar('2026_10_S05_aprovador_reprotocolo', () => aplicarAprovadorReprotocolo({ conexao: db, emails: aprovadoresConfigurados() }))
       .catch(e => console.warn('[Migration] Aprovador do re-protocolo no cadastro:', e.message));
     // R-06 (30/09/2026): captura de andamentos por número. processos.datajud_atualizado_em é a marca
     // (dataHoraUltimaAtualizacao do DataJud) que substitui a janela; sync_execucoes ganha status_http,
     // hits e casados. Só colunas anuláveis (ver services/tribunal/syncMigracao.js).
-    await migrar('2026_09_30_sync_datajud_r06', () => aplicarMigracaoSyncR06(db))
-      .catch(e => console.warn('[Migration] Colunas do sync por número (R-06):', e.message));
+    // SEM .catch: o sync novo lê processos.datajud_atualizado_em; se a migração falhar, o boot falha e a versão
+    // anterior continua no ar (melhor que promover um sync que erra a cada hora).
+    await migrar('2026_09_30_sync_datajud_r06', () => aplicarMigracaoSyncR06(db));
 
     // Chaves para integrações externas: guarda somente SHA-256, nunca o segredo em texto.
     await db.query(`CREATE TABLE IF NOT EXISTS chaves_api_externas (
@@ -970,6 +972,9 @@ async function iniciar() {
     // S-03 (sessão revogável): usuarios.sessao_versao + sessoes_refresh. SEM .catch: se falhar, o boot falha e o
     // /health segue em 503 -- o Railway não promove o deploy e a versão anterior continua no ar.
     await migrar('2026_10_S03_sessao_revogavel', () => migrarSessaoRevogavel((sql) => db.execute(sql)));
+    // S-13: gatilho de auditoria só-inserção, por último entre as migrações do esquema (ver o comentário do S-13 acima).
+    await migrar('2026_10_S13_auditoria_imutavel', () => protegerAuditoria(db))
+      .catch(e => console.warn('[Migration] Trava de UPDATE/DELETE em logs_auditoria:', e.message));
 
     const { recarregarAiConfig } = await import('./config/ai.js');
     await recarregarAiConfig(db);

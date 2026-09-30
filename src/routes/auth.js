@@ -4,7 +4,6 @@ import { authenticator } from 'otplib';
 import { db }            from '../db/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { autenticar }         from '../middleware/auth.js';
-import { normalizarEmailTentado } from '../utils/tentativasLogin.js';
 import { emailTentadoParaLog } from '../utils/auditoriaCampos.js';
 import { exigirOrigemExplicita } from '../middleware/origem.js';
 import { CONTA_SERVICO_EMAIL }   from '../oauth/escopos.js';
@@ -48,9 +47,13 @@ function setTokenCookies(res, access, refresh) {
   res.cookie('am_refresh', refresh, COOKIE_REFRESH);
 }
 
+// Limpa com os MESMOS atributos com que foram gravados (secure + sameSite=none em produção): o frontend fica em outro
+// domínio, e o navegador pode ignorar uma limpeza sem eles (revisão B-03).
 function clearTokenCookies(res) {
-  res.clearCookie('am_token',   { path: '/' });
-  res.clearCookie('am_refresh', { path: '/api/auth/refresh' });
+  const { maxAge: _a, ...acesso } = COOKIE_ACCESS;
+  const { maxAge: _r, ...refresh } = COOKIE_REFRESH;
+  res.clearCookie('am_token',   acesso);
+  res.clearCookie('am_refresh', refresh);
 }
 
 // POST /api/auth/login

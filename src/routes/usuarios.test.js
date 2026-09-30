@@ -300,3 +300,29 @@ test('DELETE /usuarios/:id continua só do Master 01 (regressão)', async () => 
   assert.equal((await chamar('DELETE', `/api/usuarios/${J02}`, T.m02)).status, 403);
   assert.equal((await chamar('DELETE', `/api/usuarios/${J02}`, T.j02)).status, 403);
 });
+
+// ───────────────────── M-01: desmarcar não revoga quem ainda está na variável ─────────────────────
+test('desmarcar o aprovador que ainda está em REPROTOCOLO_APROVADORES avisa que ele continua aprovando (união, D-S4)', async () => {
+  const antes = process.env.REPROTOCOLO_APROVADORES;
+  try {
+    process.env.REPROTOCOLO_APROVADORES = 'tres@exemplo.com';           // o e-mail do M03, que está marcado no cadastro
+    const r = await chamar('PATCH', `/api/usuarios/${M03}`, T.m01, { aprova_reprotocolo: false });
+    assert.equal(r.status, 200);
+    assert.match(r.corpo.aviso, /REPROTOCOLO_APROVADORES/);
+    assert.equal(usuarios.get(M03).aprova_reprotocolo, false, 'a marcação no cadastro foi retirada');
+  } finally { if (antes === undefined) delete process.env.REPROTOCOLO_APROVADORES; else process.env.REPROTOCOLO_APROVADORES = antes; }
+});
+
+test('desmarcar quem NÃO está na variável, ou marcar alguém, responde sem aviso', async () => {
+  const antes = process.env.REPROTOCOLO_APROVADORES;
+  try {
+    delete process.env.REPROTOCOLO_APROVADORES;
+    const desmarcou = await chamar('PATCH', `/api/usuarios/${M03}`, T.m01, { aprova_reprotocolo: false });
+    assert.equal(desmarcou.status, 200);
+    assert.equal(desmarcou.corpo.aviso, undefined);
+    process.env.REPROTOCOLO_APROVADORES = 'tres@exemplo.com';
+    const marcou = await chamar('PATCH', `/api/usuarios/${M03}`, T.m01, { aprova_reprotocolo: true });
+    assert.equal(marcou.status, 200);
+    assert.equal(marcou.corpo.aviso, undefined, 'marcar nunca gera o aviso');
+  } finally { if (antes === undefined) delete process.env.REPROTOCOLO_APROVADORES; else process.env.REPROTOCOLO_APROVADORES = antes; }
+});
