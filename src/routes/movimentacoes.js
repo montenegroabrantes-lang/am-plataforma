@@ -2,8 +2,13 @@ import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { ai }      from '../services/ai/index.js';
 import { apenasMaster } from '../middleware/auth.js';
+import { podeVerProcesso, usuarioVeVisibilidade } from '../utils/visibilidade.js';
+import { criarLimiteIA } from '../middleware/limites.js';
 
 export const movimentacoesRouter = Router();
+
+// S-20: chamada paga de IA — 20 por hora por usuário
+const limiteDiagnosticar = criarLimiteIA('diagnosticar');
 
 function calcularPrioridade(diag) {
   const prazoFinal  = diag.pendencia?.prazoFinal;
@@ -33,6 +38,11 @@ movimentacoesRouter.get('/:processoId', async (req, res) => {
   const { page = 1, limite = 50 } = req.query;
   const offset = (Number(page) - 1) * Number(limite);
 
+  // S-21: processo restrito (ou inexistente) responde 404, igual para quem não pode ver
+  if (await podeVerProcesso(req.user, processoId) !== true) {
+    return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  }
+
   const rows = await db.query(
     `SELECT m.*, p.numero AS processo_numero, p.tribunal
      FROM movimentacoes m
@@ -47,7 +57,7 @@ movimentacoesRouter.get('/:processoId', async (req, res) => {
 });
 
 // POST /api/movimentacoes/:id/diagnosticar — chamada paga de IA: só Master, e só em processo que ele pode ver
-movimentacoesRouter.post('/:id/diagnosticar', apenasMaster, async (req, res) => {
+movimentacoesRouter.post('/:id/diagnosticar', apenasMaster, limiteDiagnosticar, async (req, res) => {
   const mov = await db.queryOne(
     `SELECT m.*, p.numero, p.tribunal, p.visibilidade AS processo_visibilidade, pr.nome AS produto
      FROM movimentacoes m
@@ -57,10 +67,9 @@ movimentacoesRouter.post('/:id/diagnosticar', apenasMaster, async (req, res) => 
     [req.params.id]
   );
 
-  if (!mov) return res.status(404).json({ ok: false, erro: 'Movimentação não encontrada.' });
-
-  if (mov.processo_visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
-    return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
+  // S-21: movimentação de processo restrito responde 404, como se não existisse
+  if (!mov || !usuarioVeVisibilidade(req.user, mov.processo_visibilidade)) {
+    return res.status(404).json({ ok: false, erro: 'Movimentação não encontrada.' });
   }
 
   // Retorna diagnóstico já existente sem recalcular

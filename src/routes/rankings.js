@@ -1,12 +1,14 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
+import { filtroVisibilidade } from '../utils/visibilidade.js';
 
 export const rankingsRouter = Router();
 
 // GET /api/rankings
 rankingsRouter.get('/', async (req, res) => {
   const params  = [];
-  const filtroP = '';
+  const filtroP = filtroVisibilidade(req.user); // S-21: processo restrito só para o Master 01
+  const ehMaster = req.user?.perfil === 'master';
 
   const [
     rankingDemandas,
@@ -160,7 +162,9 @@ rankingsRouter.get('/', async (req, res) => {
     tempo_por_etapa:       tempoPorEtapa,
     distribuicao_ano:      distribuicaoAno,
     processos_parados:     processosParados,
-    valor_por_tipo:        valorPorEtapa,
+    // S-12/D7: valores em R$ só para Master. O júnior recebe só a contagem por tipo (lista operacional).
+    valor_por_tipo:        ehMaster ? valorPorEtapa : valorPorEtapa.map(({ tipo, total }) => ({ tipo, total })),
+    valores_ocultos:       !ehMaster,
     protocolos_por_mes:         protocolosPorMes,
     protocolos_por_responsavel: protocolosPorResponsavel,
   });

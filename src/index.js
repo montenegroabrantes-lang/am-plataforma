@@ -11,6 +11,8 @@ import { garantirTabelaMigrations, migrar } from './db/migrations.js';
 import { aplicarMigracoesS10 } from './db/migracoesS10.js';
 import { criarHealth }    from './health.js';
 import { logarVersoesBoot } from './utils/versaoPgDump.js';
+import { aplicarAprovadorReprotocolo } from './db/migracoes/aprovadorReprotocolo.js';
+import { aprovadoresConfigurados } from './services/reprotocolo/pacote.js';
 
 // Rotas
 import { authRouter }          from './routes/auth.js';
@@ -55,6 +57,7 @@ import { auditoriaRouter } from './routes/auditoria.js';
 import { migrarAuditoriaAutor, protegerAuditoria } from './db/auditoriaMigracao.js';
 import { exigirOrigemConfiavel } from './middleware/origem.js';
 import { montarUrlencodedOauth } from './middleware/parsersOauth.js';
+import { limiteMcp, limiteIntegracoes, limiteWebhook, limiteOauthToken, limiteOauthRegistro } from './middleware/limites.js';
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -121,6 +124,7 @@ app.use('/api/auth', authRouter);
 
 // Consulta interna mínima usada pela Camila para reconhecer quem já é cliente do escritório.
 // Usa a chave compartilhada entre os dois serviços e não devolve dados processuais sensíveis.
+app.use('/api/integracoes', limiteIntegracoes); // S-20: 120/min por IP (a Camila guarda a consulta em cache por 5 min)
 app.use('/api/integracoes/camila', autenticarIntegracaoCamila, integracaoCamilaRouter);
 app.use('/api/integracoes', integracoesExternasRouter);
 
@@ -155,8 +159,11 @@ app.use('/api/acervo',        autenticar, acervoRouter);
 app.use('/api/auditoria',     autenticar, auditoriaRouter);
 // Levantamento de re-protocolo (somente leitura): Master + escopo OAuth "reprotocolo" no conector.
 app.use('/api/reprotocolo',   autenticar, reprotocoloRouter);
-app.use('/mcp',               mcpRouter);
+app.use('/mcp',               limiteMcp, mcpRouter); // S-20: 60/min por Master que autorizou o conector
 montarUrlencodedOauth(app);
+// S-20: /oauth/token e /oauth/register por IP (o /oauth/authorize tem o limitador do S-02)
+app.use('/oauth/token',       limiteOauthToken);
+app.use('/oauth/register',    limiteOauthRegistro);
 app.use(oauthRouter); // /.well-known/*, /oauth/authorize, /oauth/token, /oauth/register — sem autenticar
 
 // Global error handler — captura erros não tratados nas rotas (S-22: 500 genérico com código de
@@ -833,6 +840,13 @@ async function iniciar() {
     await migrar('2026_10_S13_auditoria_autor', () => migrarAuditoriaAutor(db));
     await migrar('2026_10_S13_auditoria_imutavel', () => protegerAuditoria(db))
       .catch(e => console.warn('[Migration] Trava de UPDATE/DELETE em logs_auditoria:', e.message));
+    // S-05 / D-S4 (30/09/2026): aprovador do re-protocolo marcado no cadastro (usuarios.aprova_reprotocolo),
+    // COMBINADO com REPROTOCOLO_APROVADORES (união: quem aprova hoje continua aprovando). A migração cria a
+    // coluna e marca, uma única vez, os Masters ativos cujo e-mail está na variável; depois disso a marcação
+    // se altera pela tela (só o Master 01). O ALTER solto garante a coluna a cada boot, mesmo que a marcação falhe.
+    await db.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS aprova_reprotocolo BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
+    await migrar('2026_10_S05_aprovador_reprotocolo', () => aplicarAprovadorReprotocolo({ conexao: db, emails: aprovadoresConfigurados() }))
+      .catch(e => console.warn('[Migration] Aprovador do re-protocolo no cadastro:', e.message));
 
     // Chaves para integrações externas: guarda somente SHA-256, nunca o segredo em texto.
     await db.query(`CREATE TABLE IF NOT EXISTS chaves_api_externas (

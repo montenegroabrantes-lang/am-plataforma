@@ -11,6 +11,7 @@ import { cpfValido } from '../utils/cpf.js';
 import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
 import { diferenca, resumirTelefone, resumirEmail } from '../utils/auditoriaCampos.js';
 import { somarDiasUteis } from '../utils/diasUteis.js';
+import { filtroVisibilidade } from '../utils/visibilidade.js';
 
 export const clientesRouter = Router();
 
@@ -58,7 +59,7 @@ clientesRouter.get('/', async (req, res) => {
             COUNT(p.id) AS total_processos
      FROM clientes c
      LEFT JOIN usuarios u ON u.id = c.master_responsavel_id
-     LEFT JOIN processos p ON p.cliente_id = c.id
+     LEFT JOIN processos p ON p.cliente_id = c.id ${filtroVisibilidade(req.user)}
      WHERE ${condicoes.join(' AND ')}
      GROUP BY c.id, u.id, u.nome
      ORDER BY c.nome
@@ -92,7 +93,7 @@ clientesRouter.get('/:id', async (req, res) => {
 
   const [processos, documentos, teses, vinculos, demandas] = await Promise.all([
     db.query(
-      `SELECT id, numero, tribunal, status, produto_id FROM processos WHERE cliente_id = $1`,
+      `SELECT id, numero, tribunal, status, produto_id FROM processos WHERE cliente_id = $1 ${filtroVisibilidade(req.user, 'processos')}`,
       [req.params.id]
     ),
     db.query(

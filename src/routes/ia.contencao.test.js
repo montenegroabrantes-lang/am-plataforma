@@ -172,14 +172,14 @@ test('master: /diagnosticar sem diagnóstico prévio chama a IA e grava', async 
   ai.diagnosticar = iaProibida;
 });
 
-// ── 3) visibilidade (S-20 / A6-17) ───────────────────────────────────────────────────────────
-test('processo restrito: master sem pode_marcar_restrito → 403 em /classificar, sem chamar a IA nem gravar', async () => {
+// ── 3) visibilidade (S-20 / A6-17; S-21: quem não pode ver recebe 404, como um id inexistente) ──
+test('processo restrito: master sem pode_marcar_restrito → 404 em /classificar, sem chamar a IA nem gravar', async () => {
   const escritas = bancoClassificar({ processo: processoBase({ visibilidade: 'restrito' }) });
   let chamouIA = false;
   ai.classificar = async () => { chamouIA = true; return resultadoIA(); };
   const r = await chamar('POST', `/api/processos/${PID}/classificar`, TOKENS.master);
-  assert.equal(r.status, 403);
-  assert.equal(r.corpo.erro, 'Processo restrito.');
+  assert.equal(r.status, 404);
+  assert.equal(r.corpo.erro, 'Processo não encontrado.');
   assert.equal(chamouIA, false);
   assert.equal(escritas.length, 0);
   ai.classificar = iaProibida;
@@ -194,11 +194,11 @@ test('processo restrito: master 01 (pode_marcar_restrito) segue normalmente em /
   ai.classificar = iaProibida;
 });
 
-test('processo restrito: master sem pode_marcar_restrito → 403 em /diagnosticar, mesmo com diagnóstico salvo', async () => {
+test('processo restrito: master sem pode_marcar_restrito → 404 em /diagnosticar, mesmo com diagnóstico salvo', async () => {
   usarBanco({ async queryOne() { return { id: MID, processo_visibilidade: 'restrito', diagnostico_em: '2026-09-01' }; } });
   const r = await chamar('POST', `/api/movimentacoes/${MID}/diagnosticar`, TOKENS.master);
-  assert.equal(r.status, 403);
-  assert.equal(r.corpo.erro, 'Processo restrito.');
+  assert.equal(r.status, 404);
+  assert.equal(r.corpo.erro, 'Movimentação não encontrada.');
   assert.equal(r.corpo.diagnostico, undefined);
 });
 

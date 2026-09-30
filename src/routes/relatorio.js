@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
+import { filtroVisibilidade } from '../utils/visibilidade.js';
 
 export const relatorioRouter = Router();
 
@@ -140,7 +141,7 @@ relatorioRouter.get('/financeiro', apenasMaster, async (req, res) => {
 relatorioRouter.get('/diligencias', async (req, res) => {
   const dias = Math.min(Math.max(Number(req.query.dias) || 30, 1), 365);
   const params  = [dias];
-  const filtroM = '';
+  const filtroM = filtroVisibilidade(req.user); // S-21: processo restrito só para o Master 01
 
   const rows = await db.query(
     `SELECT

@@ -3,6 +3,7 @@ import { db }      from '../db/index.js';
 import { criarEventoCalendar, atualizarEventoCalendar } from '../services/calendar/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { diferenca } from '../utils/auditoriaCampos.js';
+import { filtroVisibilidade, usuarioVeVisibilidade, podeVerProcesso } from '../utils/visibilidade.js';
 
 export const agendaRouter = Router();
 
@@ -24,7 +25,7 @@ agendaRouter.get('/', async (req, res) => {
      JOIN processos p  ON p.id = a.processo_id
      LEFT JOIN clientes c  ON c.id = p.cliente_id
      LEFT JOIN usuarios u  ON u.id = a.advogado_id
-     WHERE ${condicoes.join(' AND ')}
+     WHERE ${condicoes.join(' AND ')} ${filtroVisibilidade(req.user)}
      ORDER BY a.data_hora ASC`,
     params
   );
@@ -44,7 +45,7 @@ agendaRouter.post('/', async (req, res) => {
     `SELECT p.*, c.nome AS cliente_nome FROM processos p LEFT JOIN clientes c ON c.id = p.cliente_id WHERE p.id = $1`,
     [processo_id]
   );
-  if (!processo) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  if (!processo || !usuarioVeVisibilidade(req.user, processo.visibilidade)) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
 
   const [nova] = await db.query(
     `INSERT INTO audiencias (processo_id, data_hora, tipo, vara, advogado_id)
@@ -83,6 +84,11 @@ agendaRouter.post('/', async (req, res) => {
 
 // PATCH /api/agenda/:id — atualiza resultado ou dados
 agendaRouter.patch('/:id', async (req, res) => {
+  // S-21: a audiência herda a visibilidade do processo; restrito (ou audiência inexistente) → 404
+  const dona = await db.queryOne('SELECT processo_id FROM audiencias WHERE id = $1', [req.params.id]);
+  if (!dona || await podeVerProcesso(req.user, dona.processo_id) !== true) {
+    return res.status(404).json({ ok: false, erro: 'Audiência não encontrada.' });
+  }
   const { resultado, data_hora, tipo, vara } = req.body;
   const campos  = { resultado, data_hora, tipo, vara };
   const updates = [];

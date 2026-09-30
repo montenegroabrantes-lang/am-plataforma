@@ -149,7 +149,7 @@ export function criarReprotocoloRouter({
     } catch (err) { console.warn('[Reprotocolo] Pacotes indisponíveis na verificação:', err.message); }
     res.json({
       ok: true, hoje, totais: totaisPorGrupo(resultados), total_filtrado: filtrados.length,
-      pode_aprovar: Boolean(podeAprovar(req.user)),
+      pode_aprovar: Boolean(await podeAprovar(req.user)),
       itens: pagina.map(i => ({ ...i, pacote: porTarefa.get(i.tarefa_id) ?? null })),
     });
   });
@@ -262,10 +262,10 @@ export function criarReprotocoloRouter({
   });
 
   // POST /api/reprotocolo/pacotes/:id/aprovar { valor_causa, observacao, acima_do_teto_ciente, valor_divergente_ciente } — só o aprovador
-  // configurado (REPROTOCOLO_APROVADORES) e só por sessão do AM. Aprova período, valor da causa e modelo.
+  // designado (REPROTOCOLO_APROVADORES ou marcação no cadastro) e só por sessão do AM. Aprova período, valor da causa e modelo.
   router.post('/pacotes/:id/aprovar', apenasSessao, async (req, res) => {
     if (!uuidValido(req.params.id)) return res.status(400).json({ ok: false, erro: 'ID de pacote inválido.' });
-    if (!podeAprovar(req.user)) return res.status(403).json({ ok: false, erro: 'Só o aprovador designado pode aprovar o pacote.' });
+    if (!(await podeAprovar(req.user))) return res.status(403).json({ ok: false, erro: 'Só o aprovador designado pode aprovar o pacote.' });
     const { valor_causa: valor, observacao = '', acima_do_teto_ciente: ciente = false, valor_divergente_ciente: divergenteCiente = false } = req.body || {};
     if (typeof ciente !== 'boolean') return res.status(400).json({ ok: false, erro: 'acima_do_teto_ciente deve ser true ou false.' });
     if (typeof divergenteCiente !== 'boolean') return res.status(400).json({ ok: false, erro: 'valor_divergente_ciente deve ser true ou false.' });

@@ -7,11 +7,15 @@ import { encrypt } from '../utils/crypto.js';
 import { recarregarAiConfig } from '../config/ai.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
+import { criarLimiteIA } from '../middleware/limites.js';
 import axios from 'axios';
 import { erroInterno } from '../middleware/erros.js';
 import { diferenca } from '../utils/auditoriaCampos.js';
 
 export const configAiRouter = Router();
+
+// S-20: o teste faz chamada paga ao provedor — 20 por hora por usuário
+const limiteTesteIA = criarLimiteIA('teste');
 
 // Carrega configuração atual
 configAiRouter.get('/', async (req, res) => {
@@ -90,7 +94,7 @@ configAiRouter.get('/status', async (req, res) => {
 });
 
 // Testa conexão com um provedor (faz chamada paga à API: só Master)
-configAiRouter.get('/test', apenasMaster, async (req, res) => {
+configAiRouter.get('/test', apenasMaster, limiteTesteIA, async (req, res) => {
   const { provider } = req.query;
 
   try {

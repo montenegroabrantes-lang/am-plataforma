@@ -6,8 +6,9 @@
 //    de inicial aprovado (do ACERVO: peça `inicial` com modelo_aprovado, por ente e tese; a tabela
 //    modelos_reprotocolo é só um ajuste manual que tem precedência) e produz o RELATÓRIO que o
 //    advogado confere. A procuração anterior é reaproveitada. Não escreve peça.
-// 3. Aprovar: só quem está em REPROTOCOLO_APROVADORES (e-mails) aprova, informando o valor da causa;
-//    modelo de inicial ausente ou sem arquivo do Drive bloqueia a aprovação.
+// 3. Aprovar: só quem está em REPROTOCOLO_APROVADORES (e-mails) OU marcado no cadastro (usuarios.
+//    aprova_reprotocolo, D-S4) aprova, informando o valor da causa; modelo de inicial ausente ou
+//    sem arquivo do Drive bloqueia a aprovação.
 // O juízo do processo anterior não é herdado: re-protocolo é processo novo, sem dependência.
 import { db } from '../../db/index.js';
 import { indiceMes, mesDoIndice } from './levantamento.js';
@@ -22,10 +23,28 @@ export const TIPOS_MODELO = ['inicial', 'procuracao'];
 
 const primeiroDia = (ym) => `${String(ym).slice(0, 7)}-01`;
 
-// Quem aprova o pacote: e-mails em REPROTOCOLO_APROVADORES (separados por vírgula). Sem a variável
-// ninguém aprova (padrão seguro).
+// Quem aprova o pacote (D-S4, S-05): a UNIÃO de duas fontes, para nunca tirar acesso de quem aprova hoje.
+// 1) e-mails em REPROTOCOLO_APROVADORES (separados por vírgula), como sempre foi;
+// 2) a marcação no cadastro (usuarios.aprova_reprotocolo), só de Master ativo e alterada só pelo
+//    Master 01 (PATCH /api/usuarios/:id). O e-mail pode mudar; a marcação acompanha o cadastro.
+// Sem nenhuma das duas, ninguém aprova (padrão seguro). Se a leitura da marcação falhar, vale só a
+// variável (nunca abre a porta por erro).
 export const aprovadoresConfigurados = () => String(process.env.REPROTOCOLO_APROVADORES ?? '').split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
-export const usuarioPodeAprovar = (usuario) => Boolean(usuario?.email) && aprovadoresConfigurados().includes(String(usuario.email).toLowerCase());
+export async function usuarioPodeAprovar(usuario, conexao = db) {
+  if (!usuario) return false;
+  if (usuario.email && aprovadoresConfigurados().includes(String(usuario.email).toLowerCase())) return true;
+  if (!usuario.id) return false;
+  try {
+    const marcado = await conexao.queryOne(
+      `SELECT 1 AS ok FROM usuarios WHERE id = $1 AND aprova_reprotocolo = true AND ativo = true AND perfil = 'master'`,
+      [usuario.id]
+    );
+    return Boolean(marcado);
+  } catch (err) {
+    console.warn('[Reprotocolo] Não foi possível ler a marcação de aprovador no cadastro:', err.message);
+    return false;
+  }
+}
 // Pendências que impedem a aprovação (não dá para gerar a inicial sem o modelo). Documentos a colher
 // e o valor da causa não impedem: o valor é informado na própria aprovação.
 export const PENDENCIAS_QUE_BLOQUEIAM_APROVACAO = ['modelo_inicial', 'modelo_sem_arquivo'];

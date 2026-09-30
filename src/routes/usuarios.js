@@ -3,8 +3,27 @@ import bcrypt      from 'bcrypt';
 import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
+import { uuidValido } from '../utils/validacao.js';
 
 export const usuariosRouter = Router();
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const emailNormalizado = (v) => String(v ?? '').trim().toLowerCase();
+const emailValido = (v) => v.length <= 254 && EMAIL_RE.test(v);
+
+// S-05: hierarquia. O Master 01 (pode_marcar_restrito) altera qualquer usuário; o Master comum, só a
+// si mesmo e aos próprios juniores (master_id = ele); outro Master, só o Master 01.
+function podeAlterar(logado, alvo) {
+  if (logado.pode_marcar_restrito) return true;
+  if (alvo.id === logado.id) return true;
+  return alvo.perfil === 'junior' && alvo.master_id === logado.id;
+}
+const negarHierarquia = (res, alvo, acaoMaster, acaoJunior) => res.status(403).json({
+  ok: false,
+  erro: alvo.perfil === 'master'
+    ? `Apenas o Master principal pode ${acaoMaster} outro master.`
+    : `Você só pode ${acaoJunior}.`,
+});
 
 // GET /api/usuarios — lista usuários do mesmo Master (ou todos, se Master 01)
 usuariosRouter.get('/', async (req, res) => {
@@ -14,7 +33,7 @@ usuariosRouter.get('/', async (req, res) => {
   if (pode_marcar_restrito) {
     // Master 01 vê todos
     rows = await db.query(
-      `SELECT id, nome, email, perfil, master_id, pode_marcar_restrito, ativo, criado_em, ultimo_acesso
+      `SELECT id, nome, email, perfil, master_id, pode_marcar_restrito, aprova_reprotocolo, ativo, criado_em, ultimo_acesso
        FROM usuarios ORDER BY perfil, nome`
     );
   } else if (perfil === 'master') {
@@ -38,20 +57,43 @@ usuariosRouter.get('/', async (req, res) => {
 
 // POST /api/usuarios — cria novo usuário (apenas Master)
 usuariosRouter.post('/', apenasMaster, async (req, res) => {
-  const { nome, email, senha, perfil, master_id } = req.body;
+  const { nome, email, senha, perfil, master_id } = req.body || {};
 
   if (!nome || !email || !senha || !perfil) {
     return res.status(400).json({ ok: false, erro: 'nome, email, senha e perfil são obrigatórios.' });
+  }
+  if (typeof nome !== 'string' || typeof email !== 'string' || typeof senha !== 'string') {
+    return res.status(400).json({ ok: false, erro: 'nome, email e senha devem ser texto.' });
   }
 
   if (!['master', 'junior'].includes(perfil)) {
     return res.status(400).json({ ok: false, erro: 'Perfil inválido.' });
   }
 
+  // S-05: só o Master 01 cria outro Master (senão qualquer Master criaria um igual a ele e a hierarquia
+  // de PATCH/senha seria contornável).
+  if (perfil === 'master' && !req.user.pode_marcar_restrito) {
+    return res.status(403).json({ ok: false, erro: 'Apenas o Master principal pode criar outro master.' });
+  }
+
   // Junior deve ter master_id
   if (perfil === 'junior' && !master_id) {
     return res.status(400).json({ ok: false, erro: 'Junior precisa de master_id.' });
   }
+  if (perfil === 'junior') {
+    if (!uuidValido(master_id)) return res.status(400).json({ ok: false, erro: 'master_id inválido.' });
+    // S-05: o Master comum só cria júnior vinculado a ele mesmo; o Master 01, a qualquer Master ativo.
+    if (!req.user.pode_marcar_restrito && master_id !== req.user.id) {
+      return res.status(403).json({ ok: false, erro: 'Você só pode criar juniores vinculados a você.' });
+    }
+    if (master_id !== req.user.id) {
+      const responsavel = await db.queryOne(`SELECT id FROM usuarios WHERE id = $1 AND perfil = 'master' AND ativo = true`, [master_id]);
+      if (!responsavel) return res.status(400).json({ ok: false, erro: 'Master responsável inexistente ou inativo.' });
+    }
+  }
+
+  const emailNovo = emailNormalizado(email);
+  if (!emailValido(emailNovo)) return res.status(400).json({ ok: false, erro: 'E-mail inválido.' });
 
   const hash = await bcrypt.hash(senha, 12);
 
@@ -60,7 +102,7 @@ usuariosRouter.post('/', apenasMaster, async (req, res) => {
       `INSERT INTO usuarios (nome, email, senha_hash, perfil, master_id, senha_temporaria)
        VALUES ($1, $2, $3, $4, $5, true)
        RETURNING id, nome, email, perfil, master_id`,
-      [nome.trim(), email.toLowerCase().trim(), hash, perfil, master_id ?? null]
+      [nome.trim(), emailNovo, hash, perfil, perfil === 'junior' ? master_id : null]
     );
 
     await registrarAuditoria({
@@ -86,50 +128,86 @@ usuariosRouter.patch('/me', async (req, res) => {
   res.json({ ok: true });
 });
 
-// PATCH /api/usuarios/:id — atualiza nome, email ou ativo
+// PATCH /api/usuarios/:id — atualiza nome, email, ativo ou (só o Master 01) a marcação de aprovador do re-protocolo
 usuariosRouter.patch('/:id', apenasMaster, async (req, res) => {
   const { id } = req.params;
-  const { nome, email, ativo } = req.body;
+  if (!uuidValido(id)) return res.status(400).json({ ok: false, erro: 'ID inválido.' });
+  const { nome, email, ativo, aprova_reprotocolo: aprova } = req.body || {};
 
-  const antes = await db.queryOne('SELECT id, nome, email, perfil, ativo, criado_em FROM usuarios WHERE id = $1', [id]);
+  const antes = await db.queryOne('SELECT id, nome, email, perfil, master_id, ativo, aprova_reprotocolo, criado_em FROM usuarios WHERE id = $1', [id]);
   if (!antes) return res.status(404).json({ ok: false, erro: 'Usuário não encontrado.' });
 
-  const novoNome  = nome  ?? antes.nome;
-  const novoEmail = email ? email.toLowerCase().trim() : antes.email;
+  // S-05: hierarquia — outro Master só o Master 01 altera; o Master comum, só os próprios juniores
+  if (!podeAlterar(req.user, antes)) return negarHierarquia(res, antes, 'alterar', 'alterar os seus próprios juniores');
+
+  if (ativo !== undefined && typeof ativo !== 'boolean') return res.status(400).json({ ok: false, erro: 'ativo deve ser true ou false.' });
+  // Ninguém desativa a si mesmo (e ninguém se reativa por aqui): o `ativo` da própria conta é de outra pessoa
+  if (ativo !== undefined && ativo !== antes.ativo && id === req.user.id) {
+    return res.status(403).json({ ok: false, erro: 'Você não pode alterar o status da própria conta.' });
+  }
+  if (nome !== undefined && (typeof nome !== 'string' || !nome.trim())) return res.status(400).json({ ok: false, erro: 'nome inválido.' });
+
+  let novoEmail = antes.email;
+  if (email !== undefined && email !== null && email !== '') {
+    novoEmail = emailNormalizado(email);
+    if (typeof email !== 'string' || !emailValido(novoEmail)) return res.status(400).json({ ok: false, erro: 'E-mail inválido.' });
+  }
+
+  const novoNome  = nome !== undefined ? nome.trim() : antes.nome;
   const novoAtivo = ativo !== undefined ? ativo : antes.ativo;
 
-  await db.execute(
-    'UPDATE usuarios SET nome = $1, email = $2, ativo = $3 WHERE id = $4',
-    [novoNome, novoEmail, novoAtivo, id]
-  );
+  // D-S4: quem aprova o re-protocolo é marcado no cadastro — só o Master 01, e só num Master ativo
+  let novoAprova = antes.aprova_reprotocolo;
+  if (aprova !== undefined) {
+    if (typeof aprova !== 'boolean') return res.status(400).json({ ok: false, erro: 'aprova_reprotocolo deve ser true ou false.' });
+    if (!req.user.pode_marcar_restrito) return res.status(403).json({ ok: false, erro: 'Apenas o Master principal define quem aprova o re-protocolo.' });
+    if (aprova && (antes.perfil !== 'master' || !novoAtivo)) return res.status(400).json({ ok: false, erro: 'Só um Master ativo pode ser aprovador do re-protocolo.' });
+    novoAprova = aprova;
+  }
+
+  try {
+    await db.execute(
+      'UPDATE usuarios SET nome = $1, email = $2, ativo = $3, aprova_reprotocolo = $4 WHERE id = $5',
+      [novoNome, novoEmail, novoAtivo, novoAprova, id]
+    );
+  } catch (e) {
+    if (e.code === '23505') return res.status(409).json({ ok: false, erro: 'Email já cadastrado.' });
+    throw e;
+  }
 
   await registrarAuditoria({
     usuarioId: req.user.id, acao: 'editar', entidade: 'usuario',
     entidadeId: id, valorAntes: antes, valorDepois: { nome: novoNome, email: novoEmail, ativo: novoAtivo },
     ip: req._ip,
   });
+  if (novoAprova !== antes.aprova_reprotocolo) {
+    await registrarAuditoria({
+      usuarioId: req.user.id, acao: 'definir_aprovador_reprotocolo', entidade: 'usuario',
+      entidadeId: id, valorAntes: { aprova_reprotocolo: antes.aprova_reprotocolo }, valorDepois: { aprova_reprotocolo: novoAprova },
+      ip: req._ip,
+    });
+  }
 
   res.json({ ok: true });
 });
 
 // PATCH /api/usuarios/:id/senha — redefine senha (Master)
 usuariosRouter.patch('/:id/senha', apenasMaster, async (req, res) => {
-  const { senha } = req.body;
-  if (!senha || senha.length < 8) return res.status(400).json({ ok: false, erro: 'Senha mínima 8 caracteres.' });
+  const { senha } = req.body || {};
+  if (!uuidValido(req.params.id)) return res.status(400).json({ ok: false, erro: 'ID inválido.' });
+  if (typeof senha !== 'string' || senha.length < 8) return res.status(400).json({ ok: false, erro: 'Senha mínima 8 caracteres.' });
 
-  if (req.params.id !== req.user.id && !req.user.pode_marcar_restrito) {
-    const alvo = await db.queryOne('SELECT perfil FROM usuarios WHERE id = $1', [req.params.id]);
-    if (alvo?.perfil === 'master') {
-      return res.status(403).json({ ok: false, erro: 'Apenas o Master principal pode redefinir a senha de outro master.' });
-    }
-  }
+  const alvo = await db.queryOne('SELECT id, perfil, master_id FROM usuarios WHERE id = $1', [req.params.id]);
+  if (!alvo) return res.status(404).json({ ok: false, erro: 'Usuário não encontrado.' });
+  // S-05: mesma hierarquia do PATCH — outro Master só o Master 01; o Master comum, só os próprios juniores
+  if (!podeAlterar(req.user, alvo)) return negarHierarquia(res, alvo, 'redefinir a senha de', 'redefinir a senha dos seus próprios juniores');
 
   const hash = await bcrypt.hash(senha, 12);
-  await db.execute('UPDATE usuarios SET senha_hash = $1 WHERE id = $2', [hash, req.params.id]);
-  // S-13: quem redefiniu a senha de quem (a senha nunca vai para o log)
+  await db.execute('UPDATE usuarios SET senha_hash = $1 WHERE id = $2', [hash, alvo.id]);
+  // Auditoria SEM o valor (nem a senha nem o hash): só quem redefiniu a senha de quem.
   await registrarAuditoria({
-    usuarioId: req.user.id, acao: 'redefinir_senha', entidade: 'usuario', entidadeId: req.params.id,
-    valorDepois: { propria: req.params.id === req.user.id }, ip: req._ip,
+    usuarioId: req.user.id, acao: 'redefinir_senha', entidade: 'usuario', entidadeId: alvo.id,
+    valorDepois: { alvo_perfil: alvo.perfil, propria: alvo.id === req.user.id }, ip: req._ip,
   });
   res.json({ ok: true });
 });

@@ -11,6 +11,8 @@ import { daTabela } from '../utils/tabelaSegura.js';
 import { erroInterno } from '../middleware/erros.js';
 import { celulaCsv } from '../utils/csv.js';
 import { diferenca } from '../utils/auditoriaCampos.js';
+import { filtroVisibilidade, usuarioVeVisibilidade, podeVerProcesso } from '../utils/visibilidade.js';
+import { criarLimiteIA } from '../middleware/limites.js';
 
 export const processosRouter = Router();
 
@@ -20,11 +22,11 @@ processosRouter.param('id', (req, res, next, id) => {
   next();
 });
 
-// Filtro de visibilidade: restritos só para pode_marcar_restrito
-function filtroVisibilidade(user) {
-  if (user.pode_marcar_restrito) return '';
-  return `AND (p.visibilidade = 'normal')`;
-}
+// Visibilidade (S-21): a regra mora em utils/visibilidade.js — restrito só para o Master 01. Quem não
+// pode ver recebe 404, igual a um id inexistente (não revela que o processo existe).
+const processoNaoEncontrado = (res) => res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+// S-20: chamada paga de IA — 20 por hora por usuário
+const limiteClassificar = criarLimiteIA('classificar');
 
 // Todos os usuários veem todos os processos (filtroVisibilidade já bloqueia os restritos)
 
@@ -399,9 +401,7 @@ processosRouter.get('/:id', async (req, res) => {
 
   if (!p) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
 
-  if (p.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
-    return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
-  }
+  if (!usuarioVeVisibilidade(req.user, p.visibilidade)) return processoNaoEncontrado(res);
 
   const [cessoes, tesesCliente] = await Promise.all([
     db.query(
@@ -442,8 +442,8 @@ processosRouter.post('/:id/cessao', apenasMaster, async (req, res) => {
     return res.status(400).json({ ok: false, erro: 'Nome do cessionário é obrigatório.' });
   }
 
-  const proc = await db.queryOne(`SELECT id, numero FROM processos WHERE id = $1`, [req.params.id]);
-  if (!proc) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  const proc = await db.queryOne(`SELECT id, numero, visibilidade FROM processos WHERE id = $1`, [req.params.id]);
+  if (!proc || !usuarioVeVisibilidade(req.user, proc.visibilidade)) return processoNaoEncontrado(res);
 
   const [cessao] = await db.query(
     `INSERT INTO cessoes_credito
@@ -477,6 +477,7 @@ processosRouter.post('/:id/cessao', apenasMaster, async (req, res) => {
 
 // DELETE /api/processos/:id/cessao/:cessaoId — remove registro de cessão
 processosRouter.delete('/:id/cessao/:cessaoId', apenasMaster, async (req, res) => {
+  if (await podeVerProcesso(req.user, req.params.id) !== true) return processoNaoEncontrado(res);
   const cessao = await db.queryOne(
     `SELECT * FROM cessoes_credito WHERE id = $1 AND processo_id = $2`,
     [req.params.cessaoId, req.params.id]
@@ -568,11 +569,7 @@ processosRouter.post('/', async (req, res) => {
 // PATCH /api/processos/:id
 processosRouter.patch('/:id', async (req, res) => {
   const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, visibilidade, tribunal, grau FROM processos WHERE id = $1', [req.params.id]);
-  if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
-
-  if (dono.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
-    return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
-  }
+  if (!dono || !usuarioVeVisibilidade(req.user, dono.visibilidade)) return processoNaoEncontrado(res);
 
   const campos      = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas', 'periodo_inicio', 'periodo_fim', 'classificacao'];
   const camposData  = new Set(['periodo_inicio', 'periodo_fim']);
@@ -600,6 +597,9 @@ processosRouter.patch('/:id', async (req, res) => {
 
   // Visibilidade: só Master 01 pode marcar restrito
   if (req.body.visibilidade !== undefined) {
+    if (!['normal', 'restrito'].includes(req.body.visibilidade)) {
+      return res.status(400).json({ ok: false, erro: 'visibilidade deve ser normal ou restrito.' });
+    }
     if (req.body.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
       return res.status(403).json({ ok: false, erro: 'Apenas Master 01 pode marcar processos como restritos.' });
     }
@@ -687,6 +687,7 @@ processosRouter.post('/sync-todos', apenasMaster, async (req, res) => {
 // POST /api/processos/:id/sync — enfileira sync individual (não bloqueia — Puppeteer leva 60-90s)
 processosRouter.post('/:id/sync', async (req, res) => {
   const { id } = req.params;
+  if (await podeVerProcesso(req.user, id) !== true) return processoNaoEncontrado(res);
   try {
     const { enfileirarSincronizarProcesso } = await import('../workers/index.js');
     await enfileirarSincronizarProcesso(id);
@@ -706,8 +707,8 @@ processosRouter.post('/:id/sync', async (req, res) => {
 
 // PATCH /api/processos/:id/urgente — marcar/desmarcar urgência
 processosRouter.patch('/:id/urgente', async (req, res) => {
-  const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado FROM processos WHERE id = $1', [req.params.id]);
-  if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, visibilidade FROM processos WHERE id = $1', [req.params.id]);
+  if (!dono || !usuarioVeVisibilidade(req.user, dono.visibilidade)) return processoNaoEncontrado(res);
 
   const { urgente } = req.body;
   const antes = await db.queryOne('SELECT urgente FROM processos WHERE id = $1', [req.params.id]);
@@ -732,10 +733,7 @@ processosRouter.patch('/:id/situacao', async (req, res, next) => {
      FROM processos WHERE id = $1`,
     [req.params.id]
   );
-  if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
-  if (dono.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
-    return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
-  }
+  if (!dono || !usuarioVeVisibilidade(req.user, dono.visibilidade)) return processoNaoEncontrado(res);
 
   const campos  = ['situacao_atual','etapa_atual','localizacao_processual','tipo_requisicao',
                    'status_rpv','status_precatorio','status_alvara','valor_homologado','urgente',
@@ -926,16 +924,12 @@ async function requisicaoPreservandoManual(processoId, resultado) {
 }
 
 // POST /api/processos/:id/classificar — classifica com Claude (chamada paga: só Master)
-processosRouter.post('/:id/classificar', apenasMaster, async (req, res) => {
+processosRouter.post('/:id/classificar', apenasMaster, limiteClassificar, async (req, res) => {
   const processo = await db.queryOne(
     `SELECT p.*, pr.nome AS produto_nome FROM processos p LEFT JOIN produtos pr ON pr.id = p.produto_id WHERE p.id = $1`,
     [req.params.id]
   );
-  if (!processo) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
-
-  if (processo.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
-    return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
-  }
+  if (!processo || !usuarioVeVisibilidade(req.user, processo.visibilidade)) return processoNaoEncontrado(res);
 
   const movimentacoes = await db.query(
     `SELECT texto, data_movimentacao FROM movimentacoes WHERE processo_id = $1 ORDER BY data_movimentacao DESC LIMIT 15`,
@@ -1208,7 +1202,7 @@ processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
 // DELETE /api/processos/:id — apenas Master
 processosRouter.delete('/:id', apenasMaster, async (req, res) => {
   const antes = await db.queryOne('SELECT * FROM processos WHERE id = $1', [req.params.id]);
-  if (!antes) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  if (!antes || !usuarioVeVisibilidade(req.user, antes.visibilidade)) return processoNaoEncontrado(res);
 
   const pid = req.params.id;
   try {

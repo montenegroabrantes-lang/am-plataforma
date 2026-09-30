@@ -74,7 +74,12 @@ function barrarValorForaDaFaixa(req, res, { valor, referencia, onde }) {
   return true;
 }
 
-// Controles comerciais: leitura autenticada, alterações reservadas ao perfil master.
+// Controles comerciais: TODAS as rotas do proxy (GET e escrita) são reservadas ao perfil master
+// (S-12 / D7, 30/09/2026 — o funil de vendas, o aprendizado e o monitoramento da Camila não são
+// do júnior). Exceções de leitura abertas ao júnior: a aba Processual (`/pendencias-processuais`)
+// e a conversa do lead (`/leads/:contactId/mensagens`, mais abaixo). O PATCH da aba Processual
+// segue só Master.
+const EXCECOES_JUNIOR = new Set(['/pendencias-processuais']);
 for(const [method,local,remote] of [
   ['get','/dashboard','/api/dashboard-leads'],
   ['get','/dashboard/detalhes','/api/dashboard-leads/detalhes'],
@@ -115,13 +120,13 @@ for(const [method,local,remote] of [
       const {data}=await api.request({method,url,...(method==='get'?{params:req.query}:{data:body})});res.json(data);
     }catch(e){res.status(e.response?.status||502).json({ok:false,erro:e.response?.data?.erro||'Não foi possível consultar a Camila.'});}
   };
-  estimativasRouter[method](local,...(method==='get'?[]:[apenasMaster]),handler);
+  estimativasRouter[method](local,...((method==='get'&&EXCECOES_JUNIOR.has(local))?[]:[apenasMaster]),handler);
 }
 
 // Aba "Camila" (versão, desempenho, histórico de atualização) — pedida pelo usuário 25/09/2026.
 // /health não fica sob /api na Camila (não exige x-api-key), mas o cliente axios do camila()
 // já usa CAMILA_API_URL como baseURL, então funciona igual; o header extra é só ignorado lá.
-estimativasRouter.get('/camila/status', async (req, res) => {
+estimativasRouter.get('/camila/status', apenasMaster, async (req, res) => {
   const api = camila();
   if (!api) return semConfig(res);
   try {
@@ -131,7 +136,7 @@ estimativasRouter.get('/camila/status', async (req, res) => {
     res.status(502).json({ ok: false, erro: `Camila indisponível: ${err.response?.status || err.message}` });
   }
 });
-estimativasRouter.get('/camila/uso-ia', async (req, res) => {
+estimativasRouter.get('/camila/uso-ia', apenasMaster, async (req, res) => {
   const api = camila();
   if (!api) return semConfig(res);
   try {
@@ -141,7 +146,7 @@ estimativasRouter.get('/camila/uso-ia', async (req, res) => {
     res.status(502).json({ ok: false, erro: `Camila indisponível: ${err.response?.status || err.message}` });
   }
 });
-estimativasRouter.get('/camila/mudancas', async (req, res) => {
+estimativasRouter.get('/camila/mudancas', apenasMaster, async (req, res) => {
   const api = camila();
   if (!api) return semConfig(res);
   try {
@@ -164,7 +169,7 @@ estimativasRouter.post('/camila/mudancas', apenasMaster, async (req, res) => {
 });
 
 // GET /api/estimativas — lista (status=pendente|aprovada_entregue|recusada_entregue...)
-estimativasRouter.get('/', async (req, res) => {
+estimativasRouter.get('/', apenasMaster, async (req, res) => {
   const api = camila();
   if (!api) return semConfig(res);
   try {
@@ -373,7 +378,7 @@ estimativasRouter.get('/:id/referencia-estadual', apenasMaster, referenciaEstadu
 // GET /api/estimativas/leads/:contactId/mensagens — histórico da conversa direto da API do
 // Digisac, pro painel lateral do AM (sem iframe, sem login do Digisac). Só leitura; quem
 // responde por aqui continua passando por POST /leads/:contactId/mensagem (Master). Aberto a
-// qualquer usuário logado — mesmo alcance que o iframe já tinha na tela de Leads.
+// qualquer usuário logado (uma das exceções do júnior em S-12/D7) — mesmo alcance que o iframe já tinha na tela de Leads.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 estimativasRouter.get('/leads/:contactId/mensagens', async (req, res) => {
   const contactId = String(req.params.contactId || '');
@@ -420,7 +425,7 @@ estimativasRouter.get('/leads/:contactId/mensagens', async (req, res) => {
 });
 
 // GET /api/estimativas/:id — detalhe
-estimativasRouter.get('/:id', async (req, res) => {
+estimativasRouter.get('/:id', apenasMaster, async (req, res) => {
   const api = camila();
   if (!api) return semConfig(res);
   try {

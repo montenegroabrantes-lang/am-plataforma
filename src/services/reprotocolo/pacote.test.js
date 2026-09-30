@@ -289,17 +289,56 @@ test('aprovar: a trava de valor divergente não substitui a do teto do Juizado (
   assert.match(r.erro, /teto do Juizado/);
 });
 
-test('aprovador: só e-mails de REPROTOCOLO_APROVADORES; sem a variável ninguém aprova', () => {
+// D-S4 / S-05: usuarioPodeAprovar é assíncrono e vale a UNIÃO da variável com a marcação no cadastro.
+// `semMarcacao` é o dublê do banco sem ninguém marcado.
+const semMarcacao = { async queryOne() { return null; } };
+test('aprovador: só e-mails de REPROTOCOLO_APROVADORES; sem a variável (e sem marcação) ninguém aprova', async () => {
   const antes = process.env.REPROTOCOLO_APROVADORES;
   try {
     delete process.env.REPROTOCOLO_APROVADORES;
-    assert.equal(usuarioPodeAprovar({ email: 'lucianomlc@outlook.com' }), false);
+    assert.equal(await usuarioPodeAprovar({ email: 'lucianomlc@outlook.com' }, semMarcacao), false);
     process.env.REPROTOCOLO_APROVADORES = ' LucianoMLC@outlook.com , outro@x.com ';
     assert.deepEqual(aprovadoresConfigurados(), ['lucianomlc@outlook.com', 'outro@x.com']);
-    assert.equal(usuarioPodeAprovar({ email: 'lucianomlc@outlook.com' }), true);
-    assert.equal(usuarioPodeAprovar({ email: 'ramona@x.com' }), false);
-    assert.equal(usuarioPodeAprovar({}), false);
-    assert.equal(usuarioPodeAprovar(null), false);
+    assert.equal(await usuarioPodeAprovar({ email: 'lucianomlc@outlook.com' }, semMarcacao), true);
+    assert.equal(await usuarioPodeAprovar({ email: 'ramona@x.com' }, semMarcacao), false);
+    assert.equal(await usuarioPodeAprovar({}, semMarcacao), false);
+    assert.equal(await usuarioPodeAprovar(null, semMarcacao), false);
+  } finally { if (antes === undefined) delete process.env.REPROTOCOLO_APROVADORES; else process.env.REPROTOCOLO_APROVADORES = antes; }
+});
+
+test('aprovador (D-S4): a marcação no cadastro também aprova; a união NUNCA tira quem está na variável', async () => {
+  const antes = process.env.REPROTOCOLO_APROVADORES;
+  const consultas = [];
+  const marcado = (id) => ({ async queryOne(sql, params) { consultas.push({ sql, params }); return params[0] === id ? { ok: 1 } : null; } });
+  try {
+    process.env.REPROTOCOLO_APROVADORES = 'luciano@x.com';
+    // só a marcação (e-mail fora da variável)
+    assert.equal(await usuarioPodeAprovar({ id: 'u-ana', email: 'ana@x.com' }, marcado('u-ana')), true);
+    assert.equal(await usuarioPodeAprovar({ id: 'u-bia', email: 'bia@x.com' }, marcado('u-ana')), false);
+    // só a variável (não marcado no cadastro): continua aprovando, e nem consulta o banco
+    consultas.length = 0;
+    assert.equal(await usuarioPodeAprovar({ id: 'u-lu', email: 'Luciano@X.com' }, marcado('ninguem')), true);
+    assert.equal(consultas.length, 0, 'quem está na variável não depende do banco');
+    // os dois ao mesmo tempo
+    assert.equal(await usuarioPodeAprovar({ id: 'u-ana', email: 'luciano@x.com' }, marcado('u-ana')), true);
+    // a consulta exige marcação + ativo + Master, parametrizada pelo id
+    await usuarioPodeAprovar({ id: 'u-x', email: 'x@x.com' }, marcado('u-ana'));
+    const sql = consultas.at(-1).sql;
+    assert.match(sql, /aprova_reprotocolo = true/);
+    assert.match(sql, /ativo = true/);
+    assert.match(sql, /perfil = 'master'/);
+    assert.deepEqual(consultas.at(-1).params, ['u-x']);
+  } finally { if (antes === undefined) delete process.env.REPROTOCOLO_APROVADORES; else process.env.REPROTOCOLO_APROVADORES = antes; }
+});
+
+test('aprovador (D-S4): sem id não consulta; falha de leitura no banco = só vale a variável (nunca abre a porta)', async () => {
+  const antes = process.env.REPROTOCOLO_APROVADORES;
+  const quebrado = { async queryOne() { throw new Error('coluna inexistente'); } };
+  try {
+    process.env.REPROTOCOLO_APROVADORES = 'luciano@x.com';
+    assert.equal(await usuarioPodeAprovar({ email: 'ana@x.com' }, { async queryOne() { throw new Error('não deveria consultar sem id'); } }), false);
+    assert.equal(await usuarioPodeAprovar({ id: 'u-ana', email: 'ana@x.com' }, quebrado), false);
+    assert.equal(await usuarioPodeAprovar({ id: 'u-lu', email: 'luciano@x.com' }, quebrado), true, 'a variável continua valendo com o banco quebrado');
   } finally { if (antes === undefined) delete process.env.REPROTOCOLO_APROVADORES; else process.env.REPROTOCOLO_APROVADORES = antes; }
 });
 
