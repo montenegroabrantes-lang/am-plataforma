@@ -19,7 +19,7 @@ const DRIVE = '1S6IMMEkOnW2VbWAdweLbJMUAznwPQEBG';
 
 const auditoria = [];
 const ch = { reservar: [], montar: [], cancelar: [], modelo: [], importar: [], aprovar: [] };
-let respostaAprovar = { ok: true, pacote_id: 'p', aprovacao: { valor_causa: 6118.03, acima_do_teto_ciente: false } };
+let respostaAprovar = { ok: true, pacote_id: 'p', aprovacao: { valor_causa: 6118.03, acima_do_teto_ciente: false, valor_divergente_ciente: false, proposta_do_sistema: 6118.03 } };
 let respostaMontar = { ok: true, pacote_id: P1, relatorio: { periodo: { meses: 33 }, pronto_para_gerar_pecas: false }, texto: 'texto' };
 let cancelou = true;
 let erroModelo = null;
@@ -172,6 +172,23 @@ test('aprovar: só o aprovador designado, só por sessão do AM; repassa erros d
   assert.equal(ok.corpo.aprovacao.valor_causa, 6118.03);
   assert.deepEqual([ch.aprovar.at(-1).usuarioId, ch.aprovar.at(-1).valorCausa, ch.aprovar.at(-1).acimaDoTetoCiente], ['lu', 6118.03, false]);
   assert.equal(auditoria.at(-1).acao, 'aprovar_pacote_reprotocolo');
+  assert.deepEqual(auditoria.at(-1).valorDepois, { valor_causa: 6118.03, proposta_do_sistema: 6118.03, acima_do_teto_ciente: false, valor_divergente_ciente: false }, 'a auditoria leva o valor proposto e o aprovado');
+  assert.equal((await chamar('POST', url, TOKENS.luciano, { ...corpo, valor_divergente_ciente: 'sim' })).status, 400);
+  assert.equal((await chamar('POST', url, TOKENS.luciano, { ...corpo, valor_divergente_ciente: 1 })).status, 400);
+  const semCiencia = ch.aprovar.length;
+  assert.equal(ch.aprovar.at(-1).valorDivergenteCiente, false, 'sem o campo, o padrão é sem ciência');
+  const comCiencia = await chamar('POST', url, TOKENS.luciano, { ...corpo, valor_divergente_ciente: true });
+  assert.equal(comCiencia.status, 200);
+  assert.equal(ch.aprovar.length, semCiencia + 1);
+  assert.equal(ch.aprovar.at(-1).valorDivergenteCiente, true);
+  // a resposta com o valor em texto pt-BR chega ao serviço sem conversão na rota (quem converte é o serviço)
+  await chamar('POST', url, TOKENS.luciano, { ...corpo, valor_causa: '812,35' });
+  assert.equal(ch.aprovar.at(-1).valorCausa, '812,35');
+  respostaAprovar = { ok: false, status: 409, motivo: 'valor_divergente', proposta: 812.35, valor_informado: 81235, erro: 'O valor informado (R$ 81.235,00) é muito diferente da proposta (R$ 812,35). Confira a vírgula e confirme.' };
+  const divergente = await chamar('POST', url, TOKENS.luciano, { valor_causa: 81235 });
+  assert.equal(divergente.status, 409);
+  assert.deepEqual([divergente.corpo.motivo, divergente.corpo.proposta, divergente.corpo.valor_informado], ['valor_divergente', 812.35, 81235]);
+  assert.match(divergente.corpo.erro, /R\$\s81\.235,00/);
   respostaAprovar = { ok: false, status: 409, erro: 'O valor passa do teto do Juizado.', teto: 97260 };
   const teto = await chamar('POST', url, TOKENS.luciano, { valor_causa: 100000 });
   assert.equal(teto.status, 409);

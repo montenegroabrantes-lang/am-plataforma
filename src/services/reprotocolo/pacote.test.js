@@ -198,7 +198,7 @@ test('aprovar: grava valor, quem aprovou e a proposta do sistema; documentos e v
   assert.equal(r.ok, true);
   const [valor, quem, json, id] = conexao.updates[0];
   assert.deepEqual([valor, quem, id], [6118.03, 'lu', 'pac-1']);
-  assert.deepEqual(JSON.parse(json), { valor_causa: 6118.03, observacao: 'conferido', acima_do_teto_ciente: false, proposta_do_sistema: 6118.03 });
+  assert.deepEqual(JSON.parse(json), { valor_causa: 6118.03, observacao: 'conferido', acima_do_teto_ciente: false, valor_divergente_ciente: false, proposta_do_sistema: 6118.03 });
 });
 
 test('aprovar: valor acima do teto de 60 salários mínimos exige ciência explícita', async () => {
@@ -210,6 +210,83 @@ test('aprovar: valor acima do teto de 60 salários mínimos exige ciência expl�
   assert.match(barrado.erro, /teto do Juizado/);
   assert.equal((await aprovarPacote({ ...base, acimaDoTetoCiente: true, conexao: conexaoAprovacao({ pacote: montado() }) })).ok, true);
   assert.equal((await aprovarPacote({ ...base, valorCausa: 97260, conexao: conexaoAprovacao({ pacote: montado() }) })).ok, true, 'exatamente no teto passa');
+});
+
+// ── trava do valor divergente (S-17) ──
+const comProposta = (valor) => montado({ dados: { pendencias: [], valor_da_causa: { valor } } });
+const aprovarValor = (valorCausa, proposta, extra = {}) => {
+  const conexao = conexaoAprovacao({ pacote: comProposta(proposta) });
+  return aprovarPacote({ conexao, pacoteId: 'pac-1', usuarioId: 'lu', valorCausa, verificar: async () => ({ resultados: [resultado()] }), agora: AGORA, salarioMinimo: null, ...extra })
+    .then(r => ({ r, conexao }));
+};
+
+test('aprovar: valor em pt-BR e com ponto decimal chegam iguais; 812,35 e 812.35 passam', async () => {
+  for (const v of ['812,35', '812.35', 812.35, 'R$ 812,35']) {
+    const { r, conexao } = await aprovarValor(v, 812.35);
+    assert.equal(r.ok, true, String(v));
+    assert.equal(conexao.updates[0][0], 812.35, String(v));
+  }
+  assert.equal((await aprovarValor('1.234,56', 1234.56)).r.ok, true);
+});
+
+test('aprovar: valor 100 vezes maior (81235 e "81.235") é recusado com 409 e os dois valores na mensagem', async () => {
+  for (const v of [81235, '81.235', '81235', '81.235,00']) {
+    const { r, conexao } = await aprovarValor(v, 812.35);
+    assert.equal(r.ok, false, String(v));
+    assert.equal(r.status, 409);
+    assert.equal(r.motivo, 'valor_divergente');
+    assert.match(r.erro, /R\$\s81\.235,00/);
+    assert.match(r.erro, /R\$\s812,35/);
+    assert.equal(r.proposta, 812.35);
+    assert.equal(r.valor_informado, 81235);
+    assert.equal(conexao.updates.length, 0, 'nada gravado');
+  }
+});
+
+test('aprovar: erro de uma casa decimal (812,30 → 8.123, exatamente 10 vezes) e o limite de 5 vezes', async () => {
+  const dez = await aprovarValor('8.123', 812.3);
+  assert.equal(dez.r.status, 409);
+  assert.equal(dez.r.motivo, 'valor_divergente');
+  assert.equal((await aprovarValor(8123, 812.3)).r.status, 409);
+  // exatamente 5 vezes já trava; logo abaixo passa
+  assert.equal((await aprovarValor(4000, 800)).r.status, 409);
+  assert.equal((await aprovarValor(3999.99, 800)).r.ok, true);
+  assert.equal((await aprovarValor(3000, 812.35)).r.ok, true, '3,7 vezes passa sem ciente');
+  assert.equal((await aprovarValor(900, 812.35)).r.ok, true);
+});
+
+test('aprovar: valor 1/5 ou menos da proposta também trava (para menos)', async () => {
+  const um5 = await aprovarValor(162.47, 812.35);
+  assert.equal(um5.r.status, 409);
+  assert.equal(um5.r.motivo, 'valor_divergente');
+  assert.equal((await aprovarValor(8.12, 812.35)).r.status, 409);
+  assert.equal((await aprovarValor(162.48, 812.35)).r.ok, true);
+  assert.equal((await aprovarValor(400, 812.35)).r.ok, true);
+});
+
+test('aprovar: com a ciência explícita o valor divergente passa e a aprovação registra proposta e ciência', async () => {
+  const { r, conexao } = await aprovarValor(81235, 812.35, { valorDivergenteCiente: true });
+  assert.equal(r.ok, true);
+  const aprov = JSON.parse(conexao.updates[0][2]);
+  assert.equal(aprov.valor_causa, 81235);
+  assert.equal(aprov.proposta_do_sistema, 812.35);
+  assert.equal(aprov.valor_divergente_ciente, true);
+  const normal = await aprovarValor(812.35, 812.35);
+  assert.equal(JSON.parse(normal.conexao.updates[0][2]).valor_divergente_ciente, false);
+});
+
+test('aprovar: sem proposta (a informar) não há o que comparar; valor inválido continua 400', async () => {
+  for (const proposta of [null, 0, undefined]) assert.equal((await aprovarValor(81235, proposta)).r.ok, true, String(proposta));
+  for (const v of ['abc', '', 0, -812, null, undefined, true, {}, [], NaN, Infinity]) {
+    const { r } = await aprovarValor(v, 812.35);
+    assert.equal(r.status, 400, String(v));
+  }
+});
+
+test('aprovar: a trava de valor divergente não substitui a do teto do Juizado (as duas valem)', async () => {
+  const { r } = await aprovarValor(100000, 90000, { salarioMinimo: 1621 });
+  assert.equal(r.status, 409);
+  assert.match(r.erro, /teto do Juizado/);
 });
 
 test('aprovador: só e-mails de REPROTOCOLO_APROVADORES; sem a variável ninguém aprova', () => {

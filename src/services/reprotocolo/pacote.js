@@ -15,6 +15,7 @@ import { verificarCiclos } from './verificacao.js';
 import { calcularValorCausa, salarioMinimoVigente, TETO_JUIZADO_SALARIOS } from './valorCausa.js';
 import { normalizarTexto } from '../remuneracaoEstadual.js';
 import { montarChecklist } from './checklist.js';
+import { valorDaCausaDoCorpo } from '../../utils/valorBR.js';
 
 export const STATUS_PACOTE = { RESERVADO: 'reservado', MONTADO: 'montado', APROVADO: 'aprovado', CANCELADO: 'cancelado' };
 export const TIPOS_MODELO = ['inicial', 'procuracao'];
@@ -28,6 +29,9 @@ export const usuarioPodeAprovar = (usuario) => Boolean(usuario?.email) && aprova
 // Pendências que impedem a aprovação (não dá para gerar a inicial sem o modelo). Documentos a colher
 // e o valor da causa não impedem: o valor é informado na própria aprovação.
 export const PENDENCIAS_QUE_BLOQUEIAM_APROVACAO = ['modelo_inicial', 'modelo_sem_arquivo'];
+// Valor aprovado 5 vezes ou mais maior (ou 1/5 ou menos) que a proposta do sistema exige ciência explícita.
+// Não é 10: "812,30" virando 8123 é exatamente 10 vezes, e o erro de vírgula/ponto é o que esta trava pega.
+export const FATOR_VALOR_DIVERGENTE = 5;
 
 // Ente do AM → código do ente no acervo; tese do AM → código da tese no acervo.
 export function slugEnteAcervo(ente) {
@@ -198,22 +202,31 @@ export async function obterPacote({ conexao = db, pacoteId }) {
   return { ...p, texto: p.dados?.versao ? relatorioEmTexto(p.dados) : null };
 }
 
-export async function aprovarPacote({ conexao = db, pacoteId, usuarioId, valorCausa, observacao = '', acimaDoTetoCiente = false, podeVerRestrito = false,
+export async function aprovarPacote({ conexao = db, pacoteId, usuarioId, valorCausa, observacao = '', acimaDoTetoCiente = false, valorDivergenteCiente = false, podeVerRestrito = false,
   agora = new Date(), verificar = verificarCiclos, salarioMinimo = salarioMinimoVigente() }) {
   const pacote = await conexao.queryOne(`SELECT * FROM pacotes_reprotocolo WHERE id = $1 FOR UPDATE`, [pacoteId]);
   if (!pacote) return { ok: false, status: 404, erro: 'Pacote não encontrado.' };
   if (pacote.status !== STATUS_PACOTE.MONTADO) return { ok: false, status: 409, erro: `Pacote ${pacote.status}: só um pacote montado pode ser aprovado.` };
   const bloqueantes = (pacote.dados?.pendencias || []).filter(p => PENDENCIAS_QUE_BLOQUEIAM_APROVACAO.includes(p?.codigo));
   if (bloqueantes.length) return { ok: false, status: 409, erro: bloqueantes.map(p => p.texto).join(' '), pendencias: bloqueantes.map(p => p.codigo) };
-  const valor = Math.round(Number(valorCausa) * 100) / 100;
+  const valor = Math.round(valorDaCausaDoCorpo(valorCausa) * 100) / 100;
   if (!Number.isFinite(valor) || valor <= 0) return { ok: false, status: 400, erro: 'Informe o valor da causa (maior que zero).' };
+  // Trava do erro de vírgula/ponto (S-17): em centavos inteiros, para o limite exato não depender de ponto flutuante.
+  const proposta = Number(pacote.dados?.valor_da_causa?.valor);
+  if (Number.isFinite(proposta) && proposta > 0 && !valorDivergenteCiente) {
+    const centavos = Math.round(valor * 100), centavosProposta = Math.round(proposta * 100);
+    if (centavos >= FATOR_VALOR_DIVERGENTE * centavosProposta || centavos * FATOR_VALOR_DIVERGENTE <= centavosProposta) {
+      const brl = n => n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+      return { ok: false, status: 409, motivo: 'valor_divergente', proposta, valor_informado: valor, erro: `O valor informado (${brl(valor)}) é muito diferente da proposta (${brl(proposta)}). Confira a vírgula e confirme.` };
+    }
+  }
   if (salarioMinimo) {
     const teto = Math.round(TETO_JUIZADO_SALARIOS * salarioMinimo * 100) / 100;
     if (valor > teto && !acimaDoTetoCiente) return { ok: false, status: 409, erro: `O valor passa do teto do Juizado (${TETO_JUIZADO_SALARIOS} salários mínimos = R$ ${teto.toFixed(2).replace('.', ',')}): confirme que está ciente.`, teto };
   }
   const { resultados } = await verificar({ conexao, podeVerRestrito, tarefaId: pacote.tarefa_id, agora });
   if (!resultados[0]?.confirmacao.confirmada) return { ok: false, status: 409, erro: 'A confirmação da verificação perdeu a validade: confirme de novo e remonte o pacote.', motivo: resultados[0]?.confirmacao.motivo ?? 'fora_das_filas' };
-  const aprovacao = { valor_causa: valor, observacao: String(observacao).trim() || null, acima_do_teto_ciente: Boolean(acimaDoTetoCiente), proposta_do_sistema: pacote.dados?.valor_da_causa?.valor ?? null };
+  const aprovacao = { valor_causa: valor, observacao: String(observacao).trim() || null, acima_do_teto_ciente: Boolean(acimaDoTetoCiente), valor_divergente_ciente: Boolean(valorDivergenteCiente), proposta_do_sistema: pacote.dados?.valor_da_causa?.valor ?? null };
   await conexao.execute(
     `UPDATE pacotes_reprotocolo SET status = 'aprovado', valor_causa = $1, valor_exige_humano = false, aprovado_por = $2, aprovado_em = NOW(),
             dados = jsonb_set(dados, '{aprovacao}', $3::jsonb), atualizado_em = NOW() WHERE id = $4`,

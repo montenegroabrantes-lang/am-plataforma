@@ -261,16 +261,17 @@ export function criarReprotocoloRouter({
     res.json({ ok: true, pacote_id: r.pacote_id, relatorio: r.relatorio, texto: r.texto });
   });
 
-  // POST /api/reprotocolo/pacotes/:id/aprovar { valor_causa, observacao, acima_do_teto_ciente } — só o aprovador
+  // POST /api/reprotocolo/pacotes/:id/aprovar { valor_causa, observacao, acima_do_teto_ciente, valor_divergente_ciente } — só o aprovador
   // configurado (REPROTOCOLO_APROVADORES) e só por sessão do AM. Aprova período, valor da causa e modelo.
   router.post('/pacotes/:id/aprovar', apenasSessao, async (req, res) => {
     if (!uuidValido(req.params.id)) return res.status(400).json({ ok: false, erro: 'ID de pacote inválido.' });
     if (!podeAprovar(req.user)) return res.status(403).json({ ok: false, erro: 'Só o aprovador designado pode aprovar o pacote.' });
-    const { valor_causa: valor, observacao = '', acima_do_teto_ciente: ciente = false } = req.body || {};
+    const { valor_causa: valor, observacao = '', acima_do_teto_ciente: ciente = false, valor_divergente_ciente: divergenteCiente = false } = req.body || {};
     if (typeof ciente !== 'boolean') return res.status(400).json({ ok: false, erro: 'acima_do_teto_ciente deve ser true ou false.' });
-    const r = await transacao(tx => pacotes.aprovar({ conexao: tx, pacoteId: req.params.id, usuarioId: req.user.id, valorCausa: valor, observacao: String(observacao).slice(0, 500), acimaDoTetoCiente: ciente, podeVerRestrito: Boolean(req.user.pode_marcar_restrito) }));
-    if (!r.ok) return res.status(r.status || 400).json({ ok: false, erro: r.erro, motivo: r.motivo ?? null, pendencias: r.pendencias ?? null, teto: r.teto ?? null });
-    await auditar({ usuarioId: req.user.id, acao: 'aprovar_pacote_reprotocolo', entidade: 'pacote_reprotocolo', entidadeId: req.params.id, valorDepois: { valor_causa: r.aprovacao.valor_causa, acima_do_teto_ciente: r.aprovacao.acima_do_teto_ciente }, ip: req._ip });
+    if (typeof divergenteCiente !== 'boolean') return res.status(400).json({ ok: false, erro: 'valor_divergente_ciente deve ser true ou false.' });
+    const r = await transacao(tx => pacotes.aprovar({ conexao: tx, pacoteId: req.params.id, usuarioId: req.user.id, valorCausa: valor, observacao: String(observacao).slice(0, 500), acimaDoTetoCiente: ciente, valorDivergenteCiente: divergenteCiente, podeVerRestrito: Boolean(req.user.pode_marcar_restrito) }));
+    if (!r.ok) return res.status(r.status || 400).json({ ok: false, erro: r.erro, motivo: r.motivo ?? null, pendencias: r.pendencias ?? null, teto: r.teto ?? null, proposta: r.proposta ?? null, valor_informado: r.valor_informado ?? null });
+    await auditar({ usuarioId: req.user.id, acao: 'aprovar_pacote_reprotocolo', entidade: 'pacote_reprotocolo', entidadeId: req.params.id, valorDepois: { valor_causa: r.aprovacao.valor_causa, proposta_do_sistema: r.aprovacao.proposta_do_sistema, acima_do_teto_ciente: r.aprovacao.acima_do_teto_ciente, valor_divergente_ciente: r.aprovacao.valor_divergente_ciente }, ip: req._ip });
     res.json({ ok: true, pacote_id: r.pacote_id, aprovacao: r.aprovacao });
   });
 
