@@ -1,23 +1,30 @@
 # Contexto permanente — Sistema AM
 
-**Última atualização:** 29/09/2026 (Fases 0 e 2 do re-protocolo implementadas em branches locais, não publicadas; Camila: sem transferência ao Jurídico por outro advogado/sindicato, prazo 6 a 11 meses, trava do fechamento genérico; worker de backup corrigido e publicado — ver as seções de 28/09/2026 no fim)
+**Última atualização:** 29/09/2026, noite (re-protocolo: verificação, confirmação, pacote e aprovação NO AR e configurados; ver o aviso "LER PRIMEIRO" e as seções de 29/09/2026 no fim)
 **Finalidade:** continuidade segura do desenvolvimento em outros chats e sessões.
 
 Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
 qualquer alteração e atualizado depois de mudanças materiais no código, banco,
 integrações ou produção. Não registrar segredos neste documento.
 
-> **LER PRIMEIRO — estado em 29/09/2026 (tarde):** Fase 0 e Fase 2 do re-protocolo **PUBLICADAS no
-> backend** (push do usuário `2b24638..fa09938`, deploy Railway `effb5521` SUCCESS). Verificado em
-> produção (leitura): migrações `2026_09_28_saneamento_fila_reprotocolo`,
-> `2026_09_29_verificacao_reprotocolo` e `2026_09_29_pacote_reprotocolo` aplicadas uma vez; 5 tabelas
-> novas; auditoria do saneamento = 186 ciclos adiados + 5 tarefas à triagem; fila "Novos ciclos" caiu
-> de 364 para 178. **Frontend PUBLICADO** (`am-plataforma-web` `1238607..e6a3fba`, deploy Railway
-> `8472f278` SUCCESS; o JavaScript publicado de Tarefas contém o botão "Importar apuração…").
-> Próximo passo do usuário: importar a apuração por esse botão (arquivo local fora do Git).
-> `REPROTOCOLO_EXIGE_CONFIRMACAO` e
-> `SALARIO_MINIMO_VIGENTE` NÃO configuradas. O diff antigo de `src/index.js` foi guardado em
-> `git stash` no checkout principal (superado). Levantamento de 28/09 segue no ar (decisão pendente).
+> **LER PRIMEIRO — estado em 29/09/2026 (noite):** o **re-protocolo automatizado está NO AR e
+> configurado** (Fase 0, verificação gravada no AM, pacote em modo sombra, aprovação e importação):
+> backend `2b24638..fa09938` e `fa09938..fdd2a82` (deploys Railway `effb5521` e `969cb387`),
+> frontend `1238607..e6a3fba` e `13c44e9..eb13304` (deploys `8472f278` e `cdc49c2d`). Variáveis do
+> backend aplicadas pelo usuário (deploy `8467b4a0`): `SALARIO_MINIMO_VIGENTE=1621` e
+> `REPROTOCOLO_APROVADORES` (e-mail do usuário Master Luciano Montenegro; sem ela ninguém aprova).
+> `REPROTOCOLO_EXIGE_CONFIRMACAO` segue DESLIGADA (o aceite do ciclo não exige confirmação).
+> Verificado em produção: 3 migrações aplicadas, 5+2 tabelas novas, 186 ciclos adiados e 5 tarefas à
+> triagem (fila "Novos ciclos" de 364 para 178), rotas novas respondem 401 sem login.
+> **Falta o USUÁRIO operar a tela** (Tarefas > Novos ciclos / Re-protocolo): importar a apuração
+> (arquivo local `importacao-reprotocolo.json`, fora do Git, contém nomes de pastas), confirmar o
+> grupo Confirmado, colar o link do arquivo do modelo de inicial do Município (o acervo tem esse
+> modelo SEM arquivo do Drive), reservar/montar os pacotes; o Luciano aprova informando o valor da
+> causa. Decisões do usuário: procuração ANTERIOR reaproveitada; modelos de inicial vêm do acervo;
+> salário mínimo 1621; aprovador = Luciano. **Ainda não existe:** fórmula do valor da causa (os 8% são
+> só referência), geração da inicial, indexador do Drive no servidor, ferramentas de escrita do chat,
+> piloto no PJe. O levantamento de 28/09 segue no ar (decisão de manter/reverter pendente). O diff
+> antigo de `src/index.js` foi guardado em `git stash` no checkout principal (superado).
 
 > **PENDENTE — autorizado por Ramon em 21/09/2026 pra executar na mesma noite:** o restante da
 > Fase 6 do cronograma de resiliência (auditoria transacional, migrações versionadas,
@@ -2489,11 +2496,11 @@ vinculado. O acervo não tem rota para editar o link de uma peça; o pacote acei
   card renderizados em servidor; relatórios de exemplo com dados reais (Estado: modelo achado com
   arquivo; Município: modelo sem arquivo).
 
-**Publicação de 29/09/2026 (fim do dia):** backend `fa09938..fdd2a82` publicado a pedido do usuário (deploy Railway
-`969cb387` SUCCESS; `POST /api/reprotocolo/pacotes/:id/aprovar` responde 401 sem login, ou seja, a rota
-existe). **Frontend NÃO publicado:** o push foi recusado porque `origin/main` do `am-plataforma-web`
-avançou (`13c44e9`, correção de Estimativas feita por outra sessão) e o passo de reaplicar o commit
-`f52f4ff` foi negado pelo modo automático. **Variáveis do Railway NÃO aplicadas**
-(`SALARIO_MINIMO_VIGENTE=1621`, `REPROTOCOLO_APROVADORES`). Enquanto o frontend não sobe, a tela do pacote
-(reservar, montar, aprovar) não existe para o usuário; o backend já responde às rotas.
+**Publicação de 29/09/2026 (noite) — concluída:** backend `fa09938..fdd2a82` (deploy `969cb387`), frontend
+`13c44e9..eb13304` (o commit `f52f4ff` foi reaplicado pelo usuário com `cherry-pick` por cima de uma correção
+de Estimativas feita por outra sessão; deploy `cdc49c2d`; o JavaScript publicado de Tarefas contém
+"Reservar pacote", "Aprovar pacote", "Vincular modelo" e "Importar apuração") e variáveis do Railway
+(deploy `8467b4a0`, conferidas). Lição de processo: o modo automático nega `git push`/`rebase` e mudança de
+variável de produção mesmo com pedido do usuário no chat; o usuário roda esses comandos no próprio
+terminal, e o assistente confere o resultado (deploy, rotas, variáveis) em seguida.
 
