@@ -124,7 +124,7 @@ export async function criarOuBuscarContato(numero, nome) {
 
   const phone = String(numero || '').replace(/\D/g, '');
   if (phone.length < 10) {
-    console.warn('[Digisac] criarOuBuscarContato: número inválido —', numero);
+    console.warn(`[Digisac] criarOuBuscarContato: número inválido — ${mascararTelefone(numero)}`);
     return null;
   }
   const numeroCompleto = phone.startsWith('55') ? phone : `55${phone}`;
@@ -151,10 +151,10 @@ export async function criarOuBuscarContato(numero, nome) {
       defaultDepartmentId: null,
     });
     const contatoId = criado.data?.id || criado.data?.data?.id || null;
-    if (contatoId) console.log(`[Digisac] Contato criado para +${numeroCompleto}: ${contatoId}`);
+    if (contatoId) console.log(`[Digisac] Contato criado para ${mascararTelefone(numeroCompleto)}: ${contatoId}`);
     return contatoId;
   } catch (err) {
-    console.error('[Digisac] Erro ao criar/buscar contato:', err.response?.data || err.message);
+    console.error('[Digisac] Erro ao criar/buscar contato:', textoErroSeguro(err)); // o corpo do erro pode ecoar o telefone
     return null;
   }
 }

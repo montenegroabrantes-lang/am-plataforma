@@ -1,7 +1,6 @@
 import { Worker } from 'bullmq';
 import { redis }  from '../cache/redis.js';
-import { db }     from '../db/index.js';
-import { enviarAlerta } from '../services/digisac/index.js';
+import { enviarLembretesDiarios, enviarEscalonamentoVespera } from './alertasTarefas.js';
 import { verificarCiclosRecorrentes } from '../services/ciclosRecorrentes.js';
 import { verificarWatchdogSAC } from './sac.worker.js';
 import { reprocessarSincronizacaoCamila } from '../services/reprocessarSyncCamila.js';
@@ -33,91 +32,4 @@ export function criarAlertasWorker() {
       await verificarTokenGoogle();
     }
   }, { connection: redis, concurrency: 1 });
-}
-
-async function enviarLembretesDiarios() {
-  const masters = await db.query(
-    `SELECT id, nome, whatsapp FROM usuarios
-     WHERE perfil = 'master' AND whatsapp IS NOT NULL AND whatsapp <> ''`
-  );
-
-  let enviados = 0;
-  for (const master of masters) {
-    const tarefas = await db.query(
-      `SELECT t.urgencia, COUNT(*) AS total
-       FROM tarefas t
-       WHERE t.status NOT IN ('concluida','cancelada','bloqueada')
-         AND COALESCE(t.precisa_triagem,false)=false
-         AND t.validado_por = $1
-       GROUP BY t.urgencia
-       ORDER BY CASE t.urgencia WHEN 'CRITICO' THEN 1 WHEN 'ALTO' THEN 2 WHEN 'MEDIO' THEN 3 ELSE 4 END`,
-      [master.id]
-    );
-
-    const obj     = Object.fromEntries(tarefas.map(r => [r.urgencia, Number(r.total)]));
-    const critico = obj.CRITICO || 0;
-    const alto    = obj.ALTO    || 0;
-    const medio   = obj.MEDIO   || 0;
-
-    if (critico + alto + medio === 0) continue;
-
-    const linhas = [];
-    if (critico > 0) linhas.push(`🔴 ${critico} Crítica${critico > 1 ? 's' : ''}`);
-    if (alto    > 0) linhas.push(`🟠 ${alto} Alta${alto > 1 ? 's' : ''}`);
-    if (medio   > 0) linhas.push(`🟡 ${medio} Média${medio > 1 ? 's' : ''}`);
-
-    const msg =
-      `📋 *Bom dia, ${master.nome.split(' ')[0]}!*\n\n` +
-      `Resumo de tarefas pendentes:\n${linhas.join('\n')}\n\n` +
-      `Acesse a plataforma para ver os detalhes.`;
-
-    const r = await enviarAlerta(master.whatsapp, msg, { tipo: 'lembrete_diario', origem: 'lembretes_diarios', usuarioId: master.id });
-    if (r.ok) enviados++;
-  }
-
-  // Conta só o que o Digisac aceitou (R-05): antes o log dizia "enviados" mesmo com a falha engolida.
-  console.log(`[Alertas] Lembretes diários enviados para ${enviados} de ${masters.length} master(s).`);
-}
-
-// Escalonamento de véspera — alerta diretamente o responsável (atribuído) por tarefas
-// cujo prazo vence amanhã ou hoje, além de notificar o master validador em caso crítico.
-async function enviarEscalonamentoVespera() {
-  const tarefas = await db.query(
-    `SELECT t.id, t.descricao, t.tipo, t.prazo_data,
-            (t.prazo_data::date - CURRENT_DATE) AS dias_restantes,
-            ua.id AS atribuido_id, ua.nome AS atribuido_nome, ua.whatsapp AS atribuido_whatsapp,
-            um.id AS master_id, um.nome AS master_nome, um.whatsapp AS master_whatsapp
-     FROM tarefas t
-     JOIN usuarios ua ON ua.id = t.atribuido_a
-     LEFT JOIN usuarios um ON um.id = t.validado_por
-     WHERE t.status NOT IN ('concluida', 'cancelada', 'devolvida', 'bloqueada')
-       AND COALESCE(t.precisa_triagem,false)=false
-       AND t.prazo_data IS NOT NULL
-       AND (t.prazo_data::date - CURRENT_DATE) IN (0, 1)`
-  );
-
-  const porResponsavel = new Map();
-  for (const t of tarefas) {
-    if (!t.atribuido_whatsapp) continue;
-    if (!porResponsavel.has(t.atribuido_id)) porResponsavel.set(t.atribuido_id, { nome: t.atribuido_nome, whatsapp: t.atribuido_whatsapp, tarefas: [] });
-    porResponsavel.get(t.atribuido_id).tarefas.push(t);
-  }
-
-  let enviados = 0;
-  for (const [usuarioId, { nome, whatsapp, tarefas: lista }] of porResponsavel) {
-    const linhas = lista.map(t => {
-      const quando = Number(t.dias_restantes) === 0 ? 'HOJE' : 'AMANHÃ';
-      return `🔴 ${quando} — ${t.descricao}`;
-    });
-    const msg =
-      `⏰ *Atenção, ${nome.split(' ')[0]}!*\n\n` +
-      `Você tem ${lista.length} prazo${lista.length > 1 ? 's' : ''} vencendo:\n${linhas.join('\n')}\n\n` +
-      `Acesse a plataforma para regularizar.`;
-    // enviarAlerta nunca lança: a falha vem no resultado (R-05), então o .catch antigo era código morto.
-    const r = await enviarAlerta(whatsapp, msg, { tipo: 'vespera', origem: 'escalonamento_vespera', usuarioId });
-    if (r.ok) enviados++;
-    else console.warn(`[Escalonamento] Alerta de véspera não entregue a ${nome}:`, r.erro);
-  }
-
-  console.log(`[Alertas] Escalonamento de véspera enviado para ${enviados} de ${porResponsavel.size} responsável(is) — ${tarefas.length} tarefa(s) críticas.`);
 }

@@ -3,9 +3,10 @@ import { redis }        from '../cache/redis.js';
 import { criarSyncWorker, criarSyncIndividualWorker } from './sync.worker.js';
 import { criarBackupWorker }    from './backup.worker.js';
 import { criarAudienciaWorker }        from './audiencia.worker.js';
-import { criarSACWorker, agendarSACWorker } from './sac.worker.js';
+import { criarSACWorker, agendarSACWorker, sacQueue } from './sac.worker.js';
 import { criarAlertasWorker }   from './alertas.worker.js';
 import { criarPushTJWorker }    from './pushTJ.worker.js';
+import { AGENDA, removerAgendamentosAntigos, descreverAgendamentos } from './agendamentos.js';
 import { outlookConfigurado }   from '../services/outlook/auth.js';
 
 let syncQueue;
@@ -86,48 +87,49 @@ export async function iniciarWorkers() {
     console.warn('[Workers] Não foi possível fechar sync interrompido:', err.message); // não bloqueia boot
   }
 
-  // Backup diário às 2h
+  // Backup diário às 02h de Brasília (A5-03/A4-08: sem `tz` rodava às 23h). Horários em agendamentos.js.
   await backupQueue.add(
     'backup-diario',
     {},
     {
-      repeat:     { pattern: '0 2 * * *' },
+      repeat:     { ...AGENDA['backup-diario'] },
       jobId:      'backup-diario-recorrente',
       removeOnComplete: 3,
       removeOnFail:     3,
     }
   );
 
-  // Lembretes diários de tarefas via WhatsApp às 8h
+  // Lembretes diários de tarefas via WhatsApp às 08h de Brasília, segunda a sexta (antes: 05h, todo dia)
   await alertasQueue.add(
     'lembretes-diarios',
     {},
     {
-      repeat:           { pattern: '0 8 * * *' },
+      repeat:           { ...AGENDA['lembretes-diarios'] },
       jobId:            'lembretes-diarios-recorrente',
       removeOnComplete: 3,
       removeOnFail:     3,
     }
   );
 
-  // Verificação diária de ciclos recorrentes (FGTS Remanescente, etc.) às 7h
+  // Verificação diária de ciclos recorrentes (FGTS Remanescente, etc.) às 07h de Brasília (antes: 04h)
   await alertasQueue.add(
     'ciclos-recorrentes',
     {},
     {
-      repeat:           { pattern: '0 7 * * *' },
+      repeat:           { ...AGENDA['ciclos-recorrentes'] },
       jobId:            'ciclos-recorrentes-diario',
       removeOnComplete: 3,
       removeOnFail:     3,
     }
   );
 
-  // Escalonamento de véspera de prazos — alerta o responsável direto às 8h30 e 16h
+  // Escalonamento de véspera de prazos — alerta o responsável direto às 08h30 e 16h30 de Brasília, de
+  // segunda a sexta (antes: 05h30 e 13h30, todo dia)
   await alertasQueue.add(
     'escalonamento-vespera',
     {},
     {
-      repeat:           { pattern: '30 8,16 * * *' },
+      repeat:           { ...AGENDA['escalonamento-vespera'] },
       jobId:            'escalonamento-vespera-recorrente',
       removeOnComplete: 3,
       removeOnFail:     3,
@@ -136,12 +138,12 @@ export async function iniciarWorkers() {
 
   // R-01 (30/09/2026) — testa o GOOGLE_REFRESH_TOKEN todo dia às 8h de Brasília (renova de verdade,
   // confere escopos drive+calendar) e alerta os masters por WhatsApp se estiver morto ou incompleto.
-  // Este job já nasce com `tz`; os demais crons seguem em UTC (A5-03, fora deste item).
+  // (Este job já nasceu com `tz`; os que dependiam de relógio de parede ganharam o seu em A5-03.)
   await alertasQueue.add(
     'verificar-token-google',
     {},
     {
-      repeat:           { pattern: '0 8 * * *', tz: 'America/Sao_Paulo' },
+      repeat:           { ...AGENDA['verificar-token-google'] },
       jobId:            'verificar-token-google-diario',
       removeOnComplete: 3,
       removeOnFail:     3,
@@ -178,7 +180,20 @@ export async function iniciarWorkers() {
     }
   );
 
-  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h), Alertas WhatsApp (08h), Ciclos Recorrentes (07h), Escalonamento de Véspera (8h30/16h), Reprocessamento de Sync Camila (15/15min), Reprocessamento de Sync Drive (30/30min) e Teste do token Google (08h BRT) iniciados.');
+  // A5-03: mudar padrão ou `tz` de um repeatable cria um agendamento NOVO e mantém o antigo no
+  // Redis — sem esta limpeza, o bom dia sairia às 05h (UTC antigo) e às 08h, e o backup 2x por dia.
+  // Roda depois dos `add` acima, para nunca haver um instante sem agendamento.
+  await removerAgendamentosAntigos(backupQueue, ['backup-diario']);
+  await removerAgendamentosAntigos(alertasQueue, [
+    'lembretes-diarios', 'ciclos-recorrentes', 'escalonamento-vespera', 'verificar-token-google',
+  ]);
+
+  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h BRT), Alertas WhatsApp (08h BRT, seg-sex), Ciclos Recorrentes (07h BRT), Escalonamento de Véspera (08h30/16h30 BRT, seg-sex), Reprocessamento de Sync Camila (15/15min), Reprocessamento de Sync Drive (30/30min) e Teste do token Google (08h BRT) iniciados.');
+  // Lista dos agendamentos vivos no Redis, com a próxima execução já em Brasília: se algum horário
+  // estiver errado (ou sobrar um agendamento antigo), aparece aqui no primeiro deploy.
+  for (const fila of [syncQueue, backupQueue, alertasQueue, sacQueue]) {
+    for (const linha of await descreverAgendamentos(fila)) console.log(`[Workers] Agendamento: ${linha}`);
+  }
 }
 
 // Dispara sync imediato de um processo — fila separada, não bloqueia pelo lote

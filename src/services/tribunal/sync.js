@@ -5,6 +5,7 @@ import { db }       from '../../db/index.js';
 import { redis }    from '../../cache/redis.js';
 import * as datajud from './datajud.js';
 import { fecharExecucaoSync, mensagemErroSync } from './syncExecucao.js';
+import { montarMensagemCritico } from '../mensagensAlerta.js';
 
 // ─────────────────────────────────────────────
 //  INFERÊNCIA DE SITUACAO_ATUAL PELO TIPO DE AÇÃO
@@ -170,14 +171,15 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
               `SELECT whatsapp FROM usuarios WHERE id = $1`, [processo.master_responsavel_id]
             );
             if (master?.whatsapp) {
-              const prazoTexto = diag.pendencia?.prazoFinal
-                ? `\nPrazo: ${new Date(diag.pendencia.prazoFinal).toLocaleDateString('pt-BR')} ${diag.pendencia.statusPrazo === 'VENCIDO' ? '— VENCIDO' : ''}`
-                : '';
+              // S-14 (30/09/2026): só CNJ, prazo e convite ao AM — antes ia o texto da movimentação
+              // e o resumo da IA, texto livre com nome de parte. Formato em services/mensagensAlerta.js.
               await enviarAlerta(master.whatsapp,
-                `⚠️ *CRÍTICO — ${mov.numero}*\n\n` +
-                `${diag.ultimaMovimentacao?.descricao || mov.texto.slice(0, 200)}` +
-                prazoTexto +
-                `\n\nPendente: ${diag.pendencia?.resumo || 'Verificar processo'}`
+                montarMensagemCritico({
+                  numero: mov.numero,
+                  prazoFinal: diag.pendencia?.prazoFinal,
+                  statusPrazo: diag.pendencia?.statusPrazo,
+                }),
+                { tipo: 'critico', origem: 'sync_critico', usuarioId: processo.master_responsavel_id }
               );
             }
           } catch (alertErr) {
@@ -426,7 +428,7 @@ export async function preencherPolosDataJud(onProgress) {
          WHERE id = $6`,
         [polo_ativo || null, polo_passivo || null, vara || null, acao || null, dataDistribuicao, proc.id]
       ).catch(err => console.warn(`[PolosDataJud] update falhou ${proc.numero}:`, err.message));
-      console.log(`[PolosDataJud] OK: ${proc.numero} — ativo="${polo_ativo}" passivo="${polo_passivo}"`);
+      console.log(`[PolosDataJud] OK: ${proc.numero}`); // sem os nomes dos polos: são dado pessoal (S-14)
       ok++;
       onProgress?.({ total: processos.length, ok, sem_dados });
     }
