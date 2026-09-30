@@ -10,6 +10,7 @@ import { resolverDemanda } from './utils/demandas.js';
 import { garantirTabelaMigrations, migrar } from './db/migrations.js';
 import { aplicarMigracoesS10 } from './db/migracoesS10.js';
 import { criarHealth }    from './health.js';
+import { logarVersoesBoot } from './utils/versaoPgDump.js';
 
 // Rotas
 import { authRouter }          from './routes/auth.js';
@@ -173,6 +174,7 @@ async function iniciar() {
   console.log('[BOOT] DATABASE_URL:', process.env.DATABASE_URL ? 'definida' : 'AUSENTE');
   console.log('[BOOT] REDIS_URL:', process.env.REDIS_URL ? 'definida' : 'AUSENTE');
   console.log('[BOOT] trust proxy:', app.get('trust proxy'), '| limites por IP:', limitesPorIpAtivos() ? 'ligados' : 'DESLIGADOS');
+  logarVersoesBoot().catch(() => {}); // Node e pg_dump no log (S-16); não espera nem bloqueia o boot
 
   try {
     await db.query('SELECT 1');

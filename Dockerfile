@@ -1,48 +1,39 @@
-FROM node:20-slim
+# Node 22 (LTS ativa). A versão do Debian fica fixa em bookworm para o repositório do cliente
+# PostgreSQL (PGDG) continuar o mesmo de sempre; sem isso "node:22-slim" pode andar de Debian.
+FROM node:22-bookworm-slim
 
-# Repositório oficial apt.postgresql.org (PGDG), via script oficial do pacote
-# postgresql-common: o postgresql-client do Debian bookworm trava na major 15, mas o
+# Cliente PostgreSQL do repositório oficial apt.postgresql.org (PGDG), via script oficial do
+# pacote postgresql-common: o postgresql-client do Debian bookworm trava na major 15, mas o
 # Postgres de produção (Railway) está na major 18 — pg_dump 15 contra um servidor 18
 # falha (mismatch de versão) e, sem essa correção, o worker de backup silenciosamente
-# gravava um gzip vazio em vez de abortar (ver backup.worker.js). Este passo só registra
-# o repositório; o "postgresql-client" do apt-get install seguinte passa a resolver para
+# gravava um gzip vazio em vez de abortar (ver backup.worker.js). O script só registra o
+# repositório; o "postgresql-client" do apt-get install seguinte passa a resolver para
 # a versão mais nova do PGDG em vez da 15 do bookworm (sem precisar fixar número aqui,
 # então builds futuros acompanham upgrades de major version do Postgres em produção).
+#
+# ATENÇÃO: este é o ÚNICO motivo de o Dockerfile ter apt-get. O Chromium/Puppeteer que
+# dividia este passo foi removido (nenhum código em src/ usa navegador, desde o Lote S/S-16),
+# mas o postgresql-client NÃO pode sair daqui: é o pg_dump do backup diário (23h).
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-common ca-certificates \
  && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends postgresql-client \
  && rm -rf /var/lib/apt/lists/*
 
-# Chromium para Puppeteer
-RUN apt-get update && apt-get install -y \
-    chromium \
-    fonts-liberation \
-    libappindicator3-1 \
-    libasound2 \
-    libatk-bridge2.0-0 \
-    libatk1.0-0 \
-    libcups2 \
-    libdbus-1-3 \
-    libgdk-pixbuf2.0-0 \
-    libnspr4 \
-    libnss3 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxdamage1 \
-    libxrandr2 \
-    xdg-utils \
-    postgresql-client \
-    --no-install-recommends \
- && rm -rf /var/lib/apt/lists/*
-
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
-ENV CHROMIUM_PATH=/usr/bin/chromium
-
+# /app é do usuário "node": o processo não roda como root (o backup grava em /tmp/am-backups,
+# que qualquer usuário consegue criar; nada mais escreve em disco).
 WORKDIR /app
+RUN chown node:node /app
 
-COPY package.json ./
-RUN npm install --omit=dev
+# Instalação pelo lockfile (npm ci): mesmas versões que foram testadas, sem "latest do dia".
+# npm ci recusa o build se package.json e package-lock.json divergirem; o build falho não
+# vira deploy e o anterior continua no ar. Regerar o lock: npm install --package-lock-only.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
 
-COPY . .
+COPY --chown=node:node . .
+
+USER node
 
 EXPOSE 3001
 
