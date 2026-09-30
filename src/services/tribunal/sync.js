@@ -4,8 +4,16 @@
 import { db }       from '../../db/index.js';
 import { redis }    from '../../cache/redis.js';
 import * as datajud from './datajud.js';
-import { fecharExecucaoSync, mensagemErroSync } from './syncExecucao.js';
+import { fecharExecucaoSync, mensagemErroSync, criarMetricasSync } from './syncExecucao.js';
+import { adquirirLock, CHAVE_LOCK_SYNC } from './syncLock.js';
 import { montarMensagemCritico } from '../mensagensAlerta.js';
+
+// R-06 — andamento com mais de tantos dias nunca aciona IA nem WhatsApp CRÍTICO, e a 1ª captura de um processo
+// (backfill) não aciona nenhum dos dois, seja qual for a idade: a primeira execução do sync corrigido traz
+// meses de andamentos de uma vez.
+const DIAS_MAX_DIAGNOSTICO_IA = 7;
+// Se este tanto de lotes seguidos falhar (após as novas tentativas), o tribunal está fora: não insiste.
+const MAX_LOTES_FALHOS_SEGUIDOS = 3;
 
 // ─────────────────────────────────────────────
 //  INFERÊNCIA DE SITUACAO_ATUAL PELO TIPO DE AÇÃO
@@ -56,13 +64,13 @@ function calcularPrioridade(diag) {
 // ─────────────────────────────────────────────
 //  SALVAR RESULTADO NO BANCO
 // ─────────────────────────────────────────────
-async function salvarResultadoSync(processoId, processo, dados, movimentacoesBrutas) {
+async function salvarResultadoSync(processoId, processo, dados, movimentacoesBrutas, { atualizadoEm = null } = {}) {
   console.log(`[Sync] dados p/${processo.numero}: vara=${dados.vara} movs=${movimentacoesBrutas.length}`);
 
-  await db.execute(
-    `UPDATE processos SET sync_status = 'ok', sync_falhas = 0, atualizado_em = NOW() WHERE id = $1`,
-    [processoId]
-  ).catch(err => console.warn(`[Sync] sync_status update falhou ${processo.numero}:`, err.message));
+  // R-06: 'ok', sync_falhas = 0 e a marca datajud_atualizado_em só são gravados NO FIM (abaixo), depois
+  // de tudo salvo. Antes o 'ok' vinha primeiro: um erro no meio deixava o processo "ok" e o contador zerado.
+  // Sem marca gravada (NULL) esta é a 1ª captura do processo pelo sync novo: backfill, sem IA nem WhatsApp.
+  const backfill = !processo.datajud_atualizado_em;
 
   if (dados.vara || dados.polo_ativo || dados.polo_passivo || dados.habilitados?.length || dados.data_ajuizamento) {
     const dataDistribuicao = parsearDataPtBR(dados.data_ajuizamento);
@@ -93,7 +101,10 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
   }
 
   let novasMovs = 0;
+  let semIA = 0;
+  let errosInsercao = 0;
   const idsNovas = [];
+  const limiteIA = Date.now() - DIAS_MAX_DIAGNOSTICO_IA * 24 * 60 * 60 * 1000;
   const CNJ_PURO = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
   for (const mov of movimentacoesBrutas) {
     if (!mov.texto || mov.texto.length < 10) continue;
@@ -109,9 +120,18 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
          RETURNING id`,
         [processoId, data, mov.tipo || null, mov.texto]
       );
-      if (inserida?.id) { idsNovas.push(inserida.id); novasMovs++; }
-    } catch { /* ignora duplicata */ }
+      if (inserida?.id) {
+        novasMovs++;
+        // Só andamento recente de processo já capturado vai para a IA; o resto (backfill) só é gravado.
+        if (!backfill && data.getTime() >= limiteIA) idsNovas.push(inserida.id); else semIA++;
+      }
+    } catch (err) {
+      // Duplicata é inofensiva (e o ON CONFLICT acima já a absorve). Qualquer OUTRO erro não pode passar
+      // batido: a marca de "capturado" não avança, senão o andamento perdido nunca mais seria buscado.
+      if (err?.code !== '23505') errosInsercao++;
+    }
   }
+  if (semIA > 0) console.log(`[Sync] ${semIA} andamento(s) gravado(s) sem IA e sem alerta (${backfill ? 'primeira captura' : `mais de ${DIAS_MAX_DIAGNOSTICO_IA} dias`}).`);
 
   if (idsNovas.length > 0) {
     const { ai } = await import('../ai/index.js');
@@ -192,16 +212,32 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
     }
   }
 
+  if (errosInsercao > 0) throw new Error(`${errosInsercao} movimentação(ões) não gravada(s)`);
+
+  // Sucesso de verdade: zera o contador de falhas, tira o 'erro_sync' e avança a marca do DataJud.
+  await db.execute(
+    `UPDATE processos
+        SET sync_status = 'ok', sync_falhas = 0, atualizado_em = NOW(),
+            datajud_atualizado_em = COALESCE($2, datajud_atualizado_em)
+      WHERE id = $1`,
+    [processoId, atualizadoEm]
+  );
+
   return novasMovs;
 }
 
 async function consultarComFallback(processo) {
+  let erroApi = null;
   try {
     const r = await datajud.consultarProcesso(processo.tribunal, processo.numero);
     if (r) return { resultado: r, fonte: 'datajud' };
   } catch (err) {
     console.warn(`[Sync] DataJud falhou ${processo.numero}: ${err.message}`);
+    erroApi = err;
   }
+  // API que falhou (429, 5xx, timeout) NÃO é "processo não encontrado": propaga a causa real, para o
+  // sync individual falhar (e tentar de novo) em vez de dizer que o processo não existe.
+  if (erroApi) throw erroApi;
   console.warn(`[Sync] DataJud sem resultado para ${processo.numero}`);
   return null;
 }
@@ -224,22 +260,31 @@ export async function sincronizarProcesso(processoId) {
   if (!resultado) throw new Error(`Processo ${processo.numero} não encontrado no DataJud.`);
 
   const { resultado: r, fonte } = resultado;
-  const novasMovs = await salvarResultadoSync(processoId, processo, r.dados, r.movimentacoes);
+  const novasMovs = await salvarResultadoSync(processoId, processo, r.dados, r.movimentacoes, { atualizadoEm: r.atualizadoEm });
   await db.execute(`UPDATE processos SET sync_fonte = $1 WHERE id = $2`, [fonte, processoId]).catch(() => {});
   console.log(`[Sync] ${processo.numero} via ${fonte}: ${novasMovs} novas movimentações.`);
   return { processoId, novasMovimentacoes: novasMovs, fonte };
 }
 
 // ─────────────────────────────────────────────
-//  SINCRONIZAR TODOS — DataJud inteligente por data
-//  Em vez de consultar 864 processos um a um, faz UMA query
-//  por tribunal pedindo só os atualizados desde o último sync.
-//  Roda a cada hora via BullMQ em segundos (não minutos).
+//  SINCRONIZAR TODOS — pelos NOSSOS números, em lotes (R-06)
+//  Pergunta ao DataJud por 100 números de cada vez (terms em numeroProcesso; ~800 processos = 9 requisições)
+//  e, para cada processo reconhecido, compara a data de atualização recebida com a já gravada
+//  (processos.datajud_atualizado_em): só o que mudou é regravado. Roda a cada hora via BullMQ.
+//
+//  Garantias:
+//   - 429, 5xx e timeout são FALHA (nova tentativa com espera crescente dentro do datajud.js; esgotadas, o
+//     lote inteiro conta como falha), nunca "nada mudou";
+//   - não existe janela para avançar: a marca de cada processo só avança DEPOIS de os dados serem gravados,
+//     então o que falhou volta sozinho na próxima execução;
+//   - sucesso zera sync_falhas e tira o processo de 'erro_sync';
+//   - um lock com dono e batimento impede duas execuções ao mesmo tempo (syncLock.js);
+//   - primeira captura de um processo = backfill: grava os andamentos sem IA e sem WhatsApp CRÍTICO.
+//  `batimentoLockMs` só existe para os testes encurtarem o batimento do lock.
 // ─────────────────────────────────────────────
-export async function sincronizarTodos() {
-  const LOCK_KEY = 'sync:global:lock';
-  const acquired = await redis.set(LOCK_KEY, '1', 'NX', 'EX', 30 * 60); // 30 min — bem mais rápido agora
-  if (!acquired) {
+export async function sincronizarTodos({ batimentoLockMs } = {}) {
+  const lock = await adquirirLock(redis, CHAVE_LOCK_SYNC, batimentoLockMs ? { batimentoMs: batimentoLockMs } : undefined);
+  if (!lock) {
     console.log('[Sync] Ignorado: execução anterior ainda em andamento (lock ativo).');
     return { ignorado: true, motivo: 'lock ativo' };
   }
@@ -248,42 +293,21 @@ export async function sincronizarTodos() {
   // dentro do try e o catch lançava ReferenceError, escondendo o erro real e deixando a linha aberta.
   let execucaoId = null;
   const resultados = [];
+  const metricas = criarMetricasSync();
 
   try {
-    // Determina ponto de partida: último sync concluído - 2h de buffer (para não perder nada)
-    // Execução abortada (erro preenchido) não conta: ela não consultou tudo que devia.
-    const ultimaExecucao = await db.queryOne(
-      `SELECT concluido_em FROM sync_execucoes WHERE concluido_em IS NOT NULL AND erro IS NULL ORDER BY concluido_em DESC LIMIT 1`
-    ).catch(() => null);
+    console.log('[Sync] Iniciando sync DataJud — consulta pelos números dos nossos processos');
 
-    // Janela de busca:
-    // - Se nunca sincronizou: 48h atrás (não 7 dias — evita timeout em tribunais grandes)
-    // - Se já sincronizou: último sync - 4h de buffer (cobre delay do DataJud)
-    // - Máximo retroativo: 7 dias (para cobrir atrasos do DataJud em re-sync manual)
-    const sete_dias_atras  = Date.now() - 7  * 24 * 60 * 60 * 1000;
-    const quarenta_oito_h  = Date.now() - 48 *      60 * 60 * 1000;
-    const desde = new Date(
-      ultimaExecucao?.concluido_em
-        ? Math.max(
-            new Date(ultimaExecucao.concluido_em).getTime() - 4 * 60 * 60 * 1000,
-            sete_dias_atras
-          )
-        : quarenta_oito_h
-    ).toISOString();
-
-    console.log(`[Sync] Iniciando sync DataJud — atualizações desde ${desde.slice(0, 16).replace('T', ' ')}`);
-
-    // Busca todos os nossos processos ativos e monta lookup por número puro (20 dígitos)
+    // Nunca capturados e mais atrasados primeiro: se a API cair no meio, o que fica de fora é o mais recente.
     const processos = await db.query(
-      `SELECT id, numero, tribunal FROM processos WHERE status IN ('ativo', 'suspenso')`
+      `SELECT id, numero, tribunal, datajud_atualizado_em
+         FROM processos
+        WHERE status IN ('ativo', 'suspenso')
+        ORDER BY datajud_atualizado_em ASC NULLS FIRST`
     );
+    for (const p of processos) p.numeroPuro = p.numero.replace(/\D/g, ''); // 20 dígitos, como o DataJud guarda
 
-    const nossosPorPuro = new Map();
-    for (const p of processos) {
-      nossosPorPuro.set(p.numero.replace(/\D/g, ''), p);
-    }
-
-    // Agrupa por tribunal para fazer uma query por tribunal
+    // Agrupa por tribunal: cada um é um índice diferente do DataJud
     const tribunais = [...new Set(processos.map(p => p.tribunal))];
 
     const execucao = await db.queryOne(
@@ -296,50 +320,8 @@ export async function sincronizarTodos() {
     execucaoId = execucao?.id || null;
 
     for (const tribunal of tribunais) {
-      console.log(`[Sync DataJud] ${tribunal}: buscando atualizados desde ${desde.slice(0, 10)}...`);
-
-      // Filtra só os nossos processos deste tribunal para passar ao DataJud
-      const nossosDesteTribunal = new Map(
-        [...nossosPorPuro].filter(([, p]) => p.tribunal === tribunal)
-      );
-
-      let atualizadosMap = new Map();
-      try {
-        atualizadosMap = await datajud.consultarAtualizados(tribunal, desde, nossosDesteTribunal);
-        console.log(`[Sync DataJud] ${tribunal}: ${atualizadosMap.size} processos com novidades no DataJud`);
-      } catch (err) {
-        console.warn(`[Sync DataJud] ${tribunal}: falha —`, err.message);
-        // A API caiu pra este tribunal inteiro -- isso não é "nada mudou", é falha real.
-        // Sem isto, sync_execucoes registrava 0 falhas e os processos ficavam com
-        // sync_status='ok' indefinidamente mesmo com o DataJud fora do ar.
-        for (const proc of nossosDesteTribunal.values()) {
-          resultados.push({ processoId: proc.id, numero: proc.numero, ok: false, erro: `${tribunal}: ${err.message}` });
-          await registrarFalhaSyncProcesso(proc.id);
-        }
-        continue;
-      }
-
-      // Cruza com nossos processos
-      let nossosTribunal = 0;
-      for (const [numeroPuro, resultado] of atualizadosMap) {
-        const proc = nossosPorPuro.get(numeroPuro);
-        if (!proc) continue; // Processo do DataJud que não é nosso — ignora
-
-        nossosTribunal++;
-        try {
-          const processo  = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [proc.id]);
-          const novasMovs = await salvarResultadoSync(proc.id, processo, resultado.dados, resultado.movimentacoes);
-          await db.execute(`UPDATE processos SET sync_fonte = 'datajud' WHERE id = $1`, [proc.id]).catch(() => {});
-          resultados.push({ processoId: proc.id, numero: proc.numero, ok: true, novasMovimentacoes: novasMovs });
-          if (novasMovs > 0) console.log(`[Sync DataJud] ✦ ${proc.numero}: ${novasMovs} nova(s) movimentação(ões)`);
-        } catch (err) {
-          console.warn(`[Sync DataJud] Salvar falhou ${proc.numero}:`, err.message);
-          resultados.push({ processoId: proc.id, numero: proc.numero, ok: false, erro: err.message });
-          await registrarFalhaSyncProcesso(proc.id);
-        }
-      }
-
-      console.log(`[Sync DataJud] ${tribunal}: ${nossosTribunal} dos nossos processos tinham novidades`);
+      const doTribunal = processos.filter(p => p.tribunal === tribunal);
+      await sincronizarTribunal(tribunal, doTribunal, { lock, resultados, metricas });
     }
 
     const ok        = resultados.filter(r => r.ok).length;
@@ -348,10 +330,10 @@ export async function sincronizarTodos() {
     const agora     = new Date().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
     console.log(`[Sync] ✅ Concluído em ${agora}`);
-    console.log(`[Sync]    ${ok} processos com novidades, ${fail} falhas`);
+    console.log(`[Sync]    ${ok} processos sincronizados (${metricas.casados} reconhecidos pelo DataJud), ${fail} falhas`);
     console.log(`[Sync]    Movimentações novas: ${novasMovs}`);
 
-    await fecharExecucaoSync(db, execucaoId, { viaDatajud: ok, falhas: fail, novasMovimentacoes: novasMovs });
+    await fecharExecucaoSync(db, execucaoId, { viaDatajud: ok, falhas: fail, novasMovimentacoes: novasMovs, metricas: metricas.resumo() });
 
     return resultados;
 
@@ -363,10 +345,134 @@ export async function sincronizarTodos() {
       falhas:             Math.max(resultados.filter(r => !r.ok).length, 1),
       novasMovimentacoes: resultados.reduce((acc, r) => acc + (r.novasMovimentacoes || 0), 0),
       erro:               mensagemErroSync(err),
+      metricas:           metricas.resumo(),
     });
     throw err;
   } finally {
-    await redis.del(LOCK_KEY).catch(() => {});
+    await lock.liberar();
+  }
+}
+
+function exigirLock(lock) {
+  if (lock.perdido) throw new Error('Lock do sync perdido: outra execução assumiu.');
+}
+
+// Um tribunal: divide os processos em lotes e consulta lote a lote. O resultado de cada lote é gravado
+// antes do próximo, então uma queda no meio não perde o que já foi capturado.
+async function sincronizarTribunal(tribunal, processos, ctx) {
+  const { lock, resultados, metricas } = ctx;
+
+  // Número fora do padrão CNJ (20 dígitos) nunca casaria no DataJud: não vale gastar posição no lote.
+  const validos = processos.filter(p => p.numeroPuro.length === 20);
+  if (validos.length < processos.length) {
+    console.warn(`[Sync DataJud] ${tribunal}: ${processos.length - validos.length} processo(s) com número fora do padrão CNJ — não consultado(s)`);
+  }
+
+  const lotes = datajud.dividirEmLotes(validos);
+  console.log(`[Sync DataJud] ${tribunal}: ${validos.length} processo(s) em ${lotes.length} lote(s)`);
+  let lotesFalhosSeguidos = 0;
+
+  for (let i = 0; i < lotes.length; i++) {
+    exigirLock(lock);
+
+    if (lotesFalhosSeguidos >= MAX_LOTES_FALHOS_SEGUIDOS) {
+      // O tribunal não respondeu em vários lotes seguidos (cada um já esgotou as novas tentativas): insistir só
+      // prolongaria a execução. Os que sobram contam como falha e voltam na próxima execução.
+      for (const p of lotes.slice(i).flat()) {
+        await registrarFalha(p, resultados, `${tribunal}: DataJud indisponível — não consultado nesta execução`);
+      }
+      console.warn(`[Sync DataJud] ${tribunal}: ${lotesFalhosSeguidos} lotes seguidos sem resposta — restante fica para a próxima execução`);
+      break;
+    }
+
+    const lote = lotes[i];
+    let resposta;
+    try {
+      resposta = await datajud.consultarPorNumeros(tribunal, lote.map(p => p.numeroPuro));
+    } catch (err) {
+      // A API não respondeu bem para este lote: isso é falha real, não "nada mudou". A marca dos processos
+      // do lote não avança, então a próxima execução os consulta de novo.
+      lotesFalhosSeguidos++;
+      metricas.registrarStatus(err.status);
+      console.warn(`[Sync DataJud] ${tribunal}: lote ${i + 1}/${lotes.length} falhou —`, err.message);
+      for (const p of lote) await registrarFalha(p, resultados, `${tribunal}: ${err.message}`);
+      continue;
+    }
+
+    lotesFalhosSeguidos = 0;
+    metricas.registrarStatus(resposta.status);
+    metricas.hits += resposta.hits;
+    await processarLote(tribunal, lote, resposta, ctx);
+  }
+}
+
+async function processarLote(tribunal, lote, resposta, { lock, resultados, metricas }) {
+  let novosNoLote = 0;
+
+  for (const proc of lote) {
+    exigirLock(lock);
+    const achado = resposta.encontrados.get(proc.numeroPuro);
+
+    if (!achado) {
+      if (resposta.falharam.has(proc.numeroPuro)) {
+        // Resposta parcial do DataJud: este número não chegou, e não chegar não é "não existe".
+        await registrarFalha(proc, resultados, `${tribunal}: resposta parcial do DataJud`);
+      } else {
+        await marcarNaoEncontrado(proc.id);
+      }
+      continue;
+    }
+
+    metricas.casados++;
+    const anterior = proc.datajud_atualizado_em ? new Date(proc.datajud_atualizado_em).getTime() : null;
+    // Sem marca gravada, ou sem data legível no DataJud: trata como mudou (regravar é idempotente).
+    const mudou = anterior === null || !achado.atualizadoEm || achado.atualizadoEm.getTime() > anterior;
+
+    try {
+      let novasMovs = 0;
+      if (mudou) {
+        const processo = await db.queryOne(`SELECT * FROM processos WHERE id = $1`, [proc.id]);
+        novasMovs = await salvarResultadoSync(proc.id, processo, achado.dados, achado.movimentacoes, { atualizadoEm: achado.atualizadoEm });
+        await db.execute(`UPDATE processos SET sync_fonte = 'datajud' WHERE id = $1`, [proc.id]).catch(() => {});
+      } else {
+        // Nada novo no DataJud, mas a consulta deu certo: limpa contador de falhas e o 'erro_sync' de antes.
+        await db.execute(
+          `UPDATE processos SET sync_status = 'ok', sync_falhas = 0, sync_fonte = 'datajud'
+            WHERE id = $1
+              AND (sync_status IS DISTINCT FROM 'ok' OR COALESCE(sync_falhas, 0) <> 0 OR sync_fonte IS DISTINCT FROM 'datajud')`,
+          [proc.id]
+        );
+      }
+      resultados.push({ processoId: proc.id, numero: proc.numero, ok: true, novasMovimentacoes: novasMovs });
+      novosNoLote += novasMovs;
+      if (novasMovs > 0) console.log(`[Sync DataJud] ✦ ${proc.numero}: ${novasMovs} nova(s) movimentação(ões)`);
+    } catch (err) {
+      console.warn(`[Sync DataJud] Salvar falhou ${proc.numero}:`, err.message);
+      await registrarFalha(proc, resultados, err.message);
+    }
+  }
+
+  console.log(`[Sync DataJud] ${tribunal}: lote com ${lote.length} processo(s), ${novosNoLote} movimentação(ões) nova(s)`);
+}
+
+async function registrarFalha(proc, resultados, erro) {
+  resultados.push({ processoId: proc.id, numero: proc.numero, ok: false, erro });
+  await registrarFalhaSyncProcesso(proc.id);
+}
+
+// O DataJud respondeu e não tem o processo (novo demais — o DataJud atrasa até 72 h —, sigiloso ou de outro
+// grau). Não é falha: zera o contador. E se ele nunca foi capturado, deixa de aparecer como 'erro_sync'
+// (o erro era da API, não do processo) e volta a "aguardando primeira captura", que é o que ele é.
+async function marcarNaoEncontrado(processoId) {
+  try {
+    await db.execute(
+      `UPDATE processos SET sync_falhas = 0, sync_status = 'aguardando_primeira_captura'
+        WHERE id = $1 AND sync_fonte IS NULL
+          AND (sync_status IS DISTINCT FROM 'aguardando_primeira_captura' OR COALESCE(sync_falhas, 0) <> 0)`,
+      [processoId]
+    );
+  } catch (err) {
+    console.warn('[Sync] Não foi possível marcar processo não encontrado:', err.message);
   }
 }
 

@@ -13,6 +13,7 @@ import { criarHealth }    from './health.js';
 import { logarVersoesBoot } from './utils/versaoPgDump.js';
 import { aplicarAprovadorReprotocolo } from './db/migracoes/aprovadorReprotocolo.js';
 import { aprovadoresConfigurados } from './services/reprotocolo/pacote.js';
+import { aplicarMigracaoSyncR06 } from './services/tribunal/syncMigracao.js';
 
 // Rotas
 import { authRouter }          from './routes/auth.js';
@@ -874,6 +875,11 @@ async function iniciar() {
     await db.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS aprova_reprotocolo BOOLEAN NOT NULL DEFAULT false`).catch(() => {});
     await migrar('2026_10_S05_aprovador_reprotocolo', () => aplicarAprovadorReprotocolo({ conexao: db, emails: aprovadoresConfigurados() }))
       .catch(e => console.warn('[Migration] Aprovador do re-protocolo no cadastro:', e.message));
+    // R-06 (30/09/2026): captura de andamentos por número. processos.datajud_atualizado_em é a marca
+    // (dataHoraUltimaAtualizacao do DataJud) que substitui a janela; sync_execucoes ganha status_http,
+    // hits e casados. Só colunas anuláveis (ver services/tribunal/syncMigracao.js).
+    await migrar('2026_09_30_sync_datajud_r06', () => aplicarMigracaoSyncR06(db))
+      .catch(e => console.warn('[Migration] Colunas do sync por número (R-06):', e.message));
 
     // Chaves para integrações externas: guarda somente SHA-256, nunca o segredo em texto.
     await db.query(`CREATE TABLE IF NOT EXISTS chaves_api_externas (

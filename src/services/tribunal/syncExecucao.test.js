@@ -5,6 +5,7 @@ import {
   mensagemErroSync,
   fecharExecucaoSync,
   fecharExecucoesAbertas,
+  criarMetricasSync,
   ERRO_INTERROMPIDA,
 } from './syncExecucao.js';
 
@@ -119,4 +120,57 @@ test('workers/index.js: o boot usa fecharExecucoesAbertas (sem a coluna inexiste
   assert.match(fonte, /fecharExecucoesAbertas\(db\)/);
   assert.match(fonte, /if \(fechadas > 0\)/);
   assert.doesNotMatch(fonte, /status = 'interrompido'/);
+});
+
+// ── R-06: métricas da execução (status_http, hits, casados) ──────────────────
+
+test('criarMetricasSync: statusHttp é o pior status visto; só 2xx = o último 2xx; nenhuma resposta = null', () => {
+  const m = criarMetricasSync();
+  assert.deepEqual(m.resumo(), { statusHttp: null, hits: 0, casados: 0 });
+  m.registrarStatus(null);                 // timeout: sem status
+  m.registrarStatus(undefined);
+  assert.equal(m.resumo().statusHttp, null);
+  m.registrarStatus(200);
+  assert.equal(m.resumo().statusHttp, 200);
+  m.registrarStatus(429);
+  m.registrarStatus(200);                  // um 200 depois não apaga o 429 da execução
+  assert.equal(m.resumo().statusHttp, 429);
+  m.registrarStatus(503);
+  assert.equal(m.resumo().statusHttp, 503);
+  m.hits += 40; m.casados += 7;
+  assert.deepEqual(m.resumo(), { statusHttp: 503, hits: 40, casados: 7 });
+});
+
+test('fecharExecucaoSync com métricas: grava status_http, hits e casados no MESMO UPDATE do fechamento', async () => {
+  const banco = bancoFalso();
+  const ok = await fecharExecucaoSync(banco, 'exec-1', {
+    viaDatajud: 800, falhas: 11, novasMovimentacoes: 5, metricas: { statusHttp: 429, hits: 790, casados: 800 },
+  });
+  assert.equal(ok, true);
+  assert.equal(banco.chamadas.length, 1);
+  assert.match(banco.chamadas[0].sql, /concluido_em = NOW\(\)/);
+  assert.match(banco.chamadas[0].sql, /status_http = \$5, hits = \$6, casados = \$7/);
+  assert.deepEqual(banco.chamadas[0].params, [800, 11, 5, null, 429, 790, 800, 'exec-1']);
+});
+
+test('fecharExecucaoSync com métricas e sem status HTTP (timeout): grava NULL, não 0', async () => {
+  const banco = bancoFalso();
+  await fecharExecucaoSync(banco, 'exec-1', { falhas: 3, metricas: { statusHttp: null, hits: 0, casados: 0 } });
+  assert.equal(banco.chamadas[0].params[4], null);
+});
+
+test('fecharExecucaoSync com métricas, colunas novas ainda ausentes (migração pendente): fecha mesmo assim, sem as métricas', async () => {
+  const banco = bancoFalso({ falhaExecute: [1] });
+  const ok = await fecharExecucaoSync(banco, 'exec-1', { falhas: 2, erro: 'boom', metricas: { statusHttp: 200, hits: 1, casados: 1 } });
+  assert.equal(ok, true);
+  assert.equal(banco.chamadas.length, 2);
+  assert.doesNotMatch(banco.chamadas[1].sql, /status_http/);
+  assert.match(banco.chamadas[1].sql, /erro = \$4/);
+  assert.deepEqual(banco.chamadas[1].params, [0, 2, 0, 'boom', 'exec-1']);
+});
+
+test('fecharExecucaoSync com métricas: recusa das 3 tentativas ainda não lança', async () => {
+  const banco = bancoFalso({ falhaExecute: [1, 2, 3] });
+  assert.equal(await fecharExecucaoSync(banco, 'exec-1', { falhas: 1, metricas: { statusHttp: 200, hits: 0, casados: 0 } }), false);
+  assert.equal(banco.chamadas.length, 3);
 });

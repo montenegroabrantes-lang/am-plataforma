@@ -8,6 +8,7 @@ process.env.REDIS_URL = 'redis://127.0.0.1:1';
 const { db }     = await import('../../db/index.js');
 const { redis }  = await import('../../cache/redis.js');
 const { sincronizarTodos } = await import('./sync.js');
+const { SCRIPT_LIBERAR }   = await import('./syncLock.js');
 
 const avisos = [];
 mock.method(console, 'log',   () => {});
@@ -37,11 +38,14 @@ function prepararDubles({ processos = [], insertFalha = false, lockAtivo = false
     throw new Error(`query inesperada: ${sql}`);
   };
   db.execute = async (sql, params) => { chamadas.push({ sql, params }); return { rowCount: 1 }; };
-  redis.set = async () => (lockAtivo ? null : 'OK');
-  redis.del = async (chave) => { locksLiberados.push(chave); return 1; };
+  // Lock com dono (R-06): pegar = SET NX; liberar = script de comparar-e-apagar (eval), que registramos.
+  redis.set  = async () => (lockAtivo ? null : 'OK');
+  redis.eval = async (script, _n, chave) => { if (script === SCRIPT_LIBERAR) locksLiberados.push(chave); return 1; };
 }
 
 const fechamentos = () => chamadas.filter(c => /UPDATE sync_execucoes/.test(c.sql));
+// Os 5 primeiros parâmetros do fechamento (viaDatajud, falhas, novas, erro, id no fim); as métricas do R-06 vêm no meio
+const semMetricas = (params) => [...params.slice(0, 4), params[params.length - 1]];
 
 beforeEach(() => prepararDubles());
 
@@ -80,7 +84,8 @@ test('erro fatal DEPOIS de registrar a execução: fecha a linha com falhas>=1 e
   const [fechamento, ...outros] = fechamentos();
   assert.equal(outros.length, 0, 'fecha uma única vez');
   assert.match(fechamento.sql, /concluido_em = NOW\(\)/);
-  const [viaDatajud, falhas, novas, erro, id] = fechamento.params;
+  const [viaDatajud, falhas, novas, erro] = fechamento.params;
+  const id = fechamento.params[fechamento.params.length - 1];
   assert.equal(id, 'exec-1');
   assert.equal(viaDatajud, 0);
   assert.ok(falhas >= 1, `falhas=${falhas}`);
@@ -96,7 +101,10 @@ test('execução normal (nada a sincronizar): fecha sem erro e com falhas 0', as
   assert.deepEqual(resultados, []);
   const [fechamento, ...outros] = fechamentos();
   assert.equal(outros.length, 0);
-  assert.deepEqual(fechamento.params, [0, 0, 0, null, 'exec-1']);
+  assert.deepEqual(semMetricas(fechamento.params), [0, 0, 0, null, 'exec-1']);
+  // R-06: sem nenhuma resposta do DataJud, status_http fica nulo e hits/casados zerados
+  assert.deepEqual(fechamento.params.slice(4, 7), [null, 0, 0]);
+  assert.match(fechamento.sql, /status_http = \$5, hits = \$6, casados = \$7/);
   assert.deepEqual(locksLiberados, ['sync:global:lock']);
 });
 
@@ -106,7 +114,7 @@ test('tribunal com falha (não é erro fatal): fecha com falhas=1 e sem erro, e 
   assert.equal(resultados.length, 1);
   assert.equal(resultados[0].ok, false);
   const [fechamento] = fechamentos();
-  assert.deepEqual(fechamento.params, [0, 1, 0, null, 'exec-1']);
+  assert.deepEqual(semMetricas(fechamento.params), [0, 1, 0, null, 'exec-1']);
 });
 
 test('INSERT da execução falha: o sync segue, avisa no log e não tenta fechar linha inexistente', async () => {
@@ -117,12 +125,15 @@ test('INSERT da execução falha: o sync segue, avisa no log e não tenta fechar
   assert.ok(avisos.some(a => /não registrada em sync_execucoes.*permission denied/.test(a)), avisos.join('\n'));
 });
 
-test('janela incremental ignora execuções abortadas (erro preenchido): uma falha não avança o ponto de partida', async () => {
+test('R-06: não há janela por data — o ponto de partida é a marca de cada processo, e nenhuma execução (nem a com falha) o move', async () => {
   prepararDubles({ processos: [] });
   await sincronizarTodos();
-  const consulta = chamadas.find(c => /SELECT concluido_em FROM sync_execucoes/.test(c.sql));
-  assert.ok(consulta, 'consulta da última execução concluída');
-  assert.match(consulta.sql, /concluido_em IS NOT NULL AND erro IS NULL/);
+  // Antes: "último concluido_em - 4h" avançava até com falha. Agora nada disso é consultado...
+  assert.equal(chamadas.some(c => /SELECT concluido_em FROM sync_execucoes/.test(c.sql)), false);
+  // ...e a lista de processos traz a marca de cada um, os nunca capturados primeiro.
+  const consulta = chamadas.find(c => /FROM processos/.test(c.sql));
+  assert.match(consulta.sql, /datajud_atualizado_em/);
+  assert.match(consulta.sql, /ORDER BY datajud_atualizado_em ASC NULLS FIRST/);
 });
 
 test('lock ativo: não faz nada (nem abre execução) e não libera o lock de quem está rodando', async () => {

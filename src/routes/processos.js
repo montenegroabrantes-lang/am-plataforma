@@ -657,9 +657,14 @@ processosRouter.post('/sync-todos', apenasMaster, async (req, res) => {
 
   if (forcar) {
     try {
+      // R-06: "forçar" só tira um lock PARADO (sem batimento). Apagar o de uma execução viva deixava
+      // dois syncs rodando ao mesmo tempo; com o lock vivo, o job enfileirado abaixo espera ou é ignorado.
       const { redis } = await import('../cache/redis.js');
-      await redis.del('sync:global:lock');
-      console.log('[Sync] Lock removido por solicitação manual (force=true)');
+      const { liberarLockSeInativo } = await import('../services/tribunal/syncLock.js');
+      const liberou = await liberarLockSeInativo(redis);
+      console.log(liberou
+        ? '[Sync] Lock parado removido por solicitação manual (force=true)'
+        : '[Sync] force=true: não há lock parado (nada removido)');
     } catch { /* Redis indisponível */ }
   }
 

@@ -27,10 +27,46 @@ export function mensagemErroSync(err) {
     .slice(0, MAX_ERRO);
 }
 
+// Métricas da execução (R-06), gravadas em sync_execucoes.status_http / hits / casados:
+//  - statusHttp: o pior status visto (o último não-2xx; se todas as respostas foram 2xx, o último 2xx;
+//    null = nenhuma resposta, ex.: timeout). É o que separa "API fora" de "nada mudou" numa consulta ao banco;
+//  - hits: documentos que o DataJud devolveu, somados de todos os lotes;
+//  - casados: processos nossos que o DataJud reconheceu (mudaram ou não).
+export function criarMetricasSync() {
+  let statusRuim = null;
+  let statusOk   = null;
+  const m = {
+    hits: 0,
+    casados: 0,
+    registrarStatus(status) {
+      if (!Number.isFinite(status)) return;
+      if (status >= 200 && status < 300) statusOk = status; else statusRuim = status;
+    },
+    resumo() { return { statusHttp: statusRuim ?? statusOk, hits: m.hits, casados: m.casados }; },
+  };
+  return m;
+}
+
 // Fecha a execução `execucaoId`. Nunca lança: o fechamento roda dentro do catch do sync e não
 // pode esconder o erro real de quem o chamou. Devolve true se a linha foi fechada.
-export async function fecharExecucaoSync(banco, execucaoId, { viaDatajud = 0, falhas = 0, novasMovimentacoes = 0, erro = null } = {}) {
+// `metricas` ({ statusHttp, hits, casados }) é opcional; se as colunas novas ainda não existem
+// (migração pendente), cai no fechamento sem elas, e depois no fechamento sem `erro`.
+export async function fecharExecucaoSync(banco, execucaoId, { viaDatajud = 0, falhas = 0, novasMovimentacoes = 0, erro = null, metricas = null } = {}) {
   if (!execucaoId) return false;
+  if (metricas) {
+    try {
+      await banco.execute(
+        `UPDATE sync_execucoes
+            SET concluido_em = NOW(), via_datajud = $1, falhas = $2, novas_movimentacoes = $3, erro = $4,
+                status_http = $5, hits = $6, casados = $7
+          WHERE id = $8`,
+        [viaDatajud, falhas, novasMovimentacoes, erro, metricas.statusHttp ?? null, metricas.hits ?? 0, metricas.casados ?? 0, execucaoId]
+      );
+      return true;
+    } catch (err) {
+      console.error(`[Sync] Falha ao fechar a execução ${execucaoId} com métricas:`, err.message);
+    }
+  }
   try {
     await banco.execute(
       `UPDATE sync_execucoes
