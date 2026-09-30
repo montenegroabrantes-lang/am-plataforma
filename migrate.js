@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { db } from './src/db/index.js';
+import { garantirMasterInicial } from './src/db/masterInicial.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -21,46 +22,10 @@ try {
     console.log('[migrate] ℹ️  Schema já existe');
   }
 
-  // 2. Cria ou atualiza o usuário master
-  const nome  = process.env.MASTER_NOME  || 'Ramona';
-  const email = process.env.MASTER_EMAIL;
-  const senha = process.env.MASTER_SENHA;
-
-  if (!email || !senha) {
-    console.log('[migrate] ⚠️  MASTER_EMAIL ou MASTER_SENHA não configurados');
-  } else {
-    const hash = await bcrypt.hash(senha, 12);
-    // Em produção pode haver mais de um Master. Primeiro localizamos o titular do
-    // e-mail configurado; escolher um Master arbitrário e trocar seu e-mail causava
-    // conflito na constraint única e interrompia todas as migrações seguintes.
-    const emailNormalizado = email.toLowerCase().trim();
-    const masterPorEmail = await db.queryOne(
-      `SELECT id FROM usuarios WHERE LOWER(email) = $1 AND perfil = 'master'`,
-      [emailNormalizado]
-    );
-    const master = masterPorEmail || await db.queryOne(
-      `SELECT id FROM usuarios WHERE perfil = 'master' ORDER BY criado_em ASC LIMIT 1`
-    );
-
-    if (master) {
-      if (masterPorEmail) {
-        await db.execute(`UPDATE usuarios SET senha_hash = $1 WHERE id = $2`, [hash, master.id]);
-      } else {
-        await db.execute(
-          `UPDATE usuarios SET senha_hash = $1, email = $2 WHERE id = $3`,
-          [hash, emailNormalizado, master.id]
-        );
-      }
-      console.log(`[migrate] ✅ Senha e email do master atualizados: ${email}`);
-    } else {
-      await db.execute(
-        `INSERT INTO usuarios (nome, email, senha_hash, perfil, pode_marcar_restrito)
-         VALUES ($1, $2, $3, 'master', true)`,
-        [nome, emailNormalizado, hash]
-      );
-      console.log(`[migrate] ✅ Usuário master criado: ${email}`);
-    }
-  }
+  // 2. Cria o primeiro Master SOMENTE se não houver nenhum (S-06). Nunca altera senha nem
+  // e-mail de Master existente — ver src/db/masterInicial.js. Erro aqui não interrompe os passos seguintes.
+  await garantirMasterInicial({ db, hashSenha: (senha) => bcrypt.hash(senha, 12) })
+    .catch(err => console.error('[migrate] ⚠️  Não foi possível criar o Master inicial:', err.message));
 
   // 3. Corrige constraint de status em processos (era aprovado/aguardando_protocolo, deve ser ativo/suspenso)
   await db.execute(`

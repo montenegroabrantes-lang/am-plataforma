@@ -1,6 +1,10 @@
 import 'dotenv/config';
 import bcrypt from 'bcrypt';
 import { db } from './src/db/index.js';
+import { confirmacaoEmProducaoOk } from './src/utils/travaProducao.js';
+
+// S-06: em produção só roda com --confirmo (ex.: railway run node reset-senha.js --confirmo).
+if (!confirmacaoEmProducaoOk()) process.exit(1);
 
 const email = process.env.MASTER_EMAIL;
 const senha = process.env.MASTER_SENHA;
