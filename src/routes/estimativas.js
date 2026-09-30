@@ -21,6 +21,10 @@ import { camila } from '../services/camila.js';
 import { buscarConversaContato, mapaUsuariosDigisac } from '../services/digisac/index.js';
 import { sincronizarOnboardingComCamila } from '../services/reprocessarSyncCamila.js';
 import { sincronizarDriveOnboarding } from '../services/reprocessarSyncDrive.js';
+import {
+  parseValorBR, numeroPositivo, completarVinculos, avaliarFaixa, respostaForaDaFaixa,
+  referenciaDaEstimativa, referenciaDosVinculos,
+} from '../utils/conferenciaProposta.js';
 
 export const estimativasRouter = Router();
 
@@ -36,6 +40,34 @@ const referenciaEstadualLimiter = rateLimit({
   legacyHeaders: false,
   message: { ok: false, erro: 'Limite de consultas oficiais atingido. Aguarde alguns minutos.' },
 });
+
+// Trava de faixa (JN-02 / DN-2, 30/09/2026): valor fora de 0,2 a 5 vezes a referência, ou acima
+// de R$ 100 mil, só passa com a confirmação explícita do operador (valor_fora_da_faixa_ciente:
+// true no corpo, enviado pela tela depois do diálogo). Sem referência vale só o teto.
+// Detalhe da estimativa na Camila para achar a referência; se ela não responder, a conferência
+// segue só com o que veio na requisição (teto sempre vale) — a própria chamada que vem depois
+// já falha se a Camila estiver fora do ar.
+async function detalheNaCamila(api, estimativaId) {
+  if (!estimativaId) return null;
+  try {
+    const { data } = await api.get(`/api/estimativas/${encodeURIComponent(estimativaId)}`);
+    return data?.estimativa || data || null;
+  } catch {
+    return null;
+  }
+}
+
+// Devolve true (e já respondeu 409) quando o valor foge da faixa e o operador ainda não confirmou.
+function barrarValorForaDaFaixa(req, res, { valor, referencia, onde }) {
+  const avaliacao = avaliarFaixa({ valor, referencia });
+  if (!avaliacao.foraDaFaixa) return false;
+  if (req.body?.valor_fora_da_faixa_ciente === true) {
+    console.warn(`[ESTIMATIVAS] valor fora da faixa confirmado pelo operador (${onde}) usuario=${req.user?.id} valor=${avaliacao.valor} referencia=${avaliacao.referencia}`);
+    return false;
+  }
+  res.status(409).json(respostaForaDaFaixa(avaliacao));
+  return true;
+}
 
 // Controles comerciais: leitura autenticada, alterações reservadas ao perfil master.
 for(const [method,local,remote] of [
@@ -398,9 +430,22 @@ estimativasRouter.get('/:id', async (req, res) => {
 estimativasRouter.post('/:id/aprovar', apenasMaster, async (req, res) => {
   const api = camila();
   if (!api) return semConfig(res);
+  const { valor_fora_da_faixa_ciente, ...corpo } = req.body || {};
+  // JN-01: o PDF da Camila imprime "undefined meses" quando o vínculo chega sem mesesFim/numMeses.
+  // Completa aqui (vale também para o frontend antigo) e barra período fora de MM/AAAA.
+  if (Array.isArray(corpo.vinculos)) {
+    const periodos = completarVinculos(corpo.vinculos);
+    if (!periodos.ok) return res.status(400).json({ ok: false, erro: periodos.erro });
+    corpo.vinculos = periodos.vinculos;
+  }
+  const valor = parseValorBR(corpo.valor);
+  if (valor > 0) {
+    const referencia = referenciaDaEstimativa(await detalheNaCamila(api, req.params.id)) ?? referenciaDosVinculos(corpo.vinculos);
+    if (barrarValorForaDaFaixa(req, res, { valor, referencia, onde: 'aprovar' })) return;
+  }
   try {
     const { data } = await api.post(`/api/estimativas/${encodeURIComponent(req.params.id)}/aprovar`, {
-      ...req.body,
+      ...corpo,
       aprovado_por: req.user?.nome || req.user?.email || req.user?.id,
     });
     res.json(data);
@@ -484,12 +529,20 @@ estimativasRouter.post('/leads/:contactId/desfecho', apenasMaster, async (req, r
   const api = camila();
   if (!api) return semConfig(res);
 
-  const { onboarding, ...desfecho } = req.body || {};
+  const { onboarding, valor_fora_da_faixa_ciente, ...desfecho } = req.body || {};
 
   // Fechamento é o gatilho do trabalho jurídico. Primeiro registramos localmente de forma
   // idempotente; a Camila é sincronizada em seguida. Assim uma indisponibilidade externa
   // não faz o escritório perder o onboarding já confirmado.
   if (desfecho.desfecho === 'fechado') {
+    // JN-02: erro de vírgula no valor fechado (856 mil e R$ 9,57 em produção). A conferência vem
+    // antes de qualquer gravação. Referência: valor apresentado da estimativa; sem ela, o valor
+    // do lead que o formulário informa (`valor_referencia`).
+    const valor = Number(desfecho.valorFechado);
+    if (valor > 0) {
+      const referencia = referenciaDaEstimativa(await detalheNaCamila(api, onboarding?.estimativa_id)) ?? numeroPositivo(onboarding?.valor_referencia);
+      if (barrarValorForaDaFaixa(req, res, { valor, referencia, onde: 'fechamento' })) return;
+    }
     let registro;
     try {
       registro = await criarOnboardingContrato({
@@ -559,6 +612,9 @@ estimativasRouter.post('/leads/:contactId/desfecho', apenasMaster, async (req, r
 // real e sem sincronizar com a Camila — não existe card de lead nenhum pra mover no Kanban.
 estimativasRouter.post('/onboarding-manual', apenasMaster, async (req, res) => {
   const { onboarding, valorFechado } = req.body || {};
+  // JN-02: sem lead não há referência; vale o teto de R$ 100 mil.
+  const valor = Number(valorFechado);
+  if (valor > 0 && barrarValorForaDaFaixa(req, res, { valor, referencia: null, onde: 'onboarding-manual' })) return;
   try {
     const registro = await criarOnboardingContrato({
       contactId: null,
@@ -667,9 +723,16 @@ estimativasRouter.post('/leads/:contactId/reabordar', apenasMaster, async (req, 
 estimativasRouter.post('/leads/:contactId/entrega-manual', apenasMaster, async (req, res) => {
   const api = camila();
   if (!api) return semConfig(res);
+  const { valor_fora_da_faixa_ciente, ...corpo } = req.body || {};
+  // JN-02: a Camila lê este valor com Number(); a conferência olha o mesmo número.
+  const valor = Number(corpo.valor);
+  if (valor > 0) {
+    const referencia = referenciaDaEstimativa(await detalheNaCamila(api, corpo.estimativaId));
+    if (barrarValorForaDaFaixa(req, res, { valor, referencia, onde: 'entrega-manual' })) return;
+  }
   try {
     const { data } = await api.post(`/api/funil-leads/${encodeURIComponent(req.params.contactId)}/entrega-manual`, {
-      ...req.body,
+      ...corpo,
       registradoPor: req.user?.nome || req.user?.email || req.user?.id,
     });
     res.json(data);
