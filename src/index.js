@@ -46,13 +46,19 @@ import { oauthRouter } from './oauth/index.js';
 // Middleware
 import { autenticar } from './middleware/auth.js';
 import { auditar }    from './middleware/auditoria.js';
+import { limiteLoginPorEmail } from './middleware/limiteLogin.js';
+import { limitesPorIpAtivos }  from './utils/tentativasLogin.js';
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
 // Railway (e qualquer reverse proxy) injeta X-Forwarded-For.
 // Sem trust proxy, o express-rate-limit rejeita todas as requisições com ValidationError.
-app.set('trust proxy', 1);
+// TRUST_PROXY_SALTOS = quantos proxies ficam entre o cliente e o app (padrão 1). Os limites por IP
+// (login e OAuth) e o IP da auditoria dependem de `req.ip` ser o do cliente: se o Railway tiver
+// mais de 1 salto, todo mundo vira o mesmo IP -- ajustar a variável, sem mudar código.
+const saltosProxy = Number.parseInt(process.env.TRUST_PROXY_SALTOS, 10);
+app.set('trust proxy', saltosProxy > 0 ? saltosProxy : 1);
 
 const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:3000';
 if (!process.env.FRONTEND_URL) {
@@ -95,7 +101,7 @@ const importLimiter = rateLimit({
 });
 
 // Rotas públicas
-app.use('/api/auth/login',        loginLimiter);
+app.use('/api/auth/login',        loginLimiter, limiteLoginPorEmail());
 app.use('/api/auth/refresh',      authLimiter);
 app.use('/api/auth/trocar-senha', authLimiter);
 app.use('/api/auth/2fa',          authLimiter);
@@ -163,6 +169,7 @@ async function iniciar() {
   console.log('[BOOT] PORT:', PORT);
   console.log('[BOOT] DATABASE_URL:', process.env.DATABASE_URL ? 'definida' : 'AUSENTE');
   console.log('[BOOT] REDIS_URL:', process.env.REDIS_URL ? 'definida' : 'AUSENTE');
+  console.log('[BOOT] trust proxy:', app.get('trust proxy'), '| limites por IP:', limitesPorIpAtivos() ? 'ligados' : 'DESLIGADOS');
 
   try {
     await db.query('SELECT 1');

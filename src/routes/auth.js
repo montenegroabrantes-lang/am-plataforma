@@ -5,6 +5,7 @@ import { authenticator } from 'otplib';
 import { db }            from '../db/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { autenticar }         from '../middleware/auth.js';
+import { normalizarEmailTentado } from '../utils/tentativasLogin.js';
 
 export const authRouter = Router();
 
@@ -54,7 +55,10 @@ authRouter.post('/login', async (req, res) => {
   );
 
   if (!user || !(await bcrypt.compare(senha, user.senha_hash))) {
-    await registrarAuditoria({ acao: 'login_falhou', entidade: 'usuario', ip: req._ip });
+    await registrarAuditoria({
+      acao: 'login_falhou', entidade: 'usuario',
+      valorDepois: { origem: 'login', email_tentado: normalizarEmailTentado(email) }, ip: req._ip,
+    });
     return res.status(401).json({ ok: false, erro: 'Credenciais inválidas.' });
   }
 

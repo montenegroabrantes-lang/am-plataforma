@@ -2,7 +2,10 @@ import { db } from '../db/index.js';
 
 // Registra ações destrutivas no log de auditoria
 export function auditar(req, _res, next) {
-  req._ip = req.headers['x-forwarded-for']?.split(',')[0] || req.socket.remoteAddress;
+  // `req.ip` respeita o `trust proxy` de index.js (o salto do Railway acrescenta o IP real do
+  // cliente ao fim do X-Forwarded-For). O primeiro valor do cabeçalho é escrito pelo próprio
+  // cliente: quem o forjasse gravaria um IP falso na auditoria e escaparia dos limites por IP.
+  req._ip = req.ip || req.socket.remoteAddress;
   next();
 }
 
