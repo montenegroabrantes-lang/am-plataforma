@@ -471,7 +471,33 @@ export async function cancelarOnboardingPendente(contactId, usuarioId, ip) {
   return onboarding;
 }
 
-export async function concluirCadastroOnboarding({ onboardingId, dados, usuario, ip }) {
+// Datas do vínculo na conclusão do cadastro: só "AAAA-MM-DD" (dia real do calendário) ou vazio.
+// O rascunho que vem da calculadora traz apenas "AAAA-MM"; o Postgres recusa esse texto numa coluna
+// DATE (22007) e o operador via um 500 com a mensagem crua do banco (achado JN-09/B3-02). Nem a
+// mensagem nem os campos devolvidos levam o valor digitado: vão para a auditoria, sem dado pessoal.
+export function validarDatasVinculos(vinculos) {
+  const campos = [];
+  const rotulos = [];
+  for (const i of [0, 1]) {
+    for (const [chave, nome] of [['vinculo_inicio', 'início'], ['vinculo_fim', 'fim']]) {
+      const valor = vinculos?.[i]?.[chave];
+      if (valor === undefined || valor === null || valor === '') continue;
+      if (typeof valor === 'string' && dataCalendarioValida(valor)) continue;
+      campos.push({
+        campo: `vinculo_${i + 1}_${nome === 'início' ? 'inicio' : 'fim'}`,
+        formato: typeof valor === 'string' && /^\d{4}-\d{2}$/.test(valor) ? 'AAAA-MM' : 'invalido',
+      });
+      rotulos.push(`${nome} do vínculo ${i + 1}`);
+    }
+  }
+  if (!campos.length) return null;
+  return {
+    mensagem: `Data incompleta ou inválida em: ${rotulos.join(', ')}. Informe a data completa (dia, mês e ano) ou deixe o campo em branco.`,
+    campos,
+  };
+}
+
+async function concluirCadastro({ onboardingId, dados, usuario, ip }) {
   const { nome, cpf, whatsapp, email, lgpd_consentimento, dados_calculadora_confirmados, vinculos } = dados || {};
   if (!nome || !cpf) {
     const erro = new Error('Nome e CPF são obrigatórios.'); erro.status = 400; throw erro;
@@ -481,6 +507,10 @@ export async function concluirCadastroOnboarding({ onboardingId, dados, usuario,
   }
   if (lgpd_consentimento !== true) {
     const erro = new Error('É necessário registrar o consentimento LGPD.'); erro.status = 400; throw erro;
+  }
+  const datasInvalidas = validarDatasVinculos(vinculos);
+  if (datasInvalidas) {
+    const erro = new Error(datasInvalidas.mensagem); erro.status = 400; erro.campos = datasInvalidas.campos; throw erro;
   }
 
   const cpfLimpo = cpf.replace(/\D/g, '');
@@ -680,4 +710,39 @@ export async function concluirCadastroOnboarding({ onboardingId, dados, usuario,
     entidadeId: onboardingId, valorDepois: { cliente_id: cliente.id }, ip,
   });
   return { cliente, criou_cliente: criouCliente };
+}
+
+// Rede de segurança: se um texto de data ainda assim chegar ao Postgres e ele recusar (22007/22008),
+// é dado digitado errado, não falha do servidor — nunca deve virar 500 com a mensagem crua do banco.
+function traduzirErroDeData(erro) {
+  if (erro?.status || !['22007', '22008'].includes(erro?.code)) return erro;
+  const traduzido = new Error('Uma das datas do vínculo é inválida. Informe a data completa (dia, mês e ano) ou deixe o campo em branco.');
+  traduzido.status = 400;
+  return traduzido;
+}
+
+// Até aqui uma tentativa de conclusão que falhava não deixava rastro (JL-08): a rota devolvia o erro
+// e nada era gravado nem logado. Guarda o id do onboarding, o usuário e o motivo. Nenhum dado pessoal:
+// as mensagens 4xx são fixas (sem nome, CPF ou datas) e, em erro inesperado, só o código vai adiante,
+// porque a mensagem do banco pode repetir o texto digitado.
+async function registrarFalhaConclusao({ onboardingId, usuario, ip }, erro) {
+  const status = erro.status || 500;
+  if (status >= 500) console.error('[Onboarding] Falha inesperada ao concluir cadastro:', onboardingId, erro.name, erro.code || '');
+  await registrarAuditoria({
+    usuarioId: usuario?.id, acao: 'concluir_cadastro_falhou', entidade: 'onboarding_contrato', entidadeId: onboardingId,
+    valorDepois: status >= 500
+      ? { status, motivo: 'erro_interno', codigo: erro.code || erro.name || null }
+      : { status, motivo: erro.message, campos: erro.campos },
+    ip,
+  });
+}
+
+export async function concluirCadastroOnboarding(args) {
+  try {
+    return await concluirCadastro(args);
+  } catch (erro) {
+    const final = traduzirErroDeData(erro);
+    await registrarFalhaConclusao(args, final);
+    throw final;
+  }
 }
