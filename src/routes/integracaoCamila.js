@@ -1,15 +1,8 @@
 import { Router } from 'express';
-import crypto from 'crypto';
 import { buscarClienteParaCamila } from '../services/clienteCamila.js';
+import { mesmaChave } from '../utils/seguranca.js';
 
 export const integracaoCamilaRouter = Router();
-
-function mesmaChave(recebida, esperada) {
-  if (!recebida || !esperada) return false;
-  const a = Buffer.from(String(recebida));
-  const b = Buffer.from(String(esperada));
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
 
 export function autenticarIntegracaoCamila(req, res, next) {
   const esperada = process.env.CAMILA_CLIENT_LOOKUP_API_KEY || process.env.CAMILA_API_KEY;

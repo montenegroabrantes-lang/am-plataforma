@@ -19,7 +19,10 @@ jobs:
           const UF     = 'PB';
           const DIAS   = 3;
           const URL    = process.env.RAILWAY_URL;
-          const KEY    = process.env.SYNC_KEY || 'am-sync-2026';
+          // Sem valor padrão (S-08): a chave só vem do secret SYNC_KEY do GitHub. Sem ele, falha aqui,
+          // antes de consultar qualquer coisa, em vez de tentar uma chave escrita neste arquivo.
+          const KEY    = process.env.SYNC_KEY;
+          if (!KEY) { console.error('SYNC_KEY ausente: cadastre o secret SYNC_KEY em Settings > Secrets and variables > Actions.'); process.exit(1); }
 
           const hoje   = new Date();
           const inicio = new Date(hoje);

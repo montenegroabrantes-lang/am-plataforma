@@ -31,7 +31,6 @@ import { rankingsRouter }      from './routes/rankings.js';
 import { polosPassivosRouter } from './routes/polosPassivos.js';
 import { classificacoesRouter } from './routes/classificacoes.js';
 import { classificacoesProcessoRouter } from './routes/classificacoesProcesso.js';
-import { webhookRouter }       from './routes/webhook.js';
 import { publicacoesRouter, importarPublicacoesHandler } from './routes/publicacoes.js';
 import { estimativasRouter } from './routes/estimativas.js';
 import { pushTJRouter }      from './routes/pushTJ.js';
@@ -127,8 +126,6 @@ app.use('/api/rankings',      autenticar, rankingsRouter);
 app.use('/api/polos-passivos',    autenticar, polosPassivosRouter);
 app.use('/api/classif',           autenticar, classificacoesRouter);
 app.use('/api/classificacoes',    autenticar, classificacoesProcessoRouter);
-// Webhook público — CNJ faz POST sem sessão do usuário
-app.use('/api/webhook',       webhookRouter);
 // /importar usa x-sync-key própria (sem JWT) — script local envia publicações do Mac
 app.post('/api/publicacoes/importar', importLimiter, importarPublicacoesHandler);
 app.use('/api/publicacoes',   autenticar, publicacoesRouter);

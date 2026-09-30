@@ -3,7 +3,8 @@ import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
 import { extrairPrazoPublicacao, prazoPlausivel } from '../services/publicacoes/extrairPrazo.js';
-import { paginacaoSegura, uuidValido } from '../utils/validacao.js';
+import { paginacaoSegura, uuidValido, urlHttpsOuNulo } from '../utils/validacao.js';
+import { mesmaChave } from '../utils/seguranca.js';
 
 export const publicacoesRouter = Router();
 
@@ -363,7 +364,8 @@ publicacoesRouter.patch('/marcar-todas-lidas', apenasMaster, async (req, res) =>
 export async function importarPublicacoesHandler(req, res) {
   const chaveEnv = process.env.SYNC_KEY;
   if (!chaveEnv) return res.status(503).json({ ok: false, erro: 'SYNC_KEY não configurada no servidor.' });
-  if (req.headers['x-sync-key'] !== chaveEnv) {
+  // Tempo constante (S-08): `!==` deixava medir, pelo tempo de resposta, quantos caracteres da chave batiam.
+  if (!mesmaChave(req.headers['x-sync-key'], chaveEnv)) {
     return res.status(401).json({ ok: false, erro: 'Chave inválida.' });
   }
 
@@ -419,7 +421,7 @@ export async function importarPublicacoesHandler(req, res) {
           item.data_disponibilizacao,
           item.siglaTribunal || null, item.tipoComunicacao || null,
           item.tipoDocumento || null, item.nomeOrgao || null,
-          item.texto || null, item.link || null,
+          item.texto || null, urlHttpsOuNulo(item.link), // S-23: link fora de https:// vira null (o lote segue)
           item.status || null, cancelada,
         ]
       ).catch(() => []);
@@ -497,7 +499,7 @@ publicacoesRouter.post('/importar-browser', apenasMaster, async (req, res) => {
           item.data_disponibilizacao,
           item.siglaTribunal || null, item.tipoComunicacao || null,
           item.tipoDocumento || null, item.nomeOrgao || null,
-          item.texto || null, item.link || null,
+          item.texto || null, urlHttpsOuNulo(item.link), // S-23: link fora de https:// vira null (o lote segue)
           item.status || null, cancelada,
         ]
       ).catch(() => []);
