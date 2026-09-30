@@ -556,9 +556,25 @@ tarefasRouter.post('/', apenasMaster, async (req, res) => {
   res.status(201).json({ ok: true, tarefa: nova });
 });
 
+// Tarefas cujo vencimento vem de um ato judicial (publicação) ou de RPV/precatório: o lote de
+// atribuição não pode sobrescrever a data delas sem confirmação explícita (U-02).
+const TIPOS_PRAZO_JUDICIAL = ['prazo', 'prazo_pagamento'];
+
+// Leva ao Calendar a data que o lote gravou (a rota individual /:id/responsavel já faz o mesmo).
+// Um evento por vez, sem derrubar o lote se o Google falhar. `atualizar` é injetável nos testes.
+export async function atualizarCalendarDoLote(linhas, prazoData, atualizar = atualizarEventoCalendar) {
+  let tentativas = 0;
+  for (const linha of linhas) {
+    if (!linha.calendar_event_id) continue;
+    tentativas++;
+    try { await atualizar(linha.calendar_event_id, { dataHora: new Date(`${prazoData}T08:00:00`) }); } catch {}
+  }
+  return tentativas;
+}
+
 // PATCH /api/tarefas/lote — organiza a triagem sem apagar histórico.
 tarefasRouter.patch('/lote', apenasMaster, async (req, res) => {
-  const { ids, atribuido_a, prazo_data, precisa_triagem, status, justificativa } = req.body || {};
+  const { ids, atribuido_a, prazo_data, precisa_triagem, status, justificativa, confirmar_troca_prazo } = req.body || {};
   if (!Array.isArray(ids) || ids.length === 0 || ids.length > 200 || ids.some(id => !uuidValido(id))) {
     return res.status(400).json({ ok: false, erro: 'Selecione de 1 a 200 tarefas válidas.' });
   }
@@ -581,8 +597,16 @@ tarefasRouter.patch('/lote', apenasMaster, async (req, res) => {
 
   const updates = [];
   const params = [];
+  // U-02: por padrão o lote MANTÉM a data dos prazos judiciais que já têm data (a tela antiga
+  // manda a mesma data para todas as tarefas marcadas). Só troca se vier confirmar_troca_prazo === true.
+  const preservarPrazos = prazo_data !== undefined && confirmar_troca_prazo !== true;
   if (atribuido_a !== undefined) { params.push(atribuido_a || null); updates.push(`atribuido_a=$${params.length}`); }
-  if (prazo_data !== undefined) { params.push(prazo_data || null); updates.push(`prazo_data=$${params.length}::date`); }
+  if (prazo_data !== undefined) {
+    params.push(prazo_data || null);
+    updates.push(preservarPrazos
+      ? `prazo_data=CASE WHEN tipo IN (${TIPOS_PRAZO_JUDICIAL.map(t => `'${t}'`).join(',')}) AND prazo_data IS NOT NULL THEN prazo_data ELSE $${params.length}::date END`
+      : `prazo_data=$${params.length}::date`);
+  }
   if (precisa_triagem !== undefined) { params.push(Boolean(precisa_triagem)); updates.push(`precisa_triagem=$${params.length}`); }
   if (status) { params.push(status); updates.push(`status=$${params.length}`); }
   if (status === 'cancelada') {
@@ -595,9 +619,19 @@ tarefasRouter.patch('/lote', apenasMaster, async (req, res) => {
   const result = await db.query(
     `UPDATE tarefas SET ${updates.join(', ')}
       WHERE id=ANY($${params.length}::uuid[]) AND status NOT IN ('concluida','cancelada','bloqueada')
-      RETURNING id, tipo, onboarding_id`,
+      RETURNING id, tipo, onboarding_id, prazo_data, calendar_event_id`,
     params
   );
+
+  // Prazo judicial que ficou com a data antiga (o valor devolvido difere do pedido) = mantido.
+  const dataPedida = prazo_data ? String(prazo_data).slice(0, 10) : null;
+  const prazosMantidos = preservarPrazos
+    ? result.filter(r => TIPOS_PRAZO_JUDICIAL.includes(r.tipo) && (r.prazo_data ? String(r.prazo_data).slice(0, 10) : null) !== dataPedida)
+    : [];
+  if (prazo_data) {
+    const mantidos = new Set(prazosMantidos.map(r => r.id));
+    atualizarCalendarDoLote(result.filter(r => !mantidos.has(r.id)), prazo_data).catch(() => {});
+  }
 
   // Mesma sincronização do responsável no onboarding feita em /:id/responsavel — em lote
   // também não pode deixar quem recebeu a tarefa sem autorização de agir no cadastro.
@@ -610,10 +644,11 @@ tarefasRouter.patch('/lote', apenasMaster, async (req, res) => {
 
   await registrarAuditoria({
     usuarioId: req.user.id, acao: 'editar_lote', entidade: 'tarefa',
-    valorDepois: { ids: result.map(r => r.id), atribuido_a, prazo_data, precisa_triagem, status, justificativa },
+    valorDepois: { ids: result.map(r => r.id), atribuido_a, prazo_data, precisa_triagem, status, justificativa,
+      confirmar_troca_prazo: confirmar_troca_prazo === true, prazos_mantidos: prazosMantidos.map(r => r.id) },
     ip: req._ip,
   });
-  res.json({ ok: true, atualizadas: result.length });
+  res.json({ ok: true, atualizadas: result.length, prazos_mantidos: prazosMantidos.length });
 });
 
 function idsLoteValidos(ids, res) {
