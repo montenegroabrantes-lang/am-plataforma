@@ -71,23 +71,20 @@ export async function iniciarWorkers() {
     }
   );
 
-  // Se havia sync interrompido por restart, reagenda imediatamente
+  // Se havia sync interrompido por restart, fecha TODAS as execuções abertas e reagenda uma vez.
+  // (Antes o UPDATE usava a coluna `status`, que não existe: nada fechava, e todo boot reagendava.)
   try {
     const { db } = await import('../db/index.js');
-    const interrompido = await db.queryOne(
-      `SELECT id FROM sync_execucoes WHERE concluido_em IS NULL AND iniciado_em < NOW() - INTERVAL '10 minutes' LIMIT 1`
-    ).catch(() => null);
-    if (interrompido) {
-      // Marca a execução interrompida como falha
-      await db.execute(
-        `UPDATE sync_execucoes SET concluido_em = NOW(), falhas = 0, status = 'interrompido' WHERE id = $1`,
-        [interrompido.id]
-      ).catch(() => {});
+    const { fecharExecucoesAbertas } = await import('../services/tribunal/syncExecucao.js');
+    const fechadas = await fecharExecucoesAbertas(db);
+    if (fechadas > 0) {
       // Reagenda imediatamente
       await syncQueue.add('sincronizar-todos', {}, { removeOnComplete: 10, removeOnFail: 5 });
-      console.log('[Workers] Sync interrompido por restart — reagendado imediatamente.');
+      console.log(`[Workers] ${fechadas} sync(s) interrompido(s) por restart — fechado(s) e reagendado imediatamente.`);
     }
-  } catch { /* não bloqueia boot */ }
+  } catch (err) {
+    console.warn('[Workers] Não foi possível fechar sync interrompido:', err.message); // não bloqueia boot
+  }
 
   // Backup diário às 2h
   await backupQueue.add(

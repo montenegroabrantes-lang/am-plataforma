@@ -810,6 +810,12 @@ async function iniciar() {
     `).catch(() => {});
     await db.query(`CREATE INDEX IF NOT EXISTS idx_push_execucoes_inicio ON push_execucoes (iniciado_em DESC)`).catch(() => {});
 
+    // R-14 (30/09/2026): mensagem da falha de uma execução do sync que foi abortada/interrompida.
+    // NULL = a execução concluiu normalmente (só essas contam para a janela incremental do sync).
+    await migrar('2026_09_30_sync_execucoes_erro', async () => {
+      await db.execute(`ALTER TABLE sync_execucoes ADD COLUMN IF NOT EXISTS erro TEXT`);
+    }).catch(e => console.warn('[Migration] Coluna sync_execucoes.erro:', e.message));
+
     // Chaves para integrações externas: guarda somente SHA-256, nunca o segredo em texto.
     await db.query(`CREATE TABLE IF NOT EXISTS chaves_api_externas (
       id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), master_id UUID NOT NULL REFERENCES usuarios(id),

@@ -4,6 +4,7 @@
 import { db }       from '../../db/index.js';
 import { redis }    from '../../cache/redis.js';
 import * as datajud from './datajud.js';
+import { fecharExecucaoSync, mensagemErroSync } from './syncExecucao.js';
 
 // ─────────────────────────────────────────────
 //  INFERÊNCIA DE SITUACAO_ATUAL PELO TIPO DE AÇÃO
@@ -241,10 +242,16 @@ export async function sincronizarTodos() {
     return { ignorado: true, motivo: 'lock ativo' };
   }
 
+  // Fora do try: o catch precisa deles para fechar a execução. Antes `const execucaoId` vivia
+  // dentro do try e o catch lançava ReferenceError, escondendo o erro real e deixando a linha aberta.
+  let execucaoId = null;
+  const resultados = [];
+
   try {
     // Determina ponto de partida: último sync concluído - 2h de buffer (para não perder nada)
+    // Execução abortada (erro preenchido) não conta: ela não consultou tudo que devia.
     const ultimaExecucao = await db.queryOne(
-      `SELECT concluido_em FROM sync_execucoes WHERE concluido_em IS NOT NULL ORDER BY concluido_em DESC LIMIT 1`
+      `SELECT concluido_em FROM sync_execucoes WHERE concluido_em IS NOT NULL AND erro IS NULL ORDER BY concluido_em DESC LIMIT 1`
     ).catch(() => null);
 
     // Janela de busca:
@@ -280,10 +287,11 @@ export async function sincronizarTodos() {
     const execucao = await db.queryOne(
       `INSERT INTO sync_execucoes (total) VALUES ($1) RETURNING id`,
       [processos.length]
-    ).catch(() => null);
-    const execucaoId = execucao?.id || null;
-
-    const resultados = [];
+    ).catch(err => {
+      console.warn('[Sync] Execução não registrada em sync_execucoes:', err.message);
+      return null;
+    });
+    execucaoId = execucao?.id || null;
 
     for (const tribunal of tribunais) {
       console.log(`[Sync DataJud] ${tribunal}: buscando atualizados desde ${desde.slice(0, 10)}...`);
@@ -341,23 +349,19 @@ export async function sincronizarTodos() {
     console.log(`[Sync]    ${ok} processos com novidades, ${fail} falhas`);
     console.log(`[Sync]    Movimentações novas: ${novasMovs}`);
 
-    if (execucaoId) {
-      await db.execute(
-        `UPDATE sync_execucoes SET concluido_em = NOW(), via_datajud = $1, falhas = $2, novas_movimentacoes = $3 WHERE id = $4`,
-        [ok, fail, novasMovs, execucaoId]
-      ).catch(() => {});
-    }
+    await fecharExecucaoSync(db, execucaoId, { viaDatajud: ok, falhas: fail, novasMovimentacoes: novasMovs });
 
     return resultados;
 
   } catch (err) {
-    // Garante que sync_execucoes sempre recebe concluido_em mesmo em erro fatal
-    if (execucaoId) {
-      await db.execute(
-        `UPDATE sync_execucoes SET concluido_em = NOW(), falhas = -1 WHERE id = $1`,
-        [execucaoId]
-      ).catch(() => {});
-    }
+    // Garante que sync_execucoes sempre recebe concluido_em mesmo em erro fatal, com a causa real
+    // (sem dado pessoal) em `erro`; o erro original segue para quem chamou.
+    await fecharExecucaoSync(db, execucaoId, {
+      viaDatajud:         resultados.filter(r => r.ok).length,
+      falhas:             Math.max(resultados.filter(r => !r.ok).length, 1),
+      novasMovimentacoes: resultados.reduce((acc, r) => acc + (r.novasMovimentacoes || 0), 0),
+      erro:               mensagemErroSync(err),
+    });
     throw err;
   } finally {
     await redis.del(LOCK_KEY).catch(() => {});
