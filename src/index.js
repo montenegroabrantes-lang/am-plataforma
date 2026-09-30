@@ -46,6 +46,7 @@ import { oauthRouter } from './oauth/index.js';
 // Middleware
 import { autenticar } from './middleware/auth.js';
 import { auditar }    from './middleware/auditoria.js';
+import { cabecalhosSeguranca } from './middleware/cabecalhos.js';
 import { limiteLoginPorEmail } from './middleware/limiteLogin.js';
 import { limitesPorIpAtivos }  from './utils/tentativasLogin.js';
 
@@ -59,6 +60,8 @@ const PORT = process.env.PORT || 3001;
 // mais de 1 salto, todo mundo vira o mesmo IP -- ajustar a variável, sem mudar código.
 const saltosProxy = Number.parseInt(process.env.TRUST_PROXY_SALTOS, 10);
 app.set('trust proxy', saltosProxy > 0 ? saltosProxy : 1);
+app.disable('x-powered-by');
+app.use(cabecalhosSeguranca());
 
 const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:3000';
 if (!process.env.FRONTEND_URL) {
