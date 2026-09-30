@@ -239,6 +239,27 @@ test('S-02: senha que não é texto (JSON) ou gigante não derruba o servidor ne
   }
 });
 
+test('S-02: a conta de serviço nunca autoriza o conector, nem se tivesse senha válida; senha acima de 512 caracteres não autoriza (bcrypt só lê 72 bytes)', async () => {
+  const s = await subir();
+  const cliente = await novoCliente(s);
+  const emailComHash = 'hash-longo@exemplo.com';
+  const base72 = 'a'.repeat(72);
+  const original = { servico: USUARIOS[CONTA_SERVICO_EMAIL], longo: USUARIOS[emailComHash] };
+  USUARIOS[CONTA_SERVICO_EMAIL] = mestre({ id: 'u-servico', email: CONTA_SERVICO_EMAIL, senha_hash: HASH_RAPIDO });
+  USUARIOS[emailComHash] = mestre({ id: 'u-longo', email: emailComHash, senha_hash: bcrypt.hashSync(base72, 4) });
+  try {
+    const servico = await autorizar(s, cliente, { email: CONTA_SERVICO_EMAIL, senha: SENHA, ip: '203.0.113.82' });
+    assert.equal(servico.status, 401, 'conta de serviço com senha certa');
+    const certa = await autorizar(s, cliente, { email: emailComHash, senha: base72, ip: '203.0.113.83' });
+    assert.equal(certa.status, 302, 'controle: a senha de 72 caracteres entra');
+    const gigante = await autorizar(s, cliente, { email: emailComHash, senha: base72 + 'b'.repeat(600), ip: '203.0.113.84' });
+    assert.equal(gigante.status, 401, 'o resto além de 72 bytes não pode ser ignorado em silêncio');
+  } finally {
+    if (original.servico) USUARIOS[CONTA_SERVICO_EMAIL] = original.servico; else delete USUARIOS[CONTA_SERVICO_EMAIL];
+    delete USUARIOS[emailComHash];
+  }
+});
+
 test('S-02: 2FA — quem ativou é solicitado a informar o código; sem código a página pede e não conta; código errado → 401; certo → 302', async () => {
   const s = await subir();
   const cliente = await novoCliente(s);
