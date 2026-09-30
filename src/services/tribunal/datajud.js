@@ -258,6 +258,16 @@ export async function consultarPorNumeros(tribunal, numerosPuros) {
       throw new ErroDataJud(`DataJud devolveu resposta incompleta (${hits.length} de ${Number.isFinite(total) ? total : '?'}) — ${tribunal}`,
         { status: r.status, tentativas: r.tentativas });
     }
+    // Elasticsearch responde 200 mesmo quando estourou o tempo (timed_out) ou algum shard falhou, com resultado
+    // PARCIAL: quem não veio não pode virar "não existe". Os que vieram são aproveitados; os que faltam são falha.
+    if (r.data?.timed_out === true || Number(r.data?._shards?.failed) > 0) {
+      const parciais = montarEncontrados(hits, pedidos);
+      console.warn(`[DataJud] ${rotulo}: HTTP ${r.status} com timed_out/shards com falha — resposta parcial (${parciais.size} processo(s))`);
+      if (parciais.size === 0) {
+        throw new ErroDataJud(`DataJud devolveu resposta incompleta (timed_out) — ${tribunal}`, { status: r.status, tentativas: r.tentativas });
+      }
+      return { encontrados: parciais, falharam: new Set(numeros.filter(n => !parciais.has(n))), hits: hits.length, status: r.status, tentativas: r.tentativas, metodo: 'terms' };
+    }
     console.log(`[DataJud] ${rotulo}: ${hits.length} documento(s)`);
     return { encontrados: montarEncontrados(hits, pedidos), falharam: new Set(), hits: hits.length, status: r.status, tentativas: r.tentativas, metodo: 'terms' };
   }

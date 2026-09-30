@@ -111,7 +111,7 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
     if (CNJ_PURO.test(mov.texto.trim())) continue;
     if (/^[\d\s\-\/\.\:,;()]+$/.test(mov.texto)) continue;
     const data = parsearData(mov.data);
-    if (!data) continue;
+    if (!data || Number.isNaN(data.getTime())) continue;   // data impossível (ex.: 99/99/2026) não é erro de gravação
     try {
       const [inserida] = await db.query(
         `INSERT INTO movimentacoes (processo_id, data_movimentacao, tipo, texto)
@@ -215,10 +215,12 @@ async function salvarResultadoSync(processoId, processo, dados, movimentacoesBru
   if (errosInsercao > 0) throw new Error(`${errosInsercao} movimentação(ões) não gravada(s)`);
 
   // Sucesso de verdade: zera o contador de falhas, tira o 'erro_sync' e avança a marca do DataJud.
+  // Sem data legível no DataJud a marca vira NOW(): sem isso o processo ficaria NULL (= 1ª captura) para sempre,
+  // e nenhum andamento dele iria para a IA nem para o alerta.
   await db.execute(
     `UPDATE processos
         SET sync_status = 'ok', sync_falhas = 0, atualizado_em = NOW(),
-            datajud_atualizado_em = COALESCE($2, datajud_atualizado_em)
+            datajud_atualizado_em = COALESCE($2, datajud_atualizado_em, NOW())
       WHERE id = $1`,
     [processoId, atualizadoEm]
   );

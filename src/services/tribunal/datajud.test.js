@@ -206,6 +206,27 @@ test('resposta 200 cortada (total maior que os hits devolvidos) é falha, não "
   await assert.rejects(consultarPorNumeros('TJPB', [numero(1)]), (err) => err instanceof ErroDataJud && /incompleta/.test(err.message));
 });
 
+test('200 com timed_out (Elasticsearch estourou o tempo): aproveita o que veio e marca o que falta como FALHA, não como "não existe"', async () => {
+  fingirApi([ok([doc(numero(1))], { timed_out: true })]);
+  const r = await consultarPorNumeros('TJPB', [numero(1), numero(2)]);
+  assert.deepEqual([...r.encontrados.keys()], [numero(1)]);
+  assert.deepEqual([...r.falharam], [numero(2)]);
+});
+
+test('200 com timed_out e nenhum processo, ou com shard falho e nada devolvido: lança (não devolve "nada mudou")', async () => {
+  fingirApi([ok([], { timed_out: true })]);
+  await assert.rejects(consultarPorNumeros('TJPB', [numero(1)]), (err) => err instanceof ErroDataJud && /incompleta/.test(err.message));
+  fingirApi([ok([], { _shards: { total: 3, successful: 2, failed: 1 } })]);
+  await assert.rejects(consultarPorNumeros('TJPB', [numero(1)]), (err) => err instanceof ErroDataJud);
+});
+
+test('200 normal (timed_out false, shards sem falha) e sem o processo: continua sendo "não existe", sem falha', async () => {
+  fingirApi([ok([doc(numero(1))], { timed_out: false, _shards: { total: 3, successful: 3, failed: 0 } })]);
+  const r = await consultarPorNumeros('TJPB', [numero(1), numero(2)]);
+  assert.deepEqual([...r.encontrados.keys()], [numero(1)]);
+  assert.equal(r.falharam.size, 0);
+});
+
 // ── fallback quando a API recusa o lote ──────────────────────────────────────
 
 test('HTTP 400 no lote (terms recusado): cai na consulta por número, e o que falha individualmente vira "falharam"', async () => {

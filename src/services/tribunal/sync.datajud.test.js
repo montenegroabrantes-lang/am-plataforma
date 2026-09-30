@@ -134,7 +134,7 @@ function montarCenario({ processos, dataJud = new Map(), politica = async () => 
     if (/UPDATE processos\s+SET sync_status = 'ok', sync_falhas = 0, atualizado_em = NOW\(\)/.test(sql)) {      // sucesso de verdade
       const p = r(params[0]);
       p.sync_status = 'ok'; p.sync_falhas = 0;
-      if (params[1]) p.datajud_atualizado_em = params[1];
+      p.datajud_atualizado_em = params[1] || p.datajud_atualizado_em || (/COALESCE\(\$2, datajud_atualizado_em, NOW\(\)\)/.test(sql) ? new Date() : null);   // COALESCE($2, marca, NOW())
       return { rowCount: 1 };
     }
     if (/UPDATE processos SET sync_status = 'ok', sync_falhas = 0, sync_fonte = 'datajud'/.test(sql)) {           // consulta ok, nada novo
@@ -475,6 +475,36 @@ test('violação de unicidade (23505) é duplicata inofensiva: não conta como f
   const r = await sincronizarTodos();
   assert.equal(r[0].ok, true);
   assert.ok(c.linhas.get('p1').datajud_atualizado_em);
+});
+
+test('andamento com data impossível (ex.: mês 13) é descartado, não conta como falha de gravação nem trava a marca', async () => {
+  const c = montarCenario({
+    processos: nProcessos(1),
+    dataJud: dataJudCom([1], () => entrada('2026-09-30T09:00:00.000Z', [
+      { codigo: 1, nome: 'Andamento com data impossível no tribunal', dataHora: '2026-13-45T10:00:00.000Z' },
+      { codigo: 2, nome: 'Andamento normal de um mês atrás', dataHora: diasAtras(30) },
+    ])),
+  });
+  const r = await sincronizarTodos();
+  assert.equal(r[0].ok, true);
+  assert.equal(r[0].novasMovimentacoes, 1);
+  assert.equal(c.insertsMov, 1, 'a data inválida nem chegou ao banco');
+  assert.ok(c.linhas.get('p1').datajud_atualizado_em);
+});
+
+test('DataJud sem dataHoraUltimaAtualizacao: a marca avança mesmo assim (senão o processo ficaria em backfill para sempre, sem IA nem alerta)', async () => {
+  const c = montarCenario({
+    processos: nProcessos(1),
+    dataJud: dataJudCom([1], () => entrada(null, [{ codigo: 2, nome: 'Andamento de um mês atrás', dataHora: diasAtras(30) }])),
+  });
+  await sincronizarTodos();
+  assert.ok(c.linhas.get('p1').datajud_atualizado_em, '1ª captura grava alguma marca');
+  assert.equal(c.consultasIA, 0, 'a 1ª captura continua sem IA');
+
+  // 2ª execução: já não é backfill, então o andamento recente vai para a IA
+  c.dataJud.set(PURO(1), entrada(null, [{ codigo: 3, nome: 'Andamento recente de ontem', dataHora: diasAtras(1) }]));
+  await sincronizarTodos();
+  assert.equal(c.consultasIA, 1, 'o andamento de ontem foi para a IA na captura seguinte');
 });
 
 // ── backfill: sem IA e sem WhatsApp ──────────────────────────────────────────
