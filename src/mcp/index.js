@@ -10,6 +10,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { autenticar } from '../middleware/auth.js';
 import { urlHttpsOuNulo } from '../utils/validacao.js';
+import { somenteBearer } from '../middleware/somenteBearer.js';
 
 export const mcpRouter = Router();
 
@@ -220,8 +221,9 @@ function construirServidor(token) {
   return s;
 }
 
-mcpRouter.post('/', autenticar, async (req, res) => {
-  const token = req.cookies?.am_token || req.headers.authorization?.replace('Bearer ', '');
+// (S-01) /mcp é isento da checagem de Origin: só aceita Bearer, nunca o cookie de sessão.
+mcpRouter.post('/', somenteBearer, autenticar, async (req, res) => {
+  const token = req.headers.authorization.replace('Bearer ', '');
   const servidor = construirServidor(token);
   const transporte = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on('close', () => { transporte.close(); servidor.close(); });

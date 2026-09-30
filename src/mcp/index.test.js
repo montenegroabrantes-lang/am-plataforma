@@ -5,10 +5,12 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import jwt from 'jsonwebtoken';
+import cookieParser from 'cookie-parser';
 
 process.env.JWT_SECRET = 'segredo-de-teste';
 
 const app = express();
+app.use(cookieParser()); // como no index.js: o cookie am_token chega ao autenticar se o /mcp deixar
 app.use(express.json());
 const servidor = app.listen(0);
 const porta = servidor.address().port;
@@ -64,6 +66,18 @@ const textoDe = resposta => JSON.parse(resposta.dados.result.content[0].text);
 
 test('/mcp sem token → 401', async () => {
   assert.equal((await rpc('tools/list', {}, { comToken: false })).status, 401);
+});
+
+test('/mcp só com o cookie de sessão (sem Bearer) → 401: rota isenta da checagem de Origin não aceita cookie', async () => {
+  const chamar = (headers) => fetch(`http://127.0.0.1:${porta}/mcp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream', ...headers },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 900, method: 'tools/list', params: {} }),
+  });
+  assert.equal((await chamar({ Cookie: `am_token=${token}` })).status, 401);
+  assert.equal((await chamar({ Cookie: `am_token=${token}`, Authorization: 'Basic abc' })).status, 401);
+  // Com cookie E Bearer válido, vale o Bearer (o cookie é ignorado).
+  assert.equal((await chamar({ Cookie: 'am_token=lixo', Authorization: `Bearer ${token}` })).status, 200);
 });
 
 test('lista as ferramentas novas como somente leitura, sem perder as do acervo', async () => {

@@ -53,6 +53,8 @@ import { limitesPorIpAtivos }  from './utils/tentativasLogin.js';
 import { tratadorGlobalDeErros } from './middleware/erros.js';
 import { auditoriaRouter } from './routes/auditoria.js';
 import { migrarAuditoriaAutor, protegerAuditoria } from './db/auditoriaMigracao.js';
+import { exigirOrigemConfiavel } from './middleware/origem.js';
+import { montarUrlencodedOauth } from './middleware/parsersOauth.js';
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -74,8 +76,11 @@ if (!process.env.FRONTEND_URL) {
 app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: false, limit: '1mb' }));
+// (S-01) sem express.urlencoded global: formulário HTML de outro site não chega a rota nenhuma.
+// O parser de formulário fica só no /oauth/authorize e /oauth/token (montarUrlencodedOauth).
 app.use(auditar);
+// (S-01) CSRF: escrita por cookie só com Origin do frontend (FRONTEND_URL, igual ao CORS).
+app.use(exigirOrigemConfiavel({ permitida: allowedOrigin }));
 
 let dbOk = false;
 
@@ -151,6 +156,7 @@ app.use('/api/auditoria',     autenticar, auditoriaRouter);
 // Levantamento de re-protocolo (somente leitura): Master + escopo OAuth "reprotocolo" no conector.
 app.use('/api/reprotocolo',   autenticar, reprotocoloRouter);
 app.use('/mcp',               mcpRouter);
+montarUrlencodedOauth(app);
 app.use(oauthRouter); // /.well-known/*, /oauth/authorize, /oauth/token, /oauth/register — sem autenticar
 
 // Global error handler — captura erros não tratados nas rotas (S-22: 500 genérico com código de

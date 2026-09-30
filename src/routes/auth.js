@@ -7,6 +7,7 @@ import { registrarAuditoria } from '../middleware/auditoria.js';
 import { autenticar }         from '../middleware/auth.js';
 import { normalizarEmailTentado } from '../utils/tentativasLogin.js';
 import { emailTentadoParaLog } from '../utils/auditoriaCampos.js';
+import { exigirOrigemExplicita } from '../middleware/origem.js';
 
 export const authRouter = Router();
 
@@ -143,14 +144,25 @@ authRouter.post('/trocar-senha', async (req, res) => {
   res.json({ ok: true, mensagem: 'Senha atualizada.' });
 });
 
-// GET /api/auth/2fa/setup
-authRouter.get('/2fa/setup', autenticar, async (req, res) => {
+// POST /api/auth/2fa/setup (S-01: grava o segredo, então não pode ser GET — um <img> de outro
+// site trocaria o segredo de quem está logado). Recusa quando o 2FA já está ativo, para ninguém
+// (nem um site externo) trocar o segredo de uma conta que já usa 2FA e trancá-la para fora.
+async function iniciarSetup2fa(req, res) {
+  const atual = await db.queryOne('SELECT totp_ativo FROM usuarios WHERE id = $1', [req.user.id]);
+  if (atual?.totp_ativo) {
+    return res.status(409).json({ ok: false, erro: 'O 2FA já está ativo nesta conta.' });
+  }
   const secret = authenticator.generateSecret();
   const otpauth = authenticator.keyuri(req.user.email, 'AM Advogados', secret);
   await db.execute('UPDATE usuarios SET totp_secret = $1 WHERE id = $2', [secret, req.user.id]);
   await registrarAuditoria({ usuarioId: req.user.id, acao: 'configurar_2fa', entidade: 'usuario', entidadeId: req.user.id, ip: req._ip });
   res.json({ ok: true, secret, otpauth });
-});
+}
+authRouter.post('/2fa/setup', autenticar, iniciarSetup2fa);
+// Compatibilidade com o frontend anterior (que chamava GET) durante a publicação: só atende se o
+// Origin do frontend vier explícito (XHR/fetch dele); <img>/navegação de outro site não mandam
+// Origin num GET e são recusados. Remover depois que o frontend novo estiver no ar.
+authRouter.get('/2fa/setup', autenticar, exigirOrigemExplicita(process.env.FRONTEND_URL || 'http://localhost:3000'), iniciarSetup2fa);
 
 // POST /api/auth/2fa/ativar
 authRouter.post('/2fa/ativar', autenticar, async (req, res) => {
