@@ -1,12 +1,14 @@
 // Valor em reais vindo de tela ou de conector: aceita pt-BR ("812,35", "1.234,56", "R$ 812,35") e
 // ponto decimal ("812.35"). Mesma regra do helper do frontend (web/src/lib/valorBR.mjs): com vírgula,
 // os pontos são milhar; sem vírgula, só é milhar o padrão "1.234" / "81.235" (grupos de 3 dígitos).
-// Inválido devolve 0 (quem chama recusa valor <= 0).
+// Inválido devolve 0 (quem chama recusa valor <= 0). No servidor a leitura é mais estrita: só dígitos.
 export function parseValorBR(valor) {
   let texto = String(valor ?? '').trim().replace(/R\$/gi, '').replace(/\s/g, '');
   if (!texto) return 0;
   if (texto.includes(',')) texto = texto.replace(/\./g, '').replace(',', '.');
   else if (/^\d{1,3}(\.\d{3})+$/.test(texto)) texto = texto.replace(/\./g, '');
+  // Só dígitos com ponto decimal opcional: sem isso o Number() aceitaria notação científica e hexadecimal ("1e5", "0x10").
+  if (!/^\d+(\.\d*)?$|^\.\d+$/.test(texto)) return 0;
   const numero = Number(texto);
   return Number.isFinite(numero) ? numero : 0;
 }

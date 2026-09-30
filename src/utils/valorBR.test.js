@@ -9,7 +9,7 @@ test('parseValorBR: pt-BR, ponto decimal e milhar', () => {
 });
 
 test('parseValorBR: lixo vira 0 (quem chama recusa)', () => {
-  for (const v of ['abc', '', null, undefined, '1.2.3', '12,3,4', '--5']) assert.equal(parseValorBR(v), 0, String(v));
+  for (const v of ['abc', '', null, undefined, '1.2.3', '12,3,4', '--5', '1e5', '0x10', '1e3', 'Infinity', '-812,35']) assert.equal(parseValorBR(v), 0, String(v));
 });
 
 test('valorDaCausaDoCorpo: número e texto passam; outros tipos são inválidos', () => {
