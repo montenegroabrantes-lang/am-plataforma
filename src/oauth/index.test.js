@@ -8,6 +8,8 @@ import express from 'express';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import { authenticator } from 'otplib';
+import { definirCarregador, carregadorEcoDoToken } from '../middleware/sessao.js';
+definirCarregador(carregadorEcoDoToken); // S-03: nestes testes a conta vale o que o token diz (sem banco)
 
 process.env.JWT_SECRET = 'segredo-de-teste';
 

@@ -9,6 +9,8 @@ import http from 'node:http';
 import express from 'express';
 // (sem 'express-async-errors' de propósito: ele embrulha os handlers e o teste estrutural compara a identidade do apenasMaster)
 import jwt from 'jsonwebtoken';
+import { definirCarregador, carregadorEcoDoToken } from '../middleware/sessao.js';
+definirCarregador(carregadorEcoDoToken); // S-03: nestes testes a conta vale o que o token diz (sem banco)
 
 process.env.JWT_SECRET = 'segredo-de-teste';
 
@@ -121,10 +123,12 @@ test('exceção 1: a aba Processual (GET /pendencias-processuais) continua abert
   assert.deepEqual(recebidas.map(x => x.url.split('?')[0]), ['/api/pendencias-processuais']);
 });
 
-test('exceção 2: a conversa do lead (GET /leads/:contactId/mensagens) não pede Master (id inválido → 400, não 403)', async () => {
-  const r = await chamar('GET', '/api/estimativas/leads/nao-uuid/mensagens', T.junior);
-  assert.equal(r.status, 400);
-  assert.equal(r.corpo.erro, 'contactId inválido.');
+test('conversa do lead (GET /leads/:contactId/mensagens): só Master (S-27/D6 fechou a exceção da D7 para o júnior)', async () => {
+  const junior = await chamar('GET', '/api/estimativas/leads/nao-uuid/mensagens', T.junior);
+  assert.equal(junior.status, 403);
+  const master = await chamar('GET', '/api/estimativas/leads/nao-uuid/mensagens', T.master);
+  assert.equal(master.status, 400);
+  assert.equal(master.corpo.erro, 'contactId inválido.');
 });
 
 test('escrita do proxy continua só Master (regressão): júnior → 403 em PATCH da Processual e nos POSTs', async () => {

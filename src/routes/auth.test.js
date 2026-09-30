@@ -408,7 +408,10 @@ test('conector: autorizador ativo e Master → passa; desativado → 401; júnio
 test('conector: versão da conta de serviço derruba os tokens antigos; token de antes do S-03 (sem sv) segue valendo na versão 0', async () => {
   const c = cliente();
   const antigo = assinarAcesso({ id: ID.servico, nome: 'Integração Claude', email: CONTA_SERVICO_EMAIL, perfil: 'master' }, { expiresIn: '30d' });
-  assert.equal((await c.chamar('GET', '/api/acervo/teses', undefined, { bearer: antigo })).status, 200, 'conector já conectado antes do deploy continua funcionando');
+  // S-18 (lote S, onda 3) prevalece sobre a tolerância do S-03: o token da conta de serviço SEM o claim `escopos` (formato
+  // anterior aos escopos de 28/09) valeria como Master em toda a API, então é recusado (o conector refaz a autorização).
+  // A troca do JWT_SECRET de 28/09 já invalidou todos os tokens desse formato.
+  assert.equal((await c.chamar('GET', '/api/acervo/teses', undefined, { bearer: antigo })).status, 401, 'token antigo do conector, sem escopos: recusado (S-18)');
   const semSv = tokenConector({ sv: undefined });
   assert.equal((await c.chamar('GET', '/api/acervo/teses', undefined, { bearer: semSv })).status, 200);
 
@@ -426,7 +429,7 @@ test('conector: continua confinado às áreas dos escopos e NÃO troca senha nem
   assert.equal((await c.chamar('POST', '/api/auth/sair-de-todos', {}, { bearer: tokenConector() })).status, 403);
   // token da conta de serviço sem escopos (formato antigo) também não passa pelo apenasSessao
   const antigo = assinarAcesso({ id: ID.servico, email: CONTA_SERVICO_EMAIL, perfil: 'master' }, { expiresIn: '30d' });
-  assert.equal((await c.chamar('POST', '/api/auth/alterar-senha', { senha_atual: SENHA, senha_nova: 'NovaSenhaForte#9' }, { bearer: antigo })).status, 403);
+  assert.ok([401, 403].includes((await c.chamar('POST', '/api/auth/alterar-senha', { senha_atual: SENHA, senha_nova: 'NovaSenhaForte#9' }, { bearer: antigo })).status), 'recusado: 401 (S-18, no autenticar) ou 403 (apenasSessao)');
   assert.equal(banco.usuarios.get(ID.servico).sessao_versao, 0);
 });
 
@@ -860,6 +863,11 @@ test('excluir usuário: a sessão dele cai imediatamente (linhas de refresh vão
   const { c: mestre } = await logar('ana@exemplo.com');
   const { c: alvo } = await logar('carla@exemplo.com');
   assert.equal((await alvo.chamar('GET', '/api/probe')).status, 200);
+  // D-S3 (S-13): quem já tem linha na auditoria (todo usuário que entrou tem o `login`) NÃO é excluído: 409, e a sessão segue.
+  assert.equal((await mestre.chamar('DELETE', `/api/usuarios/${ID.junior}`)).status, 409);
+  assert.equal((await alvo.chamar('GET', '/api/probe')).status, 200);
+  // Para provar a queda imediata da sessão na exclusão, simula-se uma conta sem histórico na trilha.
+  banco.logs = banco.logs.filter((l) => l.usuarioId !== ID.junior);
   assert.equal((await mestre.chamar('DELETE', `/api/usuarios/${ID.junior}`)).status, 200);
   assert.equal((await alvo.chamar('GET', '/api/probe')).status, 401);
   assert.equal((await alvo.chamar('POST', '/api/auth/refresh', {})).status, 401);

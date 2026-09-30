@@ -6,6 +6,8 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import 'express-async-errors';
 import jwt from 'jsonwebtoken';
+import { definirCarregador, carregadorEcoDoToken } from '../middleware/sessao.js';
+definirCarregador(carregadorEcoDoToken); // S-03: nestes testes a conta vale o que o token diz (sem banco)
 
 process.env.JWT_SECRET = 'segredo-de-teste';
 process.env.ENCRYPTION_KEY = 'ab'.repeat(32);
@@ -16,9 +18,15 @@ const { db } = await import('../db/index.js');
 let consultas = [];
 let regras = [];
 const quando = (tipo, padrao, resposta) => regras.push({ tipo, padrao, resposta });
+const REGRAS_DE_APOIO = [
+  { tipo: 'execute', padrao: /INSERT INTO logs_auditoria/, resposta: { rowCount: 1 } },
+  { tipo: 'queryOne', padrao: /^\s*SELECT (vara, notas|vara|notas|urgente|nome, whatsapp, email|ativo|resultado) FROM (processos|clientes|audiencias) WHERE id = \$1/, resposta: {} },
+];
 const responder = (tipo) => async (sql, params = []) => {
   consultas.push({ tipo, sql, params });
-  const regra = regras.find(r => r.tipo === tipo && r.padrao.test(sql));
+  // Leituras de apoio da auditoria (S-13: estado anterior de quem muda) e gravação do log: respostas neutras quando o
+  // teste não define uma regra própria. As regras do teste têm prioridade.
+  const regra = regras.find(r => r.tipo === tipo && r.padrao.test(sql)) || REGRAS_DE_APOIO.find(r => r.tipo === tipo && r.padrao.test(sql));
   if (!regra) throw new Error(`consulta inesperada (${tipo}): ${sql.replace(/\s+/g, ' ').slice(0, 180)}`);
   return typeof regra.resposta === 'function' ? regra.resposta(sql, params) : regra.resposta;
 };
@@ -368,7 +376,7 @@ test('processos: Master edita valor da causa, RPV e status de qualquer processo,
 });
 
 test('processos: urgência do júnior só onde tem tarefa; Master marca em qualquer processo', async () => {
-  quando('queryOne', /SELECT master_responsavel_id, compartilhado FROM processos/, { master_responsavel_id: 'm1', compartilhado: false });
+  quando('queryOne', /SELECT master_responsavel_id, compartilhado(, visibilidade)? FROM processos/, { master_responsavel_id: 'm1', compartilhado: false, visibilidade: 'normal' });
   quando('execute', /^\s*UPDATE processos SET urgente/, { rowCount: 1 });
 
   quando('queryOne', /FROM tarefas\s+WHERE processo_id = \$1 AND atribuido_a = \$2/, null);

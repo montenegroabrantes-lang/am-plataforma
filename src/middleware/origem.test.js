@@ -9,6 +9,8 @@ import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import bcrypt from 'bcrypt';
+import { definirCarregador, carregadorEcoDoToken } from './sessao.js';
+definirCarregador(carregadorEcoDoToken); // S-03: nestes testes a conta vale o que o token diz (sem banco)
 
 process.env.JWT_SECRET = 'segredo-de-teste';
 process.env.JWT_REFRESH_SECRET = 'segredo-refresh-de-teste';

@@ -415,7 +415,8 @@ export function criarOauthRouter({
         // `scope` informa ao cliente o que foi de fato concedido (pode diferir do pedido — RFC 6749 §3.3).
         return res.json({ access_token, token_type: 'Bearer', expires_in: 180 * 24 * 3600, scope: escopos.join(' ') });
       } catch (e) {
-        return res.status(500).json({ error: 'server_error', error_description: e.message });
+        registrarErroInterno(e, req); // detalhe só no log (a mensagem cita a conta de serviço)
+        return res.status(500).json({ error: 'server_error' });
       }
     }
 

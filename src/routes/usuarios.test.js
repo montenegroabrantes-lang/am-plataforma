@@ -6,6 +6,8 @@ import express from 'express';
 import 'express-async-errors';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { definirCarregador, carregadorEcoDoToken } from '../middleware/sessao.js';
+definirCarregador(carregadorEcoDoToken); // S-03: nestes testes a conta vale o que o token diz (sem banco)
 
 process.env.JWT_SECRET = 'segredo-de-teste';
 
@@ -38,6 +40,12 @@ db.queryOne = async (sql, params) => {
   if (/SELECT id, perfil, master_id FROM usuarios WHERE id/.test(sql)) { const u = lerUsuario(params[0]); return u && { id: u.id, perfil: u.perfil, master_id: u.master_id }; }
   if (/SELECT id FROM usuarios WHERE id = \$1 AND perfil = 'master' AND ativo = true/.test(sql)) { const u = lerUsuario(params[0]); return u && u.perfil === 'master' && u.ativo ? { id: u.id } : null; }
   if (/SELECT id, nome, email, perfil, ativo FROM usuarios WHERE id/.test(sql)) return lerUsuario(params[0]);
+  // S-03/S-04 (G7): redefinir a senha grava provisória, sobe a versão de sessão e devolve o id.
+  if (/UPDATE usuarios SET senha_hash = \$1, senha_temporaria = true, sessao_versao = sessao_versao \+ 1 WHERE id = \$2 RETURNING id/.test(sql)) {
+    if (!usuarios.has(params[1])) return null;
+    gravacoes.push({ senha: { hash: params[0], id: params[1] } });
+    return { id: params[1] };
+  }
   throw new Error(`queryOne inesperada: ${sql.replace(/\s+/g, ' ').slice(0, 90)}`);
 };
 db.query = async (sql, params) => {
@@ -61,6 +69,8 @@ db.execute = async (sql, params) => {
     return { rowCount: 1 };
   }
   if (/UPDATE usuarios SET senha_hash = \$1 WHERE id = \$2/.test(sql)) { gravacoes.push({ senha: { hash: params[0], id: params[1] } }); return { rowCount: 1 }; }
+  // S-03 (G7): desativar/trocar e-mail derruba as sessões (sobe a versão e revoga os refresh).
+  if (/UPDATE usuarios SET sessao_versao = sessao_versao \+ 1 WHERE id = \$1/.test(sql) || /UPDATE sessoes_refresh SET revogado_em/.test(sql)) return { rowCount: 1 };
   throw new Error(`execute inesperada: ${sql.replace(/\s+/g, ' ').slice(0, 90)}`);
 };
 

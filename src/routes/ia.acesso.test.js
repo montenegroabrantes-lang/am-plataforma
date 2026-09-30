@@ -10,6 +10,8 @@ import fs from 'node:fs';
 import express from 'express';
 import 'express-async-errors';
 import jwt from 'jsonwebtoken';
+import { definirCarregador, carregadorEcoDoToken } from '../middleware/sessao.js';
+definirCarregador(carregadorEcoDoToken); // S-03: nestes testes a conta vale o que o token diz (sem banco)
 
 process.env.JWT_SECRET = 'segredo-de-teste';
 process.env.CAMILA_CLIENT_LOOKUP_API_KEY = 'chave-camila-de-teste';
@@ -198,7 +200,7 @@ test('index.js monta os limitadores ANTES dos roteadores (a integração não po
     assert.ok(i > 0, `falta: ${limite}`); assert.ok(j > 0, `falta: ${roteador}`); assert.ok(i < j, `${limite} deve vir antes de ${roteador}`);
   };
   antes("app.use('/api/integracoes', limiteIntegracoes)", "app.use('/api/integracoes/camila'");
-  antes("app.use('/api/webhook',       limiteWebhook)", "app.use('/api/webhook',       webhookRouter)");
+  // (o webhook do DataJud foi removido no S-08: não há mais limitador nem rota para ele)
   assert.match(fonte, /app\.use\('\/mcp',\s+limiteMcp, mcpRouter\)/);
   antes("app.use('/oauth/token',       limiteOauthToken)", 'app.use(oauthRouter)');
   antes("app.use('/oauth/register',    limiteOauthRegistro)", 'app.use(oauthRouter)');

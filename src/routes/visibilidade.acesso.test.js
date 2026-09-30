@@ -6,18 +6,28 @@ import assert from 'node:assert/strict';
 import express from 'express';
 import 'express-async-errors';
 import jwt from 'jsonwebtoken';
+import { definirCarregador, carregadorEcoDoToken } from '../middleware/sessao.js';
+definirCarregador(carregadorEcoDoToken); // S-03: nestes testes a conta vale o que o token diz (sem banco)
 
 process.env.JWT_SECRET = 'segredo-de-teste';
 
 const { db } = await import('../db/index.js');
 let chamadas = [];
 let regras = [];
+const REGRAS_DE_APOIO = [
+  { metodo: 'execute', quando: /INSERT INTO logs_auditoria/, resp: { rowCount: 1 } },
+  { metodo: 'queryOne', quando: /^\s*SELECT (urgente|notas|resultado) FROM (processos|audiencias) WHERE id = \$1/, resp: {} },
+  // S-27: o júnior destes testes tem tarefa no processo (a regra desta matriz não é o que se prova aqui).
+  { metodo: 'queryOne', quando: /SELECT 1 AS ok FROM tarefas\s+WHERE\s+processo_id = \$1\s+AND\s+atribuido_a = \$2/, resp: { ok: 1 } },
+];
 function usarBanco(novas = []) {
   chamadas = [];
   regras = novas;
   const responder = (metodo) => async (sql, params) => {
     chamadas.push({ metodo, sql, params });
-    const r = regras.find(x => x.metodo === metodo && x.quando.test(sql));
+    // Leituras de apoio da auditoria (S-13), gravação do log e a conferência de tarefa do júnior (S-27): respostas
+    // neutras quando o teste não define regra própria (a do teste tem prioridade).
+    const r = regras.find(x => x.metodo === metodo && x.quando.test(sql)) || REGRAS_DE_APOIO.find(x => x.metodo === metodo && x.quando.test(sql));
     if (!r) throw new Error(`${metodo} inesperada: ${sql.replace(/\s+/g, ' ').slice(0, 90)}`);
     return typeof r.resp === 'function' ? r.resp(sql, params) : r.resp;
   };
@@ -25,7 +35,8 @@ function usarBanco(novas = []) {
 }
 usarBanco();
 const regra = (metodo, quando, resp) => ({ metodo, quando, resp });
-const gravacoes = () => chamadas.filter(c => c.metodo === 'execute' || (c.metodo === 'query' && /^\s*(INSERT|UPDATE|DELETE)/i.test(c.sql)));
+// O log de auditoria (S-13) não é gravação de DADO: o que estes testes provam é que a tabela alvo não foi alterada.
+const gravacoes = () => chamadas.filter(c => !/INSERT INTO logs_auditoria/.test(c.sql) && (c.metodo === 'execute' || (c.metodo === 'query' && /^\s*(INSERT|UPDATE|DELETE)/i.test(c.sql))));
 
 const { autenticar } = await import('../middleware/auth.js');
 const { processosRouter } = await import('./processos.js');

@@ -59,7 +59,7 @@ import { auditoriaRouter } from './routes/auditoria.js';
 import { migrarAuditoriaAutor, protegerAuditoria } from './db/auditoriaMigracao.js';
 import { exigirOrigemConfiavel } from './middleware/origem.js';
 import { montarUrlencodedOauth } from './middleware/parsersOauth.js';
-import { limiteMcp, limiteIntegracoes, limiteWebhook, limiteOauthToken, limiteOauthRegistro } from './middleware/limites.js';
+import { limiteMcp, limiteIntegracoes, limiteOauthToken, limiteOauthRegistro } from './middleware/limites.js';
 
 const app  = express();
 const PORT = process.env.PORT || 3001;

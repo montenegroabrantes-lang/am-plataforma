@@ -6,6 +6,8 @@ import express from 'express';
 import 'express-async-errors';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { definirCarregador, carregadorEcoDoToken } from '../middleware/sessao.js';
+definirCarregador(carregadorEcoDoToken); // S-03: nestes testes a conta vale o que o token diz (sem banco)
 
 // S-22 — /oauth/token não devolve mais a mensagem crua do erro (ela citava a conta de serviço):
 // responde só `server_error`, e o detalhe vai para o log com um código. O fluxo do conector

@@ -4,6 +4,8 @@ import http from 'node:http';
 import express from 'express';
 import 'express-async-errors';
 import jwt from 'jsonwebtoken';
+import { definirCarregador, carregadorEcoDoToken } from '../middleware/sessao.js';
+definirCarregador(carregadorEcoDoToken); // S-03: nestes testes a conta vale o que o token diz (sem banco)
 
 process.env.JWT_SECRET = 'segredo-de-teste';
 
@@ -63,7 +65,9 @@ test('sem login → 401', async () => {
 
 test('token do conector (com escopos) e a conta de serviço → 403 mesmo que a conta tenha o flag de Master 01', async () => {
   assert.equal((await pegar('', { ...MASTER01, escopos: ['acervo'] })).status, 403);
-  assert.equal((await pegar('', { ...MASTER01, email: CONTA_SERVICO_EMAIL })).status, 403);
+  // Conta de serviço SEM escopos: o S-18 recusa o token antigo do conector já no `autenticar` (401); com a
+  // sessão revogável (S-03) esse token nem chega à rota. Vale qualquer recusa, nunca 200.
+  assert.ok([401, 403].includes((await pegar('', { ...MASTER01, email: CONTA_SERVICO_EMAIL })).status));
   assert.equal(consultas.length, 0);
 });
 

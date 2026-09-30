@@ -6,6 +6,8 @@ import 'express-async-errors';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 import { authenticator } from 'otplib';
+import { definirCarregador, carregadorEcoDoToken } from '../middleware/sessao.js';
+definirCarregador(carregadorEcoDoToken); // S-03: nestes testes a conta vale o que o token diz (sem banco)
 
 // S-13 — as ações que estavam sem rastro agora gravam auditoria com o autor: cliente (PATCH e vínculos),
 // agenda, publicações, login que falhou, 2FA, troca de senha e configuração de IA. O banco é uma dublê,
@@ -25,7 +27,6 @@ const { agendaRouter } = await import('./agenda.js');
 const { publicacoesRouter, importarPublicacoesHandler } = await import('./publicacoes.js');
 const { authRouter } = await import('./auth.js');
 const { configAiRouter } = await import('./config.ai.js');
-const { credenciaisRouter } = await import('./credenciais.js');
 const { tratadorGlobalDeErros } = await import('../middleware/erros.js');
 
 const MASTER = { id: '11111111-1111-4111-8111-111111111111', perfil: 'master', pode_marcar_restrito: true, nome: 'Master Teste', email: 'master@exemplo.invalid' };
@@ -48,6 +49,13 @@ db.queryOne = async (sql, params) => {
   if (s.startsWith('SELECT cargo, orgao, vinculo_inicio, vinculo_fim, polo_passivo, vinculo_ativo FROM cliente_vinculos')) return vinculo;
   if ((m = s.match(/^SELECT (.+) FROM audiencias WHERE id = \$1$/))) return Object.fromEntries(m[1].split(', ').map(c => [c, audienciaAtual[c] ?? null]));
   if (s.startsWith('SELECT google_event_id FROM audiencias')) return { google_event_id: null };
+  // S-01 (G1): o setup do 2FA recusa conta que já tem 2FA ativo; aqui ainda não tem.
+  if (s.startsWith('SELECT totp_ativo FROM usuarios WHERE id')) return { totp_ativo: false };
+  // S-21 (G4): a audiência herda a visibilidade do processo; a rota lê o processo dela antes de editar.
+  if (s.startsWith('SELECT processo_id FROM audiencias WHERE id')) return { processo_id: PROCESSO };
+  // S-21 (G4): a regra única de visibilidade lê o dono e a visibilidade do processo.
+  if (s.startsWith('SELECT master_responsavel_id, compartilhado, visibilidade FROM processos WHERE id')) return { master_responsavel_id: MASTER.id, compartilhado: false, visibilidade: 'normal' };
+  if (s.startsWith('SELECT visibilidade FROM processos WHERE id')) return { visibilidade: 'normal' };
   if (s.startsWith('SELECT p.*, c.nome AS cliente_nome FROM processos p')) return { id: PROCESSO, numero: '0001234-56.2021.8.15.0001', tribunal: 'TJPB', vara: '1ª Vara', cliente_nome: 'Cliente Teste' };
   if (s.startsWith('SELECT p.*, pr.numero AS processo_numero')) return publicacao;
   if (s === 'SELECT * FROM tarefas WHERE publicacao_id = $1') return tarefaExistente;
@@ -94,7 +102,6 @@ before(async () => {
   app.use('/api/publicacoes', publicacoesRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/config/ai', configAiRouter);
-  app.use('/api/credenciais', credenciaisRouter);
   app.use(tratadorGlobalDeErros);
   servidor = http.createServer(app);
   await new Promise(r => servidor.listen(0, '127.0.0.1', r));
@@ -109,7 +116,7 @@ beforeEach(() => {
   auditoria = []; execucoes = []; rowCountLida = 1;
   cliente = { nome: 'Maria da Silva', whatsapp: '83999991234', email: 'maria@exemplo.invalid', cargo: 'Professor', ativo: true };
   vinculo = { cargo: 'Professor', orgao: 'Prefeitura A', vinculo_inicio: '2015-01-01', vinculo_fim: null, polo_passivo: 'Município A', vinculo_ativo: true };
-  audienciaAtual = { resultado: null, data_hora: new Date('2026-10-15T17:00:00.000Z'), tipo: 'instrução', vara: '1ª Vara' };
+  audienciaAtual = { processo_id: PROCESSO, resultado: null, data_hora: new Date('2026-10-15T17:00:00.000Z'), tipo: 'instrução', vara: '1ª Vara' };
   publicacao = { id: '555', processo_id: PROCESSO, numero_processo: '00012345620218150001', data_disponibilizacao: '2026-10-05', processo_numero: '0001234-56.2021.8.15.0001', processo_tribunal: 'TJPB', processo_vara: '1ª Vara', master_responsavel_id: MASTER.id };
   tarefaExistente = null;
   usuarioLogin = null;
@@ -285,7 +292,8 @@ test('login que dá certo continua gravando "login" (e o cookie de sessão sai)'
 
 test('2FA: configurar e ativar são auditados, sem o segredo nem os códigos de recuperação', async () => {
   const bearer = { authorization: `Bearer ${jwt.sign({ id: MASTER.id, perfil: 'master', email: 'master@exemplo.invalid' }, process.env.JWT_SECRET, { expiresIn: '1h' })}` };
-  const setup = await chamar('GET', '/api/auth/2fa/setup', undefined, bearer);
+  // S-01: a rota que grava o segredo do 2FA agora é POST (o GET ficou só como ponte para o frontend antigo).
+  const setup = await chamar('POST', '/api/auth/2fa/setup', {}, bearer);
   assert.equal(setup.status, 200);
   const segredo = setup.corpo.secret;
   usuarioLogin = { id: MASTER.id, totp_secret: segredo };
@@ -298,15 +306,8 @@ test('2FA: configurar e ativar são auditados, sem o segredo nem os códigos de 
   for (const codigo of ativar.corpo.codigos_recuperacao) assert.equal(tudo.includes(codigo), false);
 });
 
-test('troca de senha no primeiro acesso é auditada, sem a senha', async () => {
-  usuarioLogin = { id: MASTER.id };
-  const r = await chamar('POST', '/api/auth/trocar-senha', { userId: MASTER.id, novaSenha: 'OutraSenhaBoa#2026' });
-  assert.equal(r.status, 200);
-  assert.equal(auditoria[0].acao, 'trocar_senha');
-  assert.equal(auditoria[0].usuarioId, MASTER.id);
-  assert.deepEqual(auditoria[0].depois, { origem: 'primeiro_acesso' });
-  assert.equal(texto(auditoria).includes('OutraSenhaBoa'), false);
-});
+// (troca de senha no primeiro acesso: fluxo refeito no S-04 — token de primeiro acesso + senha provisória, ação 'primeiro_acesso_senha' —;
+//  a auditoria sem a senha é provada em src/routes/auth.test.js)
 
 // ── IA ──
 
@@ -321,15 +322,4 @@ test('configuração de IA: grava só o que mudou, com o autor', async () => {
   assert.equal('rota_diagnostico' in linha.depois, false);
 });
 
-// ── credenciais do tribunal ──
-
-test('credencial do tribunal: cadastrar e desativar são auditados, sem senha, sem segredo do 2FA e sem CPF', async () => {
-  const r = await chamar('POST', '/api/credenciais', { tribunal: 'TJPB', grau: '1', sistema: 'pje', cpf: '52998224725', senha: 'SenhaDoPJe#2026', totp_secret: 'JBSWY3DPEHPK3PXP', oab: 'PB12345' });
-  assert.equal(r.status, 201);
-  assert.equal((await chamar('DELETE', `/api/credenciais/${CREDENCIAL}`)).status, 200);
-  assert.deepEqual(auditoria.map(a => a.acao), ['salvar_credencial_tribunal', 'desativar_credencial_tribunal']);
-  assert.ok(auditoria.every(a => a.usuarioId === MASTER.id && a.entidade === 'credencial_tribunal' && a.entidadeId === CREDENCIAL));
-  assert.deepEqual(auditoria[0].depois, { tribunal: 'TJPB', grau: '1', sistema: 'pje', com_totp: true });
-  const tudo = texto(auditoria);
-  for (const segredo of ['SenhaDoPJe', 'JBSWY3DPEHPK3PXP', '52998224725', 'PB12345']) assert.equal(tudo.includes(segredo), false, segredo);
-});
+// (a rota /api/credenciais foi removida no S-10 — o PJe passa por sessão própria do advogado —, então não há mais auditoria dela)

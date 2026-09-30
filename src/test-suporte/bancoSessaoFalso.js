@@ -116,6 +116,26 @@ export function criarBancoFalso() {
       const u = U.get(p[3]); if (u) Object.assign(u, { nome: p[0], email: p[1], ativo: p[2] });
       return { rows: [], rowCount: u ? 1 : 0 };
     }
+    // S-05 (G4): PATCH /usuarios/:id lê o alvo inteiro e grava também a marcação de aprovador.
+    if (sql === 'SELECT id, nome, email, perfil, master_id, ativo, aprova_reprotocolo, criado_em FROM usuarios WHERE id = $1') {
+      const u = U.get(p[0]);
+      if (!u) return { rows: [] };
+      const { id, nome, email, perfil, master_id, ativo, aprova_reprotocolo, criado_em } = u;
+      return { rows: [{ id, nome, email, perfil, master_id, ativo, aprova_reprotocolo: aprova_reprotocolo ?? false, criado_em }] };
+    }
+    if (sql === 'UPDATE usuarios SET nome = $1, email = $2, ativo = $3, aprova_reprotocolo = $4 WHERE id = $5') {
+      const u = U.get(p[4]); if (u) Object.assign(u, { nome: p[0], email: p[1], ativo: p[2], aprova_reprotocolo: p[3] });
+      return { rows: [], rowCount: u ? 1 : 0 };
+    }
+    // S-05 (G4): redefinir senha confere a hierarquia lendo id, perfil e master_id do alvo.
+    if (sql === 'SELECT id, perfil, master_id FROM usuarios WHERE id = $1') {
+      const u = U.get(p[0]);
+      return { rows: u ? [{ id: u.id, perfil: u.perfil, master_id: u.master_id }] : [] };
+    }
+    // S-13 / D-S3 (G5): usuário com qualquer linha na auditoria não é excluído.
+    if (sql === 'SELECT 1 AS existe FROM logs_auditoria WHERE usuario_id = $1 LIMIT 1') {
+      return { rows: banco.logs.some((l) => l.usuarioId === p[0]) ? [{ existe: 1 }] : [] };
+    }
     if (sql === 'SELECT perfil FROM usuarios WHERE id = $1') {
       const u = U.get(p[0]);
       return { rows: u ? [{ perfil: u.perfil }] : [] };

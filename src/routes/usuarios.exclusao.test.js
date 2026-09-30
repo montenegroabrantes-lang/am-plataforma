@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import express from 'express';
 import 'express-async-errors';
+import { definirCarregador, carregadorEcoDoToken } from '../middleware/sessao.js';
+definirCarregador(carregadorEcoDoToken); // S-03: nestes testes a conta vale o que o token diz (sem banco)
 
 // S-13 / D-S3 — quem já tem registro na auditoria não é excluído (409 "desative"); o log nunca tem o
 // autor anulado (o UPDATE em logs_auditoria saiu da rota); falha ao gravar o log DENTRO da transação
@@ -25,6 +27,10 @@ db.queryOne = async (sql, params) => {
   if (s.startsWith('SELECT id, nome, email, perfil, ativo FROM usuarios WHERE id')) return { id: params[0], nome: 'Fulano de Teste', email: 'fulano@exemplo.invalid', perfil: 'junior', ativo: false };
   if (s.startsWith('SELECT 1 AS existe FROM logs_auditoria WHERE usuario_id')) return temHistorico ? { existe: 1 } : null;
   if (s.startsWith('SELECT perfil FROM usuarios WHERE id')) return { perfil: 'junior' };
+  // S-05 (G4): a rota confere a hierarquia lendo id, perfil e master_id do alvo.
+  if (s.startsWith('SELECT id, perfil, master_id FROM usuarios WHERE id')) return { id: params[0], perfil: 'junior', master_id: null };
+  // S-03/S-04 (G7): redefinir a senha grava senha provisória, sobe a versão de sessão e devolve o id.
+  if (s.startsWith('UPDATE usuarios SET senha_hash = $1, senha_temporaria = true, sessao_versao = sessao_versao + 1 WHERE id = $2 RETURNING id')) return { id: params[1] };
   throw new Error(`consulta inesperada: ${s.slice(0, 80)}`);
 };
 db.query = async () => { throw new Error('banco real proibido nos testes'); };

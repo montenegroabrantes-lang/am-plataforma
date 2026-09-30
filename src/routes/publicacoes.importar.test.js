@@ -2,6 +2,8 @@ import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import express from 'express';
+import { definirCarregador, carregadorEcoDoToken } from '../middleware/sessao.js';
+definirCarregador(carregadorEcoDoToken); // S-03: nestes testes a conta vale o que o token diz (sem banco)
 
 // S-08 (chave do GitHub Actions em tempo constante, sem webhook morto) e S-23 (link só https://).
 // O backend não pode quebrar quem chama de fora: o workflow "Sync Publicações PJe" manda POST com x-sync-key.
