@@ -8,6 +8,7 @@ import { db }             from './db/index.js';
 import { conectarRedis }  from './cache/redis.js';
 import { resolverDemanda } from './utils/demandas.js';
 import { garantirTabelaMigrations, migrar } from './db/migrations.js';
+import { criarHealth }    from './health.js';
 
 // Rotas
 import { authRouter }          from './routes/auth.js';
@@ -65,21 +66,11 @@ app.use(express.urlencoded({ extended: false, limit: '1mb' }));
 app.use(auditar);
 
 let dbOk = false;
-let dbJaConectouUmaVez = false;
 
-// Healthcheck — durante o boot (antes da primeira conexão) sempre 200, para o Railway
-// não matar o processo enquanto o Postgres ainda está de pé. Depois de já ter conectado
-// ao menos uma vez, uma queda real do banco retorna 503 (Railway reinicia via ON_FAILURE,
-// limitado a 3 tentativas por railway.json — não é loop infinito).
-app.get('/health', async (_req, res) => {
-  if (!dbJaConectouUmaVez) return res.json({ ok: true, db: false, iniciando: true, env: process.env.NODE_ENV });
-  try {
-    await db.query('SELECT 1');
-    res.json({ ok: true, db: true, env: process.env.NODE_ENV });
-  } catch {
-    res.status(503).json({ ok: false, db: false, env: process.env.NODE_ENV });
-  }
-});
+// Healthcheck = prontidão (R-12): 503 até o boot terminar (dbOk, depois das migrações) e 503 se o
+// banco cair depois. Assim o Railway não promove um deploy cujo boot quebrou — a versão anterior
+// segue no ar. Ver src/health.js e o healthcheckTimeout do railway.json.
+app.get('/health', criarHealth({ pronto: () => dbOk, banco: db }));
 
 // Gate: até o DB conectar, rejeita o resto com 503 (não 500 silencioso)
 app.use((req, res, next) => {
@@ -179,7 +170,6 @@ async function iniciar() {
 
   try {
     await db.query('SELECT 1');
-    dbJaConectouUmaVez = true;
     console.log('[DB] PostgreSQL conectado.');
     await garantirTabelaMigrations();
     // A partir daqui, migração NOVA usa migrar('AAAA_MM_DD_nome', async () => {...}) de
@@ -897,6 +887,8 @@ async function iniciar() {
     await recarregarAiConfig(db);
     // Só libera as rotas quando o esquema obrigatório estiver inteiramente pronto.
     dbOk = true;
+    // Tempo de boot: é o que o healthcheckTimeout do railway.json precisa cobrir (com folga).
+    console.log(`[BOOT] Esquema pronto em ${process.uptime().toFixed(1)}s — /health passa a responder 200.`);
   } catch (err) {
     console.error('[FATAL] PostgreSQL falhou:', err.stack || err);
     process.exit(1);
