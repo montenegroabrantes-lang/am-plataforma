@@ -382,6 +382,8 @@ export function criarOauthRouter({
       perfil: user.perfil,
       master_id: user.master_id,
       pode_marcar_restrito: user.pode_marcar_restrito,
+      // Versão de sessão da conta de serviço (S-03): subir `usuarios.sessao_versao` dela derruba todos os conectores.
+      sv: Number(user.sessao_versao ?? 0),
       // Confinamento: com este claim o token só entra em /mcp e nas áreas destes escopos.
       escopos,
       autorizado_por: autorizadoPor,

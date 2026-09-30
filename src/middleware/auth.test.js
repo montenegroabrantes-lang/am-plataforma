@@ -5,6 +5,10 @@ import jwt from 'jsonwebtoken';
 process.env.JWT_SECRET = 'segredo-de-teste';
 
 const { autenticar, apenasMaster, apenasMaster01, exigirEscopo } = await import('./auth.js');
+const { definirCarregador, carregadorEcoDoToken } = await import('./sessao.js');
+// S-03: o `autenticar` consulta a conta no banco; aqui a "conta" é o que o próprio token diz (o teste da
+// sessão revogável em si está em routes/auth.test.js).
+definirCarregador(carregadorEcoDoToken);
 const { normalizarEscopos, escoposDoToken, areaPermitidaAoToken, CONTA_SERVICO_EMAIL } = await import('../oauth/escopos.js');
 
 // ── Helpers de mock req/res/next ──
@@ -26,59 +30,59 @@ const tokenValido = (payload = { id: '1', perfil: 'master' }) =>
   jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 
 // ── autenticar ──
-test('autenticar: token válido no cookie → next() e req.user preenchido', () => {
+test('autenticar: token válido no cookie → next() e req.user preenchido', async () => {
   const req = { cookies: { am_token: tokenValido({ id: '42', perfil: 'junior' }) }, headers: {} };
   const res = mockRes();
   const next = mockNext();
 
-  autenticar(req, res, next);
+  await autenticar(req, res, next);
 
   assert.ok(next.chamado, 'next() deveria ter sido chamado');
   assert.equal(req.user.id, '42');
   assert.equal(req.user.perfil, 'junior');
 });
 
-test('autenticar: token válido no header Authorization → next()', () => {
+test('autenticar: token válido no header Authorization → next()', async () => {
   const req = { cookies: {}, headers: { authorization: `Bearer ${tokenValido()}` } };
   const res = mockRes();
   const next = mockNext();
 
-  autenticar(req, res, next);
+  await autenticar(req, res, next);
 
   assert.ok(next.chamado);
   assert.equal(res.statusCode, null, 'não deveria responder erro');
 });
 
-test('autenticar: sem token → 401 e next() NÃO chamado', () => {
+test('autenticar: sem token → 401 e next() NÃO chamado', async () => {
   const req = { cookies: {}, headers: {} };
   const res = mockRes();
   const next = mockNext();
 
-  autenticar(req, res, next);
+  await autenticar(req, res, next);
 
   assert.equal(res.statusCode, 401);
   assert.equal(res.body.ok, false);
   assert.equal(next.chamado, false);
 });
 
-test('autenticar: token inválido → 401', () => {
+test('autenticar: token inválido → 401', async () => {
   const req = { cookies: { am_token: 'lixo.invalido.token' }, headers: {} };
   const res = mockRes();
   const next = mockNext();
 
-  autenticar(req, res, next);
+  await autenticar(req, res, next);
 
   assert.equal(res.statusCode, 401);
   assert.equal(next.chamado, false);
 });
 
-test('autenticar: token expirado → 401', () => {
+test('autenticar: token expirado → 401', async () => {
   const expirado = jwt.sign({ id: '1' }, process.env.JWT_SECRET, { expiresIn: -10 });
   const req = { cookies: { am_token: expirado }, headers: {} };
   const res = mockRes();
   const next = mockNext();
 
-  autenticar(req, res, next);
+  await autenticar(req, res, next);
 
   assert.equal(res.statusCode, 401);
 });
@@ -150,22 +154,22 @@ test('areaPermitidaAoToken: /mcp sempre; demais só pelo prefixo do escopo (sem 
   assert.equal(areaPermitidaAoToken('/api/tarefas', ['acervo', 'reprotocolo']), false);
 });
 
-test('autenticar: token com escopos fora da área do escopo → 403; sessão comum não é afetada', () => {
+test('autenticar: token com escopos fora da área do escopo → 403; sessão comum não é afetada', async () => {
   const comEscopo = tokenValido({ id: 's', perfil: 'master', escopos: ['acervo'] });
   const res = mockRes();
   const next = mockNext();
-  autenticar({ cookies: {}, headers: { authorization: `Bearer ${comEscopo}` }, baseUrl: '/api/clientes' }, res, next);
+  await autenticar({ cookies: {}, headers: { authorization: `Bearer ${comEscopo}` }, baseUrl: '/api/clientes' }, res, next);
   assert.equal(res.statusCode, 403);
   assert.equal(next.chamado, false);
 
   const res2 = mockRes();
   const next2 = mockNext();
-  autenticar({ cookies: {}, headers: { authorization: `Bearer ${comEscopo}` }, baseUrl: '/api/acervo' }, res2, next2);
+  await autenticar({ cookies: {}, headers: { authorization: `Bearer ${comEscopo}` }, baseUrl: '/api/acervo' }, res2, next2);
   assert.ok(next2.chamado);
 
   const res3 = mockRes();
   const next3 = mockNext();
-  autenticar({ cookies: { am_token: tokenValido() }, headers: {}, baseUrl: '/api/clientes' }, res3, next3);
+  await autenticar({ cookies: { am_token: tokenValido() }, headers: {}, baseUrl: '/api/clientes' }, res3, next3);
   assert.ok(next3.chamado, 'sessão sem claim de escopo segue como antes');
 });
 

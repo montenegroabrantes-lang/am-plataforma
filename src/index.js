@@ -9,6 +9,7 @@ import { conectarRedis }  from './cache/redis.js';
 import { resolverDemanda } from './utils/demandas.js';
 import { garantirTabelaMigrations, migrar } from './db/migrations.js';
 import { aplicarMigracoesS10 } from './db/migracoesS10.js';
+import { migrarSessaoRevogavel } from './db/migracaoSessao.js';
 import { criarHealth }    from './health.js';
 import { logarVersoesBoot } from './utils/versaoPgDump.js';
 import { aplicarAprovadorReprotocolo } from './db/migracoes/aprovadorReprotocolo.js';
@@ -110,6 +111,13 @@ const authLimiter = rateLimit({
   standardHeaders: true, legacyHeaders: false,
   message: { ok: false, erro: 'Muitas requisições. Aguarde 15 minutos.' },
 });
+// /refresh sobe para 120 por 15 min por IP (S-03): com o acesso de 1 hora e o escritório saindo por um IP só,
+// as renovações legítimas aumentam; 30 chegaria a devolver 429 a quem só está trabalhando.
+const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 120,
+  standardHeaders: true, legacyHeaders: false,
+  message: { ok: false, erro: 'Muitas requisições. Aguarde 15 minutos.' },
+});
 const importLimiter = rateLimit({
   windowMs: 60 * 1000, max: 10,
   standardHeaders: true, legacyHeaders: false,
@@ -118,8 +126,9 @@ const importLimiter = rateLimit({
 
 // Rotas públicas
 app.use('/api/auth/login',        loginLimiter, limiteLoginPorEmail());
-app.use('/api/auth/refresh',      authLimiter);
+app.use('/api/auth/refresh',      refreshLimiter);
 app.use('/api/auth/trocar-senha', authLimiter);
+app.use('/api/auth/alterar-senha', authLimiter);
 app.use('/api/auth/2fa',          authLimiter);
 app.use('/api/auth', authRouter);
 
@@ -957,6 +966,10 @@ async function iniciar() {
 
     // (A reescrita antiga de "Período a solicitar" foi removida: o período do ciclo agora é
     //  estruturado em tarefas.ciclo_inicio e calculado até o mês atual na consulta.)
+
+    // S-03 (sessão revogável): usuarios.sessao_versao + sessoes_refresh. SEM .catch: se falhar, o boot falha e o
+    // /health segue em 503 -- o Railway não promove o deploy e a versão anterior continua no ar.
+    await migrar('2026_10_S03_sessao_revogavel', () => migrarSessaoRevogavel((sql) => db.execute(sql)));
 
     const { recarregarAiConfig } = await import('./config/ai.js');
     await recarregarAiConfig(db);

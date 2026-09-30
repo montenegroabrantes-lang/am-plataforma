@@ -9,6 +9,8 @@ for (const metodo of ['query', 'queryOne', 'execute']) {
   db[metodo] = async () => { throw new Error('banco real proibido nos testes'); };
 }
 const { autenticar } = await import('../middleware/auth.js');
+const { definirCarregador, carregadorEcoDoToken } = await import('../middleware/sessao.js');
+definirCarregador(carregadorEcoDoToken); // S-03: a conta é a que o token diz (sessão revogável testada em auth.test.js)
 const { criarReprotocoloRouter } = await import('./reprotocolo.js');
 const { CONTA_SERVICO_EMAIL } = await import('../oauth/escopos.js');
 

@@ -23,6 +23,8 @@ for (const metodo of ['query', 'queryOne', 'execute']) {
   db[metodo] = async () => { throw new Error('banco real proibido nos testes'); };
 }
 const { mcpRouter, enxugar } = await import('./index.js');
+const { definirCarregador, carregadorEcoDoToken } = await import('../middleware/sessao.js');
+definirCarregador(carregadorEcoDoToken); // S-03: a conta é a que o token diz (sessão revogável testada em auth.test.js)
 
 const recebidas = [];
 app.get('/api/reprotocolo/levantamento', (req, res) => {

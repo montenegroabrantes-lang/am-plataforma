@@ -30,6 +30,8 @@ redis.get = async () => null;
 redis.set = async (chave, valor) => { gravacoesRedis.push({ chave, estado: JSON.parse(valor) }); return 'OK'; };
 
 const { autenticar } = await import('../middleware/auth.js');
+const { definirCarregador, carregadorEcoDoToken } = await import('../middleware/sessao.js');
+definirCarregador(carregadorEcoDoToken); // S-03: a conta é a que o token diz (sessão revogável testada em auth.test.js)
 const { processosRouter } = await import('./processos.js');
 const { movimentacoesRouter } = await import('./movimentacoes.js');
 const { configAiRouter } = await import('./config.ai.js');

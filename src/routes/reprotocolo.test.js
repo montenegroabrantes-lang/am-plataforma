@@ -12,6 +12,8 @@ for (const metodo of ['query', 'queryOne', 'execute']) {
 }
 
 const { autenticar } = await import('../middleware/auth.js');
+const { definirCarregador, carregadorEcoDoToken } = await import('../middleware/sessao.js');
+definirCarregador(carregadorEcoDoToken); // S-03: a conta é a que o token diz (sessão revogável testada em auth.test.js)
 const { criarReprotocoloRouter } = await import('./reprotocolo.js');
 const { levantarReprotocolo, SQL_HOJE, SQL_ADIADOS, SQL_DOCUMENTOS, SECAO_AGUARDANDO } = await import('../services/reprotocolo/levantamento.js');
 const { ReferenciaEstadualError } = await import('../services/remuneracaoEstadual.js');

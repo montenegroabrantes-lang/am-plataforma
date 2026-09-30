@@ -4,6 +4,8 @@ import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { uuidValido } from '../utils/validacao.js';
+import { invalidarSessao } from '../middleware/sessao.js';
+import { derrubarSessoes, revogarSessoesDoUsuario, SENHA_MIN, SENHA_MAX } from '../services/sessao.js';
 
 export const usuariosRouter = Router();
 
@@ -95,6 +97,11 @@ usuariosRouter.post('/', apenasMaster, async (req, res) => {
   const emailNovo = emailNormalizado(email);
   if (!emailValido(emailNovo)) return res.status(400).json({ ok: false, erro: 'E-mail inválido.' });
 
+  // A senha inicial é provisória (a pessoa cria a própria no primeiro acesso), mas já segue o mínimo do sistema.
+  if (typeof senha !== 'string' || senha.length < SENHA_MIN || senha.length > SENHA_MAX) {
+    return res.status(400).json({ ok: false, erro: `A senha deve ter entre ${SENHA_MIN} e ${SENHA_MAX} caracteres.` });
+  }
+
   const hash = await bcrypt.hash(senha, 12);
 
   try {
@@ -175,6 +182,10 @@ usuariosRouter.patch('/:id', apenasMaster, async (req, res) => {
     throw e;
   }
 
+  // Desativar/reativar ou trocar o e-mail derruba todas as sessões da conta (sobe a versão e revoga os refresh).
+  if (novoAtivo !== antes.ativo || novoEmail !== antes.email) await derrubarSessoes(id);
+  else invalidarSessao(id); // nome mudou: só renova o cache
+
   await registrarAuditoria({
     usuarioId: req.user.id, acao: 'editar', entidade: 'usuario',
     entidadeId: id, valorAntes: antes, valorDepois: { nome: novoNome, email: novoEmail, ativo: novoAtivo },
@@ -191,11 +202,13 @@ usuariosRouter.patch('/:id', apenasMaster, async (req, res) => {
   res.json({ ok: true });
 });
 
-// PATCH /api/usuarios/:id/senha — redefine senha (Master)
+// PATCH /api/usuarios/:id/senha — redefine senha (Master). A senha vira PROVISÓRIA: a pessoa cria a própria no
+// próximo login, e as sessões abertas dela caem. O log não guarda o valor.
 usuariosRouter.patch('/:id/senha', apenasMaster, async (req, res) => {
   const { senha } = req.body || {};
   if (!uuidValido(req.params.id)) return res.status(400).json({ ok: false, erro: 'ID inválido.' });
-  if (typeof senha !== 'string' || senha.length < 8) return res.status(400).json({ ok: false, erro: 'Senha mínima 8 caracteres.' });
+  if (typeof senha !== 'string' || senha.length < SENHA_MIN) return res.status(400).json({ ok: false, erro: `Senha mínima ${SENHA_MIN} caracteres.` });
+  if (senha.length > SENHA_MAX) return res.status(400).json({ ok: false, erro: `Senha máxima ${SENHA_MAX} caracteres.` });
 
   const alvo = await db.queryOne('SELECT id, perfil, master_id FROM usuarios WHERE id = $1', [req.params.id]);
   if (!alvo) return res.status(404).json({ ok: false, erro: 'Usuário não encontrado.' });
@@ -203,7 +216,12 @@ usuariosRouter.patch('/:id/senha', apenasMaster, async (req, res) => {
   if (!podeAlterar(req.user, alvo)) return negarHierarquia(res, alvo, 'redefinir a senha de', 'redefinir a senha dos seus próprios juniores');
 
   const hash = await bcrypt.hash(senha, 12);
-  await db.execute('UPDATE usuarios SET senha_hash = $1 WHERE id = $2', [hash, alvo.id]);
+  const alterado = await db.queryOne(
+    'UPDATE usuarios SET senha_hash = $1, senha_temporaria = true, sessao_versao = sessao_versao + 1 WHERE id = $2 RETURNING id',
+    [hash, alvo.id]
+  );
+  if (!alterado) return res.status(404).json({ ok: false, erro: 'Usuário não encontrado.' });
+  await revogarSessoesDoUsuario(alvo.id);
   // Auditoria SEM o valor (nem a senha nem o hash): só quem redefiniu a senha de quem.
   await registrarAuditoria({
     usuarioId: req.user.id, acao: 'redefinir_senha', entidade: 'usuario', entidadeId: alvo.id,
@@ -265,6 +283,7 @@ usuariosRouter.delete('/:id', apenasMaster, async (req, res) => {
   if (vinculado) {
     return res.status(409).json({ ok: false, erro: 'Este usuário está ligado a outros registros do sistema e não pode ser excluído. Desative a conta em vez de excluir.' });
   }
+  invalidarSessao(uid); // as linhas de sessoes_refresh caem junto (ON DELETE CASCADE); só falta limpar o cache
 
   res.json({ ok: true });
 });
