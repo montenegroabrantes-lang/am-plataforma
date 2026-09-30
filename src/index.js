@@ -8,6 +8,7 @@ import { db }             from './db/index.js';
 import { conectarRedis }  from './cache/redis.js';
 import { resolverDemanda } from './utils/demandas.js';
 import { garantirTabelaMigrations, migrar } from './db/migrations.js';
+import { aplicarMigracoesS10 } from './db/migracoesS10.js';
 import { criarHealth }    from './health.js';
 
 // Rotas
@@ -15,7 +16,6 @@ import { authRouter }          from './routes/auth.js';
 import { usuariosRouter }      from './routes/usuarios.js';
 import { processosRouter }     from './routes/processos.js';
 import { movimentacoesRouter } from './routes/movimentacoes.js';
-import { credenciaisRouter }   from './routes/credenciais.js';
 import { configAiRouter }      from './routes/config.ai.js';
 import { clientesRouter }      from './routes/clientes.js';
 import { agendaRouter }        from './routes/agenda.js';
@@ -110,7 +110,6 @@ app.use('/api/integracoes', integracoesExternasRouter);
 app.use('/api/usuarios',      autenticar, usuariosRouter);
 app.use('/api/processos',     autenticar, processosRouter);
 app.use('/api/movimentacoes', autenticar, movimentacoesRouter);
-app.use('/api/credenciais',   autenticar, credenciaisRouter);
 app.use('/api/config/ai',     autenticar, configAiRouter);
 app.use('/api/clientes',      autenticar, clientesRouter);
 app.use('/api/agenda',        autenticar, agendaRouter);
@@ -802,6 +801,10 @@ async function iniciar() {
     await migrar('2026_09_30_sync_execucoes_erro', async () => {
       await db.execute(`ALTER TABLE sync_execucoes ADD COLUMN IF NOT EXISTS erro TEXT`);
     }).catch(e => console.warn('[Migration] Coluna sync_execucoes.erro:', e.message));
+
+    // S-10: senha do PJe deixa de ser obrigatória; apagar senha/2FA guardados só com a flag APAGAR_CREDENCIAL_PJE_ATIVO=true.
+    await aplicarMigracoesS10({ db, migrar })
+      .catch(e => console.warn('[Migration] S-10 credenciais_tribunal:', e.message));
 
     // Chaves para integrações externas: guarda somente SHA-256, nunca o segredo em texto.
     await db.query(`CREATE TABLE IF NOT EXISTS chaves_api_externas (
