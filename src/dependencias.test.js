@@ -124,11 +124,6 @@ test('package-lock.json: a árvore do Puppeteer saiu do lockfile', () => {
   }
 });
 
-// Dependências que o package.json já pede numa versão nova mas que o lockfile ainda não tem
-// (precisam de rede para regenerar): ver a ação humana do S-16. Depois de rodar
-// "npm install --package-lock-only" na pasta do backend, esta lista fica sem efeito e pode ser apagada.
-const LOCK_PENDENTE_DE_REGENERAR = [];
-
 function divergenciasDoLock() {
   const divergentes = new Set();
   const raiz = lock.packages[''];
@@ -144,12 +139,21 @@ function divergenciasDoLock() {
 }
 
 test('package-lock.json em sincronia com o package.json (npm ci não pode recusar o build)', () => {
-  const inesperadas = divergenciasDoLock().filter((n) => !LOCK_PENDENTE_DE_REGENERAR.includes(n));
-  assert.deepEqual(inesperadas, [], 'o lockfile não acompanha o package.json: rode "npm install --package-lock-only"');
+  assert.deepEqual(divergenciasDoLock(), [], 'o lockfile não acompanha o package.json: rode "npm install --package-lock-only" na pasta do backend e commite o package-lock.json');
 });
 
-test('package-lock.json regenerado depois do bump (ação humana do S-16)', {
-  todo: 'rode "npm install --package-lock-only" na pasta do backend e commite o package-lock.json',
-}, () => {
-  assert.deepEqual(divergenciasDoLock(), []);
+test('lockfile: bcrypt 6 e multer 2 (sem a árvore node-pre-gyp/tar do bcrypt 5 e sem o multer 1.x avisado)', () => {
+  const p = (nome) => lock.packages[`node_modules/${nome}`];
+  assert.ok(semver.satisfies(p('bcrypt').version, '^6'), `bcrypt ${p('bcrypt').version}`);
+  assert.ok(semver.satisfies(p('multer').version, '^2'), `multer ${p('multer').version}`);
+  assert.equal(p('multer').deprecated, undefined, 'multer 1.x vem marcado como deprecated por vulnerabilidades');
+  assert.equal(p('@mapbox/node-pre-gyp'), undefined);
+  assert.equal(p('tar'), undefined);
+  assert.ok(p('node-gyp-build'), 'bcrypt 6 usa binários pré-compilados via node-gyp-build');
+});
+
+test('lockfile: axios e express nos pisos pedidos pelo package.json', () => {
+  assert.ok(semver.satisfies(lock.packages['node_modules/axios'].version, pkg.dependencies.axios));
+  assert.ok(semver.satisfies(lock.packages['node_modules/express'].version, pkg.dependencies.express));
+  assert.ok(semver.gte(lock.packages['node_modules/express'].version, '4.21.2'), 'express antes de 4.21.2 tem path-to-regexp vulnerável');
 });
