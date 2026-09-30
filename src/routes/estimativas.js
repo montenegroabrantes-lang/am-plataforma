@@ -536,7 +536,7 @@ estimativasRouter.post('/leads/:contactId/desfecho', apenasMaster, async (req, r
   // não faz o escritório perder o onboarding já confirmado.
   if (desfecho.desfecho === 'fechado') {
     // JN-02: erro de vírgula no valor fechado (856 mil e R$ 9,57 em produção). A conferência vem
-    // antes de qualquer gravação. Referência: valor apresentado da estimativa; sem ela, o valor
+    // antes de qualquer gravação. Referência: sugestão da estimativa (ou o valor apresentado, sem sugestão); sem estimativa, o valor
     // do lead que o formulário informa (`valor_referencia`).
     const valor = Number(desfecho.valorFechado);
     if (valor > 0) {

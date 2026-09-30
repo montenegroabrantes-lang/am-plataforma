@@ -69,10 +69,12 @@ export function completarVinculos(vinculos, agora = new Date()) {
   return { ok: true, vinculos: completos };
 }
 
-// Referência que a Camila já tinha da estimativa: o valor apresentado ao cliente e, na falta
-// dele, a sugestão (valor_sugerido já vem nulo quando o candidato não é confiável).
+// Referência que a Camila já tinha da estimativa: a sugestão (DN-2; valor_sugerido já vem nulo
+// quando o candidato não é confiável) e, na falta dela, o valor já apresentado ao cliente. A
+// sugestão vai primeiro de propósito: o valor apresentado é o que o operador digitou, e uma
+// proposta já errada (ex.: 100× a sugestão) não pode servir de régua para si mesma.
 export function referenciaDaEstimativa(estimativa) {
-  return numeroPositivo(estimativa?.valor_aprovado) ?? numeroPositivo(estimativa?.valor_sugerido);
+  return numeroPositivo(estimativa?.valor_sugerido) ?? numeroPositivo(estimativa?.valor_aprovado);
 }
 
 // Referência digitada na revisão: soma do "valor do vínculo" (o valor final pode somar vínculos).

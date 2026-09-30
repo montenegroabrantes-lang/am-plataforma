@@ -180,11 +180,18 @@ test('entrega manual: valor dentro da faixa segue; fora da faixa segue com confi
   assert.equal('valor_fora_da_faixa_ciente' in posts[1].corpo, false);
 });
 
-test('entrega manual usa o valor apresentado quando a estimativa já foi aprovada', async () => {
-  detalhe = { estimativa: { id: '7', valor_sugerido: '12403.00', valor_aprovado: '30000.00' } };
-  // 100.000 é 3,3× o aprovado (dentro da faixa) e não passa do teto.
+test('entrega manual usa a sugestão como régua mesmo se a estimativa já foi aprovada com valor errado', async () => {
+  // Aprovada por engano a 100× a sugestão (caso real): reenviar o mesmo valor não pode passar.
+  detalhe = { estimativa: { id: '7', valor_sugerido: '12403.00', valor_aprovado: '1240335.00' } };
+  const r = await postar('/leads/89e1802c/entrega-manual', { estimativaId: '7', valor: 1240335, texto: 'Olá' });
+  assert.equal(r.status, 409);
+  assert.equal(r.corpo.referencia, 12403);
+  assert.equal(postsParaCamila().length, 0);
+});
+
+test('entrega manual sem sugestão (candidato não confiável) usa o valor já apresentado', async () => {
+  detalhe = { estimativa: { id: '7', valor_sugerido: null, valor_aprovado: '30000.00' } };
   assert.equal((await postar('/leads/89e1802c/entrega-manual', { estimativaId: '7', valor: 100000, texto: 'Olá' })).status, 200);
-  // 5.000 seria normal contra a sugestão (0,4×), mas contra o valor apresentado é 0,17×.
   assert.equal((await postar('/leads/89e1802c/entrega-manual', { estimativaId: '7', valor: 5000, texto: 'Olá' })).status, 409);
 });
 

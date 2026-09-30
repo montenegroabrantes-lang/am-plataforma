@@ -184,9 +184,10 @@ test('formatarBRL usa espaço comum (sem NBSP)', () => {
   assert.equal(formatarBRL(1240335), 'R$ 1.240.335,00');
 });
 
-test('referência da estimativa: valor apresentado antes da sugestão; NUMERIC como string', () => {
-  assert.equal(referenciaDaEstimativa({ valor_aprovado: '9000.00', valor_sugerido: '12403.00' }), 9000);
+test('referência da estimativa: sugestão antes do valor apresentado; NUMERIC como string', () => {
+  assert.equal(referenciaDaEstimativa({ valor_aprovado: '9000.00', valor_sugerido: '12403.00' }), 12403);
   assert.equal(referenciaDaEstimativa({ valor_aprovado: null, valor_sugerido: '12403.00' }), 12403);
+  assert.equal(referenciaDaEstimativa({ valor_aprovado: '9000.00', valor_sugerido: null }), 9000);
   assert.equal(referenciaDaEstimativa({ valor_aprovado: null, valor_sugerido: null }), null);
   assert.equal(referenciaDaEstimativa(null), null);
 });
