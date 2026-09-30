@@ -91,10 +91,10 @@ async function chamar(metodo, caminho, token, corpo) {
 
 // ── leitura ──
 
-test('GET /verificacao: sem token 401, júnior 403, conector legado (só acervo) 403', async () => {
+test('GET /verificacao: sem token 401, júnior 403, conector legado (sem escopos) 401 (S-18)', async () => {
   assert.equal((await chamar('GET', '/api/reprotocolo/verificacao')).status, 401);
   assert.equal((await chamar('GET', '/api/reprotocolo/verificacao', TOKENS.junior)).status, 403);
-  assert.equal((await chamar('GET', '/api/reprotocolo/verificacao', TOKENS.conectorLegado)).status, 403);
+  assert.equal((await chamar('GET', '/api/reprotocolo/verificacao', TOKENS.conectorLegado)).status, 401);
 });
 
 test('GET /verificacao: Master e conector com escopo leem totais e itens, confirmados primeiro', async () => {

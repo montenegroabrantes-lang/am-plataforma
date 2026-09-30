@@ -109,11 +109,10 @@ test('Master (sessão do AM) → 200, com CPF mascarado e consulta auditada', as
   assert.equal(chamadasLevantar.at(-1).podeVerRestrito, true, 'Master 01 vê processo restrito');
 });
 
-test('conector: token antigo (sem escopos) e token só "acervo" → 403; token "reprotocolo" → 200', async () => {
+test('conector: token antigo (sem escopos) → 401 (S-18); token só "acervo" → 403; token "reprotocolo" → 200', async () => {
   const legado = await get('/api/reprotocolo/levantamento', TOKENS.conectorLegado);
-  assert.equal(legado.status, 403);
-  assert.equal(legado.corpo.escopo_necessario, 'reprotocolo');
-  assert.match(legado.corpo.erro, /Reconecte o conector/);
+  assert.equal(legado.status, 401);
+  assert.match(legado.corpo.erro, /reconecte o conector/i);
 
   const acervo = await get('/api/reprotocolo/levantamento', TOKENS.conectorAcervo);
   assert.equal(acervo.status, 403);

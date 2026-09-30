@@ -135,9 +135,9 @@ test('normalizarEscopos: aceita string OAuth, lista ou lixo e devolve só escopo
   assert.deepEqual(normalizarEscopos('*'), []);
 });
 
-test('escoposDoToken: sessão do AM sem restrição; token antigo do conector = só acervo', () => {
+test('escoposDoToken: sessão do AM sem restrição; token antigo do conector = nenhum escopo (S-18: autenticar já o recusa)', () => {
   assert.equal(escoposDoToken({ id: '1', perfil: 'master', email: 'alguem@exemplo.com' }), null);
-  assert.deepEqual(escoposDoToken({ id: 's', perfil: 'master', email: CONTA_SERVICO_EMAIL }), ['acervo']);
+  assert.deepEqual(escoposDoToken({ id: 's', perfil: 'master', email: CONTA_SERVICO_EMAIL }), []);
   assert.deepEqual(escoposDoToken({ id: 's', perfil: 'master', escopos: ['reprotocolo', 'xyz'] }), ['reprotocolo']);
 });
 
