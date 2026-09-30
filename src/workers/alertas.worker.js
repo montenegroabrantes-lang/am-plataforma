@@ -37,6 +37,7 @@ async function enviarLembretesDiarios() {
      WHERE perfil = 'master' AND whatsapp IS NOT NULL AND whatsapp <> ''`
   );
 
+  let enviados = 0;
   for (const master of masters) {
     const tarefas = await db.query(
       `SELECT t.urgencia, COUNT(*) AS total
@@ -66,10 +67,12 @@ async function enviarLembretesDiarios() {
       `Resumo de tarefas pendentes:\n${linhas.join('\n')}\n\n` +
       `Acesse a plataforma para ver os detalhes.`;
 
-    await enviarAlerta(master.whatsapp, msg);
+    const r = await enviarAlerta(master.whatsapp, msg, { tipo: 'lembrete_diario', origem: 'lembretes_diarios', usuarioId: master.id });
+    if (r.ok) enviados++;
   }
 
-  console.log(`[Alertas] Lembretes diários enviados para ${masters.length} master(s).`);
+  // Conta só o que o Digisac aceitou (R-05): antes o log dizia "enviados" mesmo com a falha engolida.
+  console.log(`[Alertas] Lembretes diários enviados para ${enviados} de ${masters.length} master(s).`);
 }
 
 // Escalonamento de véspera — alerta diretamente o responsável (atribuído) por tarefas
@@ -96,7 +99,8 @@ async function enviarEscalonamentoVespera() {
     porResponsavel.get(t.atribuido_id).tarefas.push(t);
   }
 
-  for (const { nome, whatsapp, tarefas: lista } of porResponsavel.values()) {
+  let enviados = 0;
+  for (const [usuarioId, { nome, whatsapp, tarefas: lista }] of porResponsavel) {
     const linhas = lista.map(t => {
       const quando = Number(t.dias_restantes) === 0 ? 'HOJE' : 'AMANHÃ';
       return `🔴 ${quando} — ${t.descricao}`;
@@ -105,8 +109,11 @@ async function enviarEscalonamentoVespera() {
       `⏰ *Atenção, ${nome.split(' ')[0]}!*\n\n` +
       `Você tem ${lista.length} prazo${lista.length > 1 ? 's' : ''} vencendo:\n${linhas.join('\n')}\n\n` +
       `Acesse a plataforma para regularizar.`;
-    await enviarAlerta(whatsapp, msg).catch(err => console.warn(`[Escalonamento] Falha ao alertar ${nome}:`, err.message));
+    // enviarAlerta nunca lança: a falha vem no resultado (R-05), então o .catch antigo era código morto.
+    const r = await enviarAlerta(whatsapp, msg, { tipo: 'vespera', origem: 'escalonamento_vespera', usuarioId });
+    if (r.ok) enviados++;
+    else console.warn(`[Escalonamento] Alerta de véspera não entregue a ${nome}:`, r.erro);
   }
 
-  console.log(`[Alertas] Escalonamento de véspera enviado para ${porResponsavel.size} responsável(is) — ${tarefas.length} tarefa(s) críticas.`);
+  console.log(`[Alertas] Escalonamento de véspera enviado para ${enviados} de ${porResponsavel.size} responsável(is) — ${tarefas.length} tarefa(s) críticas.`);
 }

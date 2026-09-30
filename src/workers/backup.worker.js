@@ -67,10 +67,12 @@ export function gerarDumpComprimido(dbUrl, destino, { comando = 'pg_dump' } = {}
 
 async function alertarFalhaBackup(mensagem) {
   const masters = await db.query(
-    `SELECT whatsapp FROM usuarios WHERE perfil='master' AND whatsapp IS NOT NULL AND whatsapp <> ''`
+    `SELECT id, whatsapp FROM usuarios WHERE perfil='master' AND whatsapp IS NOT NULL AND whatsapp <> ''`
   ).catch(() => []);
   for (const m of masters) {
-    await enviarAlerta(m.whatsapp, mensagem).catch(err => console.warn('[Backup] Falha ao alertar master:', err.message));
+    // enviarAlerta nunca lança: a falha vem no resultado (R-05), então o .catch antigo era código morto.
+    const r = await enviarAlerta(m.whatsapp, mensagem, { origem: 'backup', usuarioId: m.id });
+    if (!r.ok) console.warn('[Backup] Alerta de falha não entregue a um master:', r.erro);
   }
 }
 

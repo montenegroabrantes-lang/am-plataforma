@@ -751,6 +751,33 @@ async function iniciar() {
       await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS uq_modelo_reprot_ativo ON modelos_reprotocolo (ente, COALESCE(tese_id, '00000000-0000-0000-0000-000000000000'::uuid), tipo) WHERE ativo`);
     }).catch(e => console.warn('[Migration] Tabelas do pacote de re-protocolo:', e.message));
 
+    // R-05 (30/09/2026): registro de cada envio de WhatsApp pelo AM (alerta técnico, lembrete,
+    // véspera). Antes nada registrava — falha do Digisac sumia no log. O desenho é o de A5-19
+    // (o "bom dia" novo reaproveita a mesma tabela: `chave` única = idempotência por usuário e
+    // dia); `origem` e `destino_mascarado` são de agora. Guarda ids e o telefone MASCARADO,
+    // nunca o texto da mensagem nem o número inteiro.
+    await migrar('2026_09_30_notificacoes_whatsapp', async () => {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS notificacoes_whatsapp (
+          id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          tipo               TEXT NOT NULL,
+          origem             TEXT,
+          usuario_id         UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+          destino_mascarado  TEXT,
+          data_referencia    DATE NOT NULL DEFAULT ((NOW() AT TIME ZONE 'America/Sao_Paulo')::date),
+          chave              TEXT UNIQUE NOT NULL,
+          status             TEXT NOT NULL,
+          itens              JSONB,
+          total_itens        INT,
+          tentativas         INT NOT NULL DEFAULT 0,
+          digisac_message_id TEXT,
+          erro               TEXT,
+          criado_em          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          enviado_em         TIMESTAMPTZ
+        )`);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_notificacoes_whatsapp_criado ON notificacoes_whatsapp (criado_em DESC)`);
+    }).catch(e => console.warn('[Migration] Tabela notificacoes_whatsapp:', e.message));
+
     // O acervo legado nasceu da antiga equivalência "elegível = contratado". Ele permanece
     // íntegro, mas sai da fila operacional até conferência humana; nada é apagado.
     // Tarefas nascidas de ciclo (ciclo_inicio) ficam de fora: para elas, ter processo anterior é a regra.

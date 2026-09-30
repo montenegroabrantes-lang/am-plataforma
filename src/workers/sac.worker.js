@@ -37,10 +37,13 @@ async function marcarFalha(nomeJob, mensagemErro) {
   // A partir da 3ª falha seguida, alerta os masters — sinal de que o sync pode estar travado.
   if (falhas >= 3) {
     const masters = await db.query(
-      `SELECT whatsapp FROM usuarios WHERE perfil = 'master' AND whatsapp IS NOT NULL AND whatsapp <> ''`
+      `SELECT id, whatsapp FROM usuarios WHERE perfil = 'master' AND whatsapp IS NOT NULL AND whatsapp <> ''`
     ).catch(() => []);
     const msg = `🚨 *Alerta de sincronização*\n\nO job "${nomeJob}" falhou ${falhas} vezes seguidas.\nÚltimo erro: ${mensagemErro}\n\nVerifique o worker SAC — pode estar travado.`;
-    for (const m of masters) await enviarAlerta(m.whatsapp, msg).catch(() => {});
+    for (const m of masters) {
+      const r = await enviarAlerta(m.whatsapp, msg, { origem: 'sac_falhas_seguidas', usuarioId: m.id });
+      if (!r.ok) console.warn('[SAC Watchdog] Alerta de falhas seguidas não entregue a um master:', r.erro);
+    }
   }
 }
 
@@ -56,10 +59,13 @@ export async function verificarWatchdogSAC() {
     const horasDesde = (Date.now() - new Date(row.valor).getTime()) / 3600000;
     if (horasDesde > limiteHoras) {
       const masters = await db.query(
-        `SELECT whatsapp FROM usuarios WHERE perfil = 'master' AND whatsapp IS NOT NULL AND whatsapp <> ''`
+        `SELECT id, whatsapp FROM usuarios WHERE perfil = 'master' AND whatsapp IS NOT NULL AND whatsapp <> ''`
       ).catch(() => []);
       const msg = `🚨 *Sync travado*\n\nO job "${nomeJob}" não roda com sucesso há ${horasDesde.toFixed(1)}h (esperado a cada ${limiteHoras / 2}h aprox).\n\nVerifique se a fila "sac" está pausada ou se o worker travou.`;
-      for (const m of masters) await enviarAlerta(m.whatsapp, msg).catch(() => {});
+      for (const m of masters) {
+        const r = await enviarAlerta(m.whatsapp, msg, { origem: 'sac_sync_travado', usuarioId: m.id });
+        if (!r.ok) console.warn('[SAC Watchdog] Alerta de sync travado não entregue a um master:', r.erro);
+      }
       console.warn(`[SAC Watchdog] ${nomeJob} travado há ${horasDesde.toFixed(1)}h — alertado.`);
     }
   }
