@@ -18,6 +18,14 @@ export function resumirEmail(valor) {
   return arroba > 0 ? `${texto[0]}***${texto.slice(arroba)}` : (texto ? '***' : null);
 }
 
+// E-mail tentado num login que falhou. Quem digita a senha no campo de e-mail (ou cola outra coisa)
+// não pode deixar isso gravado numa tabela que só aceita INSERT: fora do formato de e-mail, o log
+// guarda só a marca, sem o texto.
+export function emailTentadoParaLog(valor) {
+  const texto = String(valor ?? '').toLowerCase().trim().slice(0, 254);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(texto) ? texto : '[fora do formato de e-mail]';
+}
+
 const vazio = v => v === null || v === undefined || v === '';
 const numerico = v => (typeof v === 'number' && Number.isFinite(v)) || (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v.trim()));
 const comoTexto = v => (v instanceof Date ? v.toISOString() : String(v));

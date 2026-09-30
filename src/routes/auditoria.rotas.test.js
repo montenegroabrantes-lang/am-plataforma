@@ -253,6 +253,14 @@ test('login com e-mail inexistente: login_falhou com a origem e o e-mail tentado
   assert.equal(texto(auditoria[0]).includes('qualquer'), false, 'a senha digitada nunca vai para o log');
 });
 
+test('login que falha com algo que não é e-mail no campo (ex.: senha digitada no lugar): o texto não vai para o log', async () => {
+  const r = await chamar('POST', '/api/auth/login', { email: 'MinhaSenha#Secreta2026', senha: 'x' });
+  assert.equal(r.status, 401);
+  assert.equal(auditoria[0].acao, 'login_falhou');
+  assert.equal(auditoria[0].depois.email_tentado, '[fora do formato de e-mail]');
+  assert.equal(texto(auditoria[0]).toLowerCase().includes('secreta'), false);
+});
+
 test('login com senha errada de conta existente: a linha aponta para a conta; com 2FA errado, o motivo', async () => {
   usuarioLogin = { id: MASTER.id, nome: 'Master Teste', email: 'master@exemplo.invalid', perfil: 'master', senha_hash: await bcrypt.hash('SenhaCerta#2026', 4), senha_temporaria: false, totp_ativo: false };
   assert.equal((await chamar('POST', '/api/auth/login', { email: 'master@exemplo.invalid', senha: 'errada' })).status, 401);

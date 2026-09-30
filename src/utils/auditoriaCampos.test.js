@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { diferenca, idCurto, tamanhoDoTexto, resumirTelefone, resumirEmail } from './auditoriaCampos.js';
+import { diferenca, idCurto, tamanhoDoTexto, resumirTelefone, resumirEmail, emailTentadoParaLog } from './auditoriaCampos.js';
 
 // S-13 — o "antes e depois" do log traz só o que mudou.
 
@@ -81,4 +81,12 @@ test('idCurto, tamanhoDoTexto, resumirTelefone e resumirEmail', () => {
   assert.equal(resumirEmail('maria@exemplo.invalid'), 'm***@exemplo.invalid');
   assert.equal(resumirEmail('semarroba'), '***');
   assert.equal(resumirEmail(null), null);
+});
+
+test('emailTentadoParaLog: e-mail normalizado passa; qualquer outra coisa (senha digitada no campo) vira só a marca', () => {
+  assert.equal(emailTentadoParaLog('  Alguem@Exemplo.INVALID '), 'alguem@exemplo.invalid');
+  assert.equal(emailTentadoParaLog('SenhaSecreta#2026'), '[fora do formato de e-mail]');
+  assert.equal(emailTentadoParaLog('ab cd@x.com'), '[fora do formato de e-mail]');
+  assert.equal(emailTentadoParaLog(undefined), '[fora do formato de e-mail]');
+  assert.equal(emailTentadoParaLog({}), '[fora do formato de e-mail]');
 });

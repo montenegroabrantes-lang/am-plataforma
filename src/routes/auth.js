@@ -6,6 +6,7 @@ import { db }            from '../db/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { autenticar }         from '../middleware/auth.js';
 import { normalizarEmailTentado } from '../utils/tentativasLogin.js';
+import { emailTentadoParaLog } from '../utils/auditoriaCampos.js';
 
 export const authRouter = Router();
 
@@ -58,7 +59,7 @@ authRouter.post('/login', async (req, res) => {
     // S-13: registra a origem e o e-mail tentado (com o usuário, quando a conta existe)
     await registrarAuditoria({
       usuarioId: user?.id, acao: 'login_falhou', entidade: 'usuario',
-      valorDepois: { origem: 'senha', email_tentado: String(email).toLowerCase().trim().slice(0, 254) }, ip: req._ip,
+      valorDepois: { origem: 'senha', email_tentado: emailTentadoParaLog(email) }, ip: req._ip,
     });
     return res.status(401).json({ ok: false, erro: 'Credenciais inválidas.' });
   }
