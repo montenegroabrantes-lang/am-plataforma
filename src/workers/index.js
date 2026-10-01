@@ -7,7 +7,7 @@ import { criarSACWorker, agendarSACWorker, sacQueue } from './sac.worker.js';
 import { criarAlertasWorker }   from './alertas.worker.js';
 import { criarPushTJWorker }    from './pushTJ.worker.js';
 import { AGENDA, removerAgendamentosAntigos, descreverAgendamentos } from './agendamentos.js';
-import { outlookConfigurado }   from '../services/outlook/auth.js';
+import { fontePush }            from '../services/pushTJ/fonte.js';
 
 let syncQueue;
 let individualSyncQueue;
@@ -35,9 +35,10 @@ export async function iniciarWorkers() {
   criarSACWorker();
   criarAlertasWorker();
 
-  // Push do TJPB por e-mail — só sobe se as credenciais do Outlook existirem,
+  // Push do TJPB por e-mail — só sobe se houver caixa configurada (IMAP ou Outlook),
   // para não encher o log de erro em ambiente sem a integração configurada.
-  if (outlookConfigurado()) {
+  const fonte = fontePush();
+  if (fonte) {
     pushTJQueue = new Queue('push-tj', { connection: redis });
     criarPushTJWorker();
     await pushTJQueue.add(
@@ -50,9 +51,9 @@ export async function iniciarWorkers() {
         removeOnFail:     10,
       }
     );
-    console.log('[Workers] Push do TJPB ativo (consulta a cada 5 min).');
+    console.log(`[Workers] Push do TJPB ativo via ${fonte} (consulta a cada 5 min).`);
   } else {
-    console.log('[Workers] Push do TJPB inativo — defina OUTLOOK_CLIENT_ID/SECRET/REFRESH_TOKEN para ligar.');
+    console.log('[Workers] Push do TJPB inativo — defina PUSH_TJ_IMAP_HOST/USER/SENHA (ou OUTLOOK_CLIENT_ID/SECRET/REFRESH_TOKEN) para ligar.');
   }
 
   // Worker de publicações desativado — Comunica API bloqueia IPs de nuvem (CloudFront 403)

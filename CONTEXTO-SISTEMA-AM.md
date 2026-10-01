@@ -2564,3 +2564,32 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Acesso a produção pelo Claude:** liberado pelo usuário em 01/10 por regras de permissão
   (`railway run …`). Leitura do banco de fora do Railway usa o serviço Postgres
   (`railway run --service Postgres` com a URL pública), sempre com `.q-tmp.mjs` em modo somente leitura.
+
+### 01/10/2026 — DataJud: diagnóstico final e push do TJPB por e-mail via IMAP (Gmail)
+
+- **DataJud (verificado às 18:06 BRT, só leitura):** 596 `ok`, 201 `erro_sync`, 14 aguardando primeira
+  captura (meio-dia: 65 em erro; o número oscila conforme o DataJud recusa ou não cada hora). Das 12
+  execuções do dia, 5 falharam por completo (0 casados) e **nenhuma gravou andamento novo desde 03:01**.
+  Causa confirmada na API do CNJ: o índice do TJPB está parado — a última atualização dos nossos
+  processos é de 10/09 e os andamentos vêm com meses de atraso (processo `0801815-11.2026` teve
+  sentença publicada no DJEN em 01/10 e o DataJud mostra último movimento em 04/06). O 429 vem da
+  chave pública do CNJ, compartilhada por todos (não existe chave própria); baixar mais o lote não
+  resolve. **Decisão: manter `DATAJUD_TAMANHO_LOTE=40`, tratar o DataJud como histórico e usar o push
+  por e-mail como fonte de novidade.** Alternativa de cobertura total: API paga de monitoramento
+  (Escavador/Judit/Codilo) — não cotada.
+- **Push do TJPB:** o leitor por Outlook/Graph (commit `d637c0f`, 12/08) nunca rodou e **não pode
+  rodar**: conta pessoal Hotmail não registra mais aplicativo na Microsoft ("A capacidade de criar
+  aplicativos fora de um diretório foi preterida", verificado no portal.azure.com com a conta do
+  usuário em 01/10). Decisão do usuário: receber os e-mails do PJe em `ramonoliveiraabrantes@gmail.com`
+  e ler por IMAP com senha de app.
+- **Implementado (branch `push-tj-imap`, à frente de `7b1d3ed`):** `src/services/imap/leitor.js`
+  (`imapflow` + `mailparser`; devolve o mesmo formato do Graph; busca por remetente + SINCE, corte
+  exato pela data interna, id = Message-ID ou UIDVALIDITY:UID, HTML→texto; só leitura);
+  `src/services/pushTJ/fonte.js` (`fontePush()`: IMAP vence Outlook; `remetentePush()`);
+  worker, `workers/index.js` e `GET /api/push-tj/saude` (campo `fonte`) passam a usar a fonte
+  configurada. Variáveis: `PUSH_TJ_IMAP_HOST/PORT/USER/SENHA/PASTA`, `PUSH_TJ_REMETENTE`
+  (documentadas no `.env.example`). Testes: 8 novos com servidor IMAP falso; suíte 987/987.
+- **Pendente do usuário:** trocar o e-mail do perfil no PJe para o Gmail; criar a senha de app
+  (verificação em duas etapas) e gravar as variáveis no Railway (script interativo preparado, a senha
+  não passa pelo chat); publicar a branch. Depois: conferir `[Workers] Push do TJPB ativo via imap`,
+  `/api/push-tj/saude` e as primeiras linhas em `push_tj_mensagens`.

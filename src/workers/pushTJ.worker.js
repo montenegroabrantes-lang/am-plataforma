@@ -1,5 +1,6 @@
-// Worker do push do TJPB: lê os e-mails de pje@tjpb.jus.br no Outlook a cada
-// 5 minutos e os converte em movimentação + prazo.
+// Worker do push do TJPB: lê os e-mails de pje@tjpb.jus.br na caixa configurada
+// (IMAP — Gmail/outro provedor — ou Outlook/Graph; ver services/pushTJ/fonte.js)
+// a cada 5 minutos e os converte em movimentação + prazo.
 //
 // Escolha deliberada de consulta periódica em vez de webhook do Graph:
 // as assinaturas de notificação do Graph expiram a cada ~3 dias e precisam ser
@@ -11,11 +12,12 @@
 import { Worker } from 'bullmq';
 import { redis }  from '../cache/redis.js';
 import { db }     from '../db/index.js';
-import { listarMensagens } from '../services/outlook/graph.js';
+import { listarMensagens as listarOutlook } from '../services/outlook/graph.js';
+import { listarMensagens as listarImap } from '../services/imap/leitor.js';
 import { processarMensagem } from '../services/outlook/pushTJ.js';
-import { outlookConfigurado } from '../services/outlook/auth.js';
+import { fontePush, remetentePush } from '../services/pushTJ/fonte.js';
 
-const REMETENTE = process.env.OUTLOOK_PUSH_REMETENTE || 'pje@tjpb.jus.br';
+const REMETENTE = remetentePush();
 
 export function criarPushTJWorker() {
   return new Worker('push-tj', async () => {
@@ -24,10 +26,12 @@ export function criarPushTJWorker() {
 }
 
 export async function lerPushTJ() {
-  if (!outlookConfigurado()) {
-    console.warn('[Push TJ] Outlook não configurado — worker ocioso.');
+  const fonte = fontePush();
+  if (!fonte) {
+    console.warn('[Push TJ] Nenhuma caixa configurada (IMAP ou Outlook) — worker ocioso.');
     return { ok: false, erro: 'nao_configurado' };
   }
+  const listarMensagens = fonte === 'imap' ? listarImap : listarOutlook;
 
   // Retoma de onde parou. Sem marca anterior, começa nas últimas 24h para não
   // varrer a caixa inteira na primeira execução.
@@ -91,7 +95,7 @@ export async function lerPushTJ() {
     // "nada novo". Distinguir os dois é o que faltou no DataJud.
     erroFatal = e.message;
     falhas++;
-    console.error('[Push TJ] Falha ao consultar o Outlook:', e.message);
+    console.error(`[Push TJ] Falha ao consultar a caixa (${fonte}):`, e.message);
   }
 
   await db.execute(
