@@ -1,8 +1,9 @@
 import { Router } from 'express';
 import { db } from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
-import { uuidValido } from '../utils/validacao.js';
+import { uuidValido, urlHttpsOuNulo } from '../utils/validacao.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
+import { registrarErroInterno, mensagemErroInterno } from '../middleware/erros.js';
 
 export const acervoRouter = Router();
 
@@ -18,6 +19,14 @@ function validarEnum(valor, conjunto, campo, obrigatorio = false) {
   if ((valor === undefined || valor === null || valor === '') && !obrigatorio) return null;
   if (!conjunto.has(valor)) { const e = new Error(`${campo} inválido.`); e.status = 422; throw e; }
   return valor;
+}
+// S-23: os links do acervo (Drive e fonte primária) viram botão "Abrir fonte" — só aceitam https://.
+// Vazio = sem link; qualquer outra coisa (javascript:, data:, http:...) = 422.
+function urlHttps(valor, campo) {
+  if (valor === undefined || valor === null || String(valor).trim() === '') return null;
+  const url = urlHttpsOuNulo(valor);
+  if (!url) { const e = new Error(`${campo} inválido: use um endereço que comece com https://`); e.status = 422; throw e; }
+  return url;
 }
 function normalizarTeses(teses) {
   if (!Array.isArray(teses) || !teses.length) { const e = new Error('Selecione ao menos uma tese.'); e.status = 422; throw e; }
@@ -41,7 +50,7 @@ async function gravarTeses(tipo, id, slugs) {
   await db.execute(`DELETE FROM ${tipo}_teses WHERE ${coluna}=$1`, [id]);
   await db.execute(`INSERT INTO ${tipo}_teses (${coluna}, tese_id) SELECT $1,id FROM teses_acervo WHERE slug=ANY($2::text[])`, [id, slugs]);
 }
-function erro(res, err) { res.status(err.status || 500).json({ ok: false, erro: err.status ? 'validacao' : 'interno', mensagem: err.message }); }
+function erro(res, err) { if (err.status) return res.status(err.status).json({ ok: false, erro: 'validacao', mensagem: err.message }); res.status(500).json({ ok: false, erro: 'interno', mensagem: mensagemErroInterno(registrarErroInterno(err, res.req)) }); }
 
 acervoRouter.get('/teses', async (_req, res) => res.json({ ok:true, teses: await db.query('SELECT slug,label,drive_folder_id FROM teses_acervo WHERE ativo=true ORDER BY label') }));
 
@@ -71,15 +80,15 @@ acervoRouter.get('/', async (req, res) => {
 
 acervoRouter.post('/pecas', apenasMaster, async (req,res) => { try {
   const b=req.body||{}; const teses=normalizarTeses(b.teses); await validarTeses(teses); validarEnum(b.tipo_peca,TIPOS,'tipo_peca',true); validarEnum(b.ente,ENTES,'ente',true); validarEnum(b.instancia,INSTANCIAS,'instancia',true); validarEnum(b.resultado||'pendente',RESULTADOS,'resultado'); if (b.ente==='municipio-outro-pb'&&!String(b.ente_detalhe||'').trim()) { const e=new Error('Informe o município.');e.status=422;throw e; }
-  const ctx=await processoContexto(b.processo_id); const [nova]=await db.query(`INSERT INTO acervo_pecas (processo_id,processo_numero,cliente_id,cliente_nome,titulo,tipo_peca,ente,ente_detalhe,tribunal,instancia,orgao_julgador,relator,data_protocolo,drive_file_id,drive_url,resultado,resumo,modelo_aprovado,visibilidade_snapshot,criado_por) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,[b.processo_id||null,ctx.numero||b.processo_numero||null,ctx.clienteId||b.cliente_id||null,ctx.clienteNome||b.cliente_nome||'Sem cliente vinculado',String(b.titulo||b.tipo_peca).trim(),b.tipo_peca,b.ente,b.ente_detalhe||null,b.tribunal||null,b.instancia,b.orgao_julgador||null,b.relator||null,b.data_protocolo||null,b.drive_file_id||null,b.drive_url||null,b.resultado||'pendente',b.resumo||null,Boolean(b.modelo_aprovado),ctx.visibilidade,req.user.id]); await gravarTeses('acervo_pecas',nova.id,teses); await registrarAuditoria({usuarioId:req.user.id,acao:'criar',entidade:'acervo_peca',entidadeId:nova.id,valorDepois:{teses,tipo:b.tipo_peca},ip:req._ip}); res.status(201).json({ok:true,peca:nova});
+  const ctx=await processoContexto(b.processo_id); const [nova]=await db.query(`INSERT INTO acervo_pecas (processo_id,processo_numero,cliente_id,cliente_nome,titulo,tipo_peca,ente,ente_detalhe,tribunal,instancia,orgao_julgador,relator,data_protocolo,drive_file_id,drive_url,resultado,resumo,modelo_aprovado,visibilidade_snapshot,criado_por) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,[b.processo_id||null,ctx.numero||b.processo_numero||null,ctx.clienteId||b.cliente_id||null,ctx.clienteNome||b.cliente_nome||'Sem cliente vinculado',String(b.titulo||b.tipo_peca).trim(),b.tipo_peca,b.ente,b.ente_detalhe||null,b.tribunal||null,b.instancia,b.orgao_julgador||null,b.relator||null,b.data_protocolo||null,b.drive_file_id||null,urlHttps(b.drive_url,'drive_url'),b.resultado||'pendente',b.resumo||null,Boolean(b.modelo_aprovado),ctx.visibilidade,req.user.id]); await gravarTeses('acervo_pecas',nova.id,teses); await registrarAuditoria({usuarioId:req.user.id,acao:'criar',entidade:'acervo_peca',entidadeId:nova.id,valorDepois:{teses,tipo:b.tipo_peca},ip:req._ip}); res.status(201).json({ok:true,peca:nova});
 }catch(e){erro(res,e);} });
 
 acervoRouter.post('/precedentes', apenasMaster, async (req,res) => { try {
   const b=req.body||{}; const teses=normalizarTeses(b.teses); await validarTeses(teses); validarEnum(b.ente,ENTES,'ente'); validarEnum(b.instancia,INSTANCIAS,'instancia',true); validarEnum(b.resultado,RESULTADOS,'resultado',true); if (!String(b.orgao||'').trim()||!String(b.ratio||'').trim()||!b.data_julgamento) { const e=new Error('Órgão, data de julgamento e fundamento são obrigatórios.');e.status=422;throw e; }
-  const ctx=await processoContexto(b.processo_id); const [novo]=await db.query(`INSERT INTO acervo_precedentes (processo_id,processo_numero,orgao,tribunal,instancia,relator,data_julgamento,ente,ratio,ementa,resultado,favoravel,vinculante,conferido,fonte_primaria_url,drive_file_id,drive_url,visibilidade_snapshot,criado_por) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,false,$14,$15,$16,$17,$18) RETURNING *`,[b.processo_id||null,ctx.numero||b.processo_numero||null,b.orgao,b.tribunal||null,b.instancia,b.relator||null,b.data_julgamento,b.ente||null,b.ratio,b.ementa||null,b.resultado,Boolean(b.favoravel),Boolean(b.vinculante),b.fonte_primaria_url||null,b.drive_file_id||null,b.drive_url||null,ctx.visibilidade,req.user.id]); await gravarTeses('acervo_precedentes',novo.id,teses); await registrarAuditoria({usuarioId:req.user.id,acao:'criar',entidade:'acervo_precedente',entidadeId:novo.id,valorDepois:{teses,conferido:false},ip:req._ip}); res.status(201).json({ok:true,precedente:novo});
+  const ctx=await processoContexto(b.processo_id); const [novo]=await db.query(`INSERT INTO acervo_precedentes (processo_id,processo_numero,orgao,tribunal,instancia,relator,data_julgamento,ente,ratio,ementa,resultado,favoravel,vinculante,conferido,fonte_primaria_url,drive_file_id,drive_url,visibilidade_snapshot,criado_por) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,false,$14,$15,$16,$17,$18) RETURNING *`,[b.processo_id||null,ctx.numero||b.processo_numero||null,b.orgao,b.tribunal||null,b.instancia,b.relator||null,b.data_julgamento,b.ente||null,b.ratio,b.ementa||null,b.resultado,Boolean(b.favoravel),Boolean(b.vinculante),urlHttps(b.fonte_primaria_url,'fonte_primaria_url'),b.drive_file_id||null,urlHttps(b.drive_url,'drive_url'),ctx.visibilidade,req.user.id]); await gravarTeses('acervo_precedentes',novo.id,teses); await registrarAuditoria({usuarioId:req.user.id,acao:'criar',entidade:'acervo_precedente',entidadeId:novo.id,valorDepois:{teses,conferido:false},ip:req._ip}); res.status(201).json({ok:true,precedente:novo});
 }catch(e){erro(res,e);} });
 
-acervoRouter.patch('/precedentes/:id/conferir', apenasMaster, async (req,res)=>{ try { if(!uuidValido(req.params.id)) return res.status(400).json({ok:false,erro:'validacao',mensagem:'ID inválido.'}); const fonte=String(req.body?.fonte_primaria_url||'').trim(); if(!fonte) return res.status(422).json({ok:false,erro:'validacao',mensagem:'Informe a fonte primária conferida.'}); const [p]=await db.query(`UPDATE acervo_precedentes SET conferido=true,conferido_por=$1,conferido_em=NOW(),fonte_primaria_url=$2 WHERE id=$3${escopoVisibilidade(req,'acervo_precedentes')} RETURNING *`,[req.user.id,fonte,req.params.id]); if(!p)return res.status(404).json({ok:false,erro:'Não encontrado.'}); await registrarAuditoria({usuarioId:req.user.id,acao:'conferir',entidade:'acervo_precedente',entidadeId:p.id,valorDepois:{fonte},ip:req._ip});res.json({ok:true,precedente:p}); }catch(e){erro(res,e);} });
+acervoRouter.patch('/precedentes/:id/conferir', apenasMaster, async (req,res)=>{ try { if(!uuidValido(req.params.id)) return res.status(400).json({ok:false,erro:'validacao',mensagem:'ID inválido.'}); const fonte=String(req.body?.fonte_primaria_url||'').trim(); if(!fonte) return res.status(422).json({ok:false,erro:'validacao',mensagem:'Informe a fonte primária conferida.'}); if(!urlHttpsOuNulo(fonte)) return res.status(422).json({ok:false,erro:'validacao',mensagem:'A fonte primária deve ser um endereço que comece com https://'}); const [p]=await db.query(`UPDATE acervo_precedentes SET conferido=true,conferido_por=$1,conferido_em=NOW(),fonte_primaria_url=$2 WHERE id=$3${escopoVisibilidade(req,'acervo_precedentes')} RETURNING *`,[req.user.id,fonte,req.params.id]); if(!p)return res.status(404).json({ok:false,erro:'Não encontrado.'}); await registrarAuditoria({usuarioId:req.user.id,acao:'conferir',entidade:'acervo_precedente',entidadeId:p.id,valorDepois:{fonte},ip:req._ip});res.json({ok:true,precedente:p}); }catch(e){erro(res,e);} });
 
 acervoRouter.patch('/pecas/:id/resultado', apenasMaster, async (req,res)=>{ try { if(!uuidValido(req.params.id)) return res.status(400).json({ok:false,erro:'validacao',mensagem:'ID inv\u00e1lido.'}); const b=req.body||{}; validarEnum(b.resultado,RESULTADOS,'resultado',true); const [p]=await db.query(`UPDATE acervo_pecas SET resultado=$1,resumo=COALESCE($2,resumo),atualizado_em=NOW() WHERE id=$3${escopoVisibilidade(req,'acervo_pecas')} RETURNING *`,[b.resultado,b.resumo||null,req.params.id]); if(!p) return res.status(404).json({ok:false,erro:'N\u00e3o encontrado.'}); await registrarAuditoria({usuarioId:req.user.id,acao:'atualizar',entidade:'acervo_peca',entidadeId:p.id,valorDepois:{resultado:b.resultado},ip:req._ip}); res.json({ok:true,peca:p}); }catch(e){erro(res,e);} });
 

@@ -6,3 +6,11 @@ node_modules/
 .claude/
 .token-integracao-claude.txt
 _to_delete/
+
+# Dados pessoais e material de trabalho local (S-26): nunca vão para o Git.
+# Nenhum CSV é versionado neste repositório.
+*.csv
+/analise/
+/Claude outputs/
+/.q-tmp.mjs
+importacao-reprotocolo*.json

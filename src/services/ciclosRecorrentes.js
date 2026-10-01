@@ -8,6 +8,7 @@ import { db } from '../db/index.js';
 import { somarDiasUteis } from '../utils/diasUteis.js';
 import { vinculoUnicoAtivo } from '../utils/vinculos.js';
 import { resolverDemanda } from '../utils/demandas.js';
+import { idCurto } from '../utils/mascarar.js';
 
 export async function verificarCiclosRecorrentes() {
   const produtos = await db.query(
@@ -144,7 +145,7 @@ export async function verificarCiclosRecorrentes() {
         : 'hoje';
       const periodoTexto = `${cicloInicio.toLocaleDateString('pt-BR', { month: '2-digit', year: 'numeric', timeZone: 'UTC' })} até ${fimTexto}`;
 
-      console.log(`[Ciclos] Tarefa criada (${subtipo}): ${prod.nome} — ${v.cliente_nome} | ${periodoTexto}${atribuidoA ? ' | auto-aceito' : ''}`);
+      console.log(`[Ciclos] Tarefa criada (${subtipo}): ${prod.nome} — cliente ${idCurto(v.cliente_id)} | ${periodoTexto}${atribuidoA ? ' | auto-aceito' : ''}`); // sem o nome do cliente no log (S-14)
       totalTarefas++;
     }
   }

@@ -2,8 +2,12 @@ import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { ETAPA_CASE } from '../utils/etapas.js';
 import { paginacaoSegura } from '../utils/validacao.js';
+import { protegerDadosDoJunior } from '../middleware/perfilJunior.js';
 
 export const triagemRouter = Router();
+
+// S-27: júnior recebe o CPF mascarado em qualquer resposta JSON deste router.
+triagemRouter.use(protegerDadosDoJunior);
 
 // GET /api/triagem
 triagemRouter.get('/', async (req, res) => {

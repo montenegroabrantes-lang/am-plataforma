@@ -1,0 +1,13 @@
+# Fora da imagem: dependências locais (a imagem instala pelo lockfile), histórico, segredos e docs.
+node_modules
+.git
+.github
+.gitignore
+.env
+.env.*
+*.sql.gz
+.DS_Store
+.claude
+.token-integracao-claude.txt
+_to_delete
+CONTEXTO-SISTEMA-AM.md

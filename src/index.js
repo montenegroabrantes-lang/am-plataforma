@@ -7,14 +7,20 @@ import rateLimit          from 'express-rate-limit';
 import { db }             from './db/index.js';
 import { conectarRedis }  from './cache/redis.js';
 import { resolverDemanda } from './utils/demandas.js';
-import { garantirTabelaMigrations } from './db/migrations.js';
+import { garantirTabelaMigrations, migrar } from './db/migrations.js';
+import { aplicarMigracoesS10 } from './db/migracoesS10.js';
+import { migrarSessaoRevogavel } from './db/migracaoSessao.js';
+import { criarHealth }    from './health.js';
+import { logarVersoesBoot } from './utils/versaoPgDump.js';
+import { aplicarAprovadorReprotocolo } from './db/migracoes/aprovadorReprotocolo.js';
+import { aprovadoresConfigurados } from './services/reprotocolo/pacote.js';
+import { aplicarMigracaoSyncR06 } from './services/tribunal/syncMigracao.js';
 
 // Rotas
 import { authRouter }          from './routes/auth.js';
 import { usuariosRouter }      from './routes/usuarios.js';
 import { processosRouter }     from './routes/processos.js';
 import { movimentacoesRouter } from './routes/movimentacoes.js';
-import { credenciaisRouter }   from './routes/credenciais.js';
 import { configAiRouter }      from './routes/config.ai.js';
 import { clientesRouter }      from './routes/clientes.js';
 import { agendaRouter }        from './routes/agenda.js';
@@ -30,7 +36,6 @@ import { rankingsRouter }      from './routes/rankings.js';
 import { polosPassivosRouter } from './routes/polosPassivos.js';
 import { classificacoesRouter } from './routes/classificacoes.js';
 import { classificacoesProcessoRouter } from './routes/classificacoesProcesso.js';
-import { webhookRouter }       from './routes/webhook.js';
 import { publicacoesRouter, importarPublicacoesHandler } from './routes/publicacoes.js';
 import { estimativasRouter } from './routes/estimativas.js';
 import { pushTJRouter }      from './routes/pushTJ.js';
@@ -46,13 +51,28 @@ import { oauthRouter } from './oauth/index.js';
 // Middleware
 import { autenticar } from './middleware/auth.js';
 import { auditar }    from './middleware/auditoria.js';
+import { cabecalhosSeguranca } from './middleware/cabecalhos.js';
+import { limiteLoginPorEmail } from './middleware/limiteLogin.js';
+import { limitesPorIpAtivos }  from './utils/tentativasLogin.js';
+import { tratadorGlobalDeErros } from './middleware/erros.js';
+import { auditoriaRouter } from './routes/auditoria.js';
+import { migrarAuditoriaAutor, protegerAuditoria } from './db/auditoriaMigracao.js';
+import { exigirOrigemConfiavel } from './middleware/origem.js';
+import { montarUrlencodedOauth } from './middleware/parsersOauth.js';
+import { limiteMcp, limiteIntegracoes, limiteOauthToken, limiteOauthRegistro } from './middleware/limites.js';
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
 
 // Railway (e qualquer reverse proxy) injeta X-Forwarded-For.
 // Sem trust proxy, o express-rate-limit rejeita todas as requisições com ValidationError.
-app.set('trust proxy', 1);
+// TRUST_PROXY_SALTOS = quantos proxies ficam entre o cliente e o app (padrão 1). Os limites por IP
+// (login e OAuth) e o IP da auditoria dependem de `req.ip` ser o do cliente: se o Railway tiver
+// mais de 1 salto, todo mundo vira o mesmo IP -- ajustar a variável, sem mudar código.
+const saltosProxy = Number.parseInt(process.env.TRUST_PROXY_SALTOS, 10);
+app.set('trust proxy', saltosProxy > 0 ? saltosProxy : 1);
+app.disable('x-powered-by');
+app.use(cabecalhosSeguranca());
 
 const allowedOrigin = process.env.FRONTEND_URL || 'http://localhost:3000';
 if (!process.env.FRONTEND_URL) {
@@ -61,25 +81,18 @@ if (!process.env.FRONTEND_URL) {
 app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(cookieParser());
 app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: false, limit: '1mb' }));
+// (S-01) sem express.urlencoded global: formulário HTML de outro site não chega a rota nenhuma.
+// O parser de formulário fica só no /oauth/authorize e /oauth/token (montarUrlencodedOauth).
 app.use(auditar);
+// (S-01) CSRF: escrita por cookie só com Origin do frontend (FRONTEND_URL, igual ao CORS).
+app.use(exigirOrigemConfiavel({ permitida: allowedOrigin }));
 
 let dbOk = false;
-let dbJaConectouUmaVez = false;
 
-// Healthcheck — durante o boot (antes da primeira conexão) sempre 200, para o Railway
-// não matar o processo enquanto o Postgres ainda está de pé. Depois de já ter conectado
-// ao menos uma vez, uma queda real do banco retorna 503 (Railway reinicia via ON_FAILURE,
-// limitado a 3 tentativas por railway.json — não é loop infinito).
-app.get('/health', async (_req, res) => {
-  if (!dbJaConectouUmaVez) return res.json({ ok: true, db: false, iniciando: true, env: process.env.NODE_ENV });
-  try {
-    await db.query('SELECT 1');
-    res.json({ ok: true, db: true, env: process.env.NODE_ENV });
-  } catch {
-    res.status(503).json({ ok: false, db: false, env: process.env.NODE_ENV });
-  }
-});
+// Healthcheck = prontidão (R-12): 503 até o boot terminar (dbOk, depois das migrações) e 503 se o
+// banco cair depois. Assim o Railway não promove um deploy cujo boot quebrou — a versão anterior
+// segue no ar. Ver src/health.js e o healthcheckTimeout do railway.json.
+app.get('/health', criarHealth({ pronto: () => dbOk, banco: db }));
 
 // Gate: até o DB conectar, rejeita o resto com 503 (não 500 silencioso)
 app.use((req, res, next) => {
@@ -98,6 +111,13 @@ const authLimiter = rateLimit({
   standardHeaders: true, legacyHeaders: false,
   message: { ok: false, erro: 'Muitas requisições. Aguarde 15 minutos.' },
 });
+// /refresh sobe para 120 por 15 min por IP (S-03): com o acesso de 1 hora e o escritório saindo por um IP só,
+// as renovações legítimas aumentam; 30 chegaria a devolver 429 a quem só está trabalhando.
+const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, max: 120,
+  standardHeaders: true, legacyHeaders: false,
+  message: { ok: false, erro: 'Muitas requisições. Aguarde 15 minutos.' },
+});
 const importLimiter = rateLimit({
   windowMs: 60 * 1000, max: 10,
   standardHeaders: true, legacyHeaders: false,
@@ -105,14 +125,16 @@ const importLimiter = rateLimit({
 });
 
 // Rotas públicas
-app.use('/api/auth/login',        loginLimiter);
-app.use('/api/auth/refresh',      authLimiter);
+app.use('/api/auth/login',        loginLimiter, limiteLoginPorEmail());
+app.use('/api/auth/refresh',      refreshLimiter);
 app.use('/api/auth/trocar-senha', authLimiter);
+app.use('/api/auth/alterar-senha', authLimiter);
 app.use('/api/auth/2fa',          authLimiter);
 app.use('/api/auth', authRouter);
 
 // Consulta interna mínima usada pela Camila para reconhecer quem já é cliente do escritório.
 // Usa a chave compartilhada entre os dois serviços e não devolve dados processuais sensíveis.
+app.use('/api/integracoes', limiteIntegracoes); // S-20: 120/min por IP (a Camila guarda a consulta em cache por 5 min)
 app.use('/api/integracoes/camila', autenticarIntegracaoCamila, integracaoCamilaRouter);
 app.use('/api/integracoes', integracoesExternasRouter);
 
@@ -120,7 +142,6 @@ app.use('/api/integracoes', integracoesExternasRouter);
 app.use('/api/usuarios',      autenticar, usuariosRouter);
 app.use('/api/processos',     autenticar, processosRouter);
 app.use('/api/movimentacoes', autenticar, movimentacoesRouter);
-app.use('/api/credenciais',   autenticar, credenciaisRouter);
 app.use('/api/config/ai',     autenticar, configAiRouter);
 app.use('/api/clientes',      autenticar, clientesRouter);
 app.use('/api/agenda',        autenticar, agendaRouter);
@@ -136,8 +157,6 @@ app.use('/api/rankings',      autenticar, rankingsRouter);
 app.use('/api/polos-passivos',    autenticar, polosPassivosRouter);
 app.use('/api/classif',           autenticar, classificacoesRouter);
 app.use('/api/classificacoes',    autenticar, classificacoesProcessoRouter);
-// Webhook público — CNJ faz POST sem sessão do usuário
-app.use('/api/webhook',       webhookRouter);
 // /importar usa x-sync-key própria (sem JWT) — script local envia publicações do Mac
 app.post('/api/publicacoes/importar', importLimiter, importarPublicacoesHandler);
 app.use('/api/publicacoes',   autenticar, publicacoesRouter);
@@ -146,16 +165,20 @@ app.use('/api/push-tj',       autenticar, pushTJRouter);
 app.use('/api/onboardings',   autenticar, onboardingsRouter);
 app.use('/api/chaves-api',    autenticar, chavesApiRouter);
 app.use('/api/acervo',        autenticar, acervoRouter);
+// Consulta da trilha de auditoria (somente leitura; apenasMaster01 dentro do router).
+app.use('/api/auditoria',     autenticar, auditoriaRouter);
 // Levantamento de re-protocolo (somente leitura): Master + escopo OAuth "reprotocolo" no conector.
 app.use('/api/reprotocolo',   autenticar, reprotocoloRouter);
-app.use('/mcp',               mcpRouter);
+app.use('/mcp',               limiteMcp, mcpRouter); // S-20: 60/min por Master que autorizou o conector
+montarUrlencodedOauth(app);
+// S-20: /oauth/token e /oauth/register por IP (o /oauth/authorize tem o limitador do S-02)
+app.use('/oauth/token',       limiteOauthToken);
+app.use('/oauth/register',    limiteOauthRegistro);
 app.use(oauthRouter); // /.well-known/*, /oauth/authorize, /oauth/token, /oauth/register — sem autenticar
 
-// Global error handler — captura erros não tratados nas rotas
-app.use((err, req, res, next) => {
-  console.error('[ERROR]', err.message, err.stack?.split('\n')[1]);
-  res.status(500).json({ ok: false, erro: err.message || 'Erro interno do servidor.' });
-});
+// Global error handler — captura erros não tratados nas rotas (S-22: 500 genérico com código de
+// correlação; a mensagem e a pilha vão só para o log, sem dados pessoais)
+app.use(tratadorGlobalDeErros);
 
 // Handlers globais — evitam derrubar o processo por erro não tratado
 process.on('unhandledRejection', (reason) => {
@@ -176,10 +199,11 @@ async function iniciar() {
   console.log('[BOOT] PORT:', PORT);
   console.log('[BOOT] DATABASE_URL:', process.env.DATABASE_URL ? 'definida' : 'AUSENTE');
   console.log('[BOOT] REDIS_URL:', process.env.REDIS_URL ? 'definida' : 'AUSENTE');
+  console.log('[BOOT] trust proxy:', app.get('trust proxy'), '| limites por IP:', limitesPorIpAtivos() ? 'ligados' : 'DESLIGADOS');
+  logarVersoesBoot().catch(() => {}); // Node e pg_dump no log (S-16); não espera nem bloqueia o boot
 
   try {
     await db.query('SELECT 1');
-    dbJaConectouUmaVez = true;
     console.log('[DB] PostgreSQL conectado.');
     await garantirTabelaMigrations();
     // A partir daqui, migração NOVA usa migrar('AAAA_MM_DD_nome', async () => {...}) de
@@ -602,6 +626,168 @@ async function iniciar() {
       }
     }).catch(e => console.warn('[Migration] Restauração de ciclos cancelados:', e.message));
 
+    // Saneamento da fila de re-protocolo (28/09/2026) — roda UMA vez (migrar): repetir a cada boot
+    // desfaria a triagem humana feita depois. Nada é cancelado:
+    // (1) adia os ciclos que a restauração acima recriou antes de completar o intervalo da tese,
+    //     até a data em que o próprio cron os criaria (ciclo_inicio + intervalo_meses - 1);
+    // (2) manda para a triagem os ciclos de cliente com vinculo_ativo=true E vinculo_fim preenchido
+    //     ao mesmo tempo — ciclosRecorrentes.js trata esse caso como vínculo ativo e pode propor
+    //     período que não existe mais (ex.: as 2 tarefas "prontas" da Iradira, fim em 01/2023).
+    await migrar('2026_09_28_saneamento_fila_reprotocolo', () => db.transaction(async (tx) => {
+      const adiados = await tx.query(`
+        UPDATE tarefas t SET
+          ciclo_adiado_ate = (t.ciclo_inicio + ((pr.intervalo_meses - 1) || ' months')::interval)::date,
+          observacao = CONCAT_WS(E'\n', NULLIF(t.observacao,''),
+            'Adiado até ' || TO_CHAR((t.ciclo_inicio + ((pr.intervalo_meses - 1) || ' months')::interval)::date, 'DD/MM/YYYY')
+            || ': ciclo criado antes de completar o intervalo da tese (restauração de 19/09/2026).')
+        FROM cliente_produtos cp JOIN produtos pr ON pr.id = cp.produto_id
+        WHERE t.cliente_produto_id = cp.id AND t.tipo='protocolar' AND t.subtipo='ciclo'
+          AND t.status NOT IN ('concluida','cancelada')
+          AND (t.ciclo_adiado_ate IS NULL OR t.ciclo_adiado_ate <= CURRENT_DATE)
+          AND pr.intervalo_meses IS NOT NULL
+          AND (t.ciclo_inicio + ((pr.intervalo_meses - 1) || ' months')::interval)::date > CURRENT_DATE
+        RETURNING t.id`);
+      const sinalizados = await tx.query(`
+        UPDATE tarefas t SET
+          precisa_triagem = true,
+          observacao = CONCAT_WS(E'\n', NULLIF(t.observacao,''),
+            'Triagem (28/09/2026): o cadastro do cliente tem vínculo ativo e data de fim do vínculo ao '
+            || 'mesmo tempo — confirmar qual está certo antes de protocolar.')
+        FROM cliente_produtos cp JOIN clientes c ON c.id = cp.cliente_id
+        WHERE t.cliente_produto_id = cp.id AND t.tipo='protocolar' AND t.ciclo_inicio IS NOT NULL
+          AND t.subtipo IN ('ciclo','ciclo_aceito') AND t.status NOT IN ('concluida','cancelada')
+          AND t.precisa_triagem = false
+          AND c.vinculo_ativo = true AND c.vinculo_fim IS NOT NULL
+        RETURNING t.id`);
+      await tx.execute(
+        `INSERT INTO logs_auditoria (usuario_id, acao, entidade, valor_depois)
+         VALUES ((SELECT id FROM usuarios WHERE email='integracao-claude@abrantesemontenegro.com.br'),
+                 'saneamento_fila_reprotocolo', 'tarefa', $1)`,
+        [JSON.stringify({
+          motivo: 'Ciclos prematuros herdados da restauração de 19/09 e vínculo contraditório (ativo + fim).',
+          adiados: adiados.map(x => x.id), sinalizados_triagem: sinalizados.map(x => x.id),
+        })]
+      );
+      console.log(`[Migration] Fila de re-protocolo: ${adiados.length} ciclo(s) adiado(s), ${sinalizados.length} enviado(s) à triagem.`);
+    })).catch(e => console.warn('[Migration] Saneamento da fila de re-protocolo:', e.message));
+
+    // Fase 2 do re-protocolo (29/09/2026): confirmação da verificação gravada no AM.
+    // - verificacoes_reprotocolo: histórico por hash dos dados verificados + decisão humana;
+    // - reprotocolo_pasta_antiga: pasta do processo anterior em OUTORGANTES (1 por cliente; o
+    //   drive_pasta_id de clientes aponta para pastas vazias criadas pelo AM, não serve);
+    // - reprotocolo_conferencia_oficial: cache da conferência na fonte oficial PB/PE.
+    await migrar('2026_09_29_verificacao_reprotocolo', async () => {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS verificacoes_reprotocolo (
+          id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          tarefa_id      UUID NOT NULL REFERENCES tarefas(id) ON DELETE CASCADE,
+          demanda_id     UUID REFERENCES demandas(id) ON DELETE SET NULL,
+          grupo          TEXT NOT NULL CHECK (grupo IN ('confirmado','conferir','bloqueado')),
+          motivos        JSONB NOT NULL DEFAULT '[]',
+          snapshot       JSONB NOT NULL DEFAULT '{}',
+          snapshot_hash  TEXT NOT NULL,
+          verificado_em  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          decisao        TEXT CHECK (decisao IN ('confirmada')),
+          decidido_por   UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+          decidido_em    TIMESTAMPTZ,
+          motivos_aceitos JSONB NOT NULL DEFAULT '[]',
+          observacao     TEXT
+        )`);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_verif_reprot_tarefa ON verificacoes_reprotocolo (tarefa_id, verificado_em DESC)`);
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS reprotocolo_pasta_antiga (
+          cliente_id      UUID PRIMARY KEY REFERENCES clientes(id) ON DELETE CASCADE,
+          status          TEXT NOT NULL CHECK (status IN ('unica','ambigua','nao_encontrada')),
+          drive_pasta_id  TEXT,
+          titulo          TEXT,
+          pai             TEXT,
+          candidatos      JSONB NOT NULL DEFAULT '[]',
+          duplicidade     JSONB NOT NULL DEFAULT '[]',
+          documentos      JSONB,
+          origem          TEXT NOT NULL DEFAULT 'manual',
+          confirmada_por  UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+          confirmada_em   TIMESTAMPTZ,
+          atualizado_em   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`);
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS reprotocolo_conferencia_oficial (
+          tarefa_id     UUID PRIMARY KEY REFERENCES tarefas(id) ON DELETE CASCADE,
+          resultado     JSONB NOT NULL,
+          conferido_em  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`);
+    }).catch(e => console.warn('[Migration] Tabelas da verificação de re-protocolo:', e.message));
+
+    // Pacote do re-protocolo (29/09/2026): reserva única por tarefa/demanda + relatório montado, e o
+    // cadastro dos modelos aprovados (inicial/procuração) por ente e tese.
+    await migrar('2026_09_29_pacote_reprotocolo', async () => {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS pacotes_reprotocolo (
+          id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          tarefa_id          UUID NOT NULL REFERENCES tarefas(id) ON DELETE CASCADE,
+          demanda_id         UUID REFERENCES demandas(id) ON DELETE SET NULL,
+          cliente_id         UUID NOT NULL REFERENCES clientes(id) ON DELETE CASCADE,
+          status             TEXT NOT NULL DEFAULT 'reservado' CHECK (status IN ('reservado','montado','aprovado','cancelado')),
+          periodo_inicio     DATE,
+          periodo_fim        DATE,
+          meses              INTEGER,
+          valor_causa        NUMERIC(14,2),
+          valor_exige_humano BOOLEAN,
+          dados              JSONB NOT NULL DEFAULT '{}',
+          reservado_por      UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+          reservado_em       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          montado_em         TIMESTAMPTZ,
+          aprovado_por       UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+          aprovado_em        TIMESTAMPTZ,
+          cancelado_por      UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+          cancelado_em       TIMESTAMPTZ,
+          motivo_cancelamento TEXT,
+          atualizado_em      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )`);
+      // Um pacote ativo por tarefa e por demanda: reservas simultâneas nunca duplicam o protocolo.
+      await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS uq_pacote_reprot_tarefa_ativo ON pacotes_reprotocolo (tarefa_id) WHERE status <> 'cancelado'`);
+      await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS uq_pacote_reprot_demanda_ativo ON pacotes_reprotocolo (demanda_id) WHERE status <> 'cancelado' AND demanda_id IS NOT NULL`);
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS modelos_reprotocolo (
+          id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          ente             TEXT NOT NULL,
+          tese_id          UUID REFERENCES produtos(id) ON DELETE CASCADE,
+          tipo             TEXT NOT NULL CHECK (tipo IN ('inicial','procuracao')),
+          titulo           TEXT,
+          drive_arquivo_id TEXT NOT NULL,
+          aprovado_por     UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+          aprovado_em      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          ativo            BOOLEAN NOT NULL DEFAULT true
+        )`);
+      await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS uq_modelo_reprot_ativo ON modelos_reprotocolo (ente, COALESCE(tese_id, '00000000-0000-0000-0000-000000000000'::uuid), tipo) WHERE ativo`);
+    }).catch(e => console.warn('[Migration] Tabelas do pacote de re-protocolo:', e.message));
+
+    // R-05 (30/09/2026): registro de cada envio de WhatsApp pelo AM (alerta técnico, lembrete,
+    // véspera). Antes nada registrava — falha do Digisac sumia no log. O desenho é o de A5-19
+    // (o "bom dia" novo reaproveita a mesma tabela: `chave` única = idempotência por usuário e
+    // dia); `origem` e `destino_mascarado` são de agora. Guarda ids e o telefone MASCARADO,
+    // nunca o texto da mensagem nem o número inteiro.
+    await migrar('2026_09_30_notificacoes_whatsapp', async () => {
+      await db.execute(`
+        CREATE TABLE IF NOT EXISTS notificacoes_whatsapp (
+          id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          tipo               TEXT NOT NULL,
+          origem             TEXT,
+          usuario_id         UUID REFERENCES usuarios(id) ON DELETE SET NULL,
+          destino_mascarado  TEXT,
+          data_referencia    DATE NOT NULL DEFAULT ((NOW() AT TIME ZONE 'America/Sao_Paulo')::date),
+          chave              TEXT UNIQUE NOT NULL,
+          status             TEXT NOT NULL,
+          itens              JSONB,
+          total_itens        INT,
+          tentativas         INT NOT NULL DEFAULT 0,
+          digisac_message_id TEXT,
+          erro               TEXT,
+          criado_em          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          enviado_em         TIMESTAMPTZ
+        )`);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_notificacoes_whatsapp_criado ON notificacoes_whatsapp (criado_em DESC)`);
+    }).catch(e => console.warn('[Migration] Tabela notificacoes_whatsapp:', e.message));
+
     // O acervo legado nasceu da antiga equivalência "elegível = contratado". Ele permanece
     // íntegro, mas sai da fila operacional até conferência humana; nada é apagado.
     // Tarefas nascidas de ciclo (ciclo_inicio) ficam de fora: para elas, ter processo anterior é a regra.
@@ -674,6 +860,37 @@ async function iniciar() {
       )
     `).catch(() => {});
     await db.query(`CREATE INDEX IF NOT EXISTS idx_push_execucoes_inicio ON push_execucoes (iniciado_em DESC)`).catch(() => {});
+
+    // R-14 (30/09/2026): mensagem da falha de uma execução do sync que foi abortada/interrompida.
+    // NULL = a execução concluiu normalmente (só essas contam para a janela incremental do sync).
+    await migrar('2026_09_30_sync_execucoes_erro', async () => {
+      await db.execute(`ALTER TABLE sync_execucoes ADD COLUMN IF NOT EXISTS erro TEXT`);
+    }).catch(e => console.warn('[Migration] Coluna sync_execucoes.erro:', e.message));
+
+    // S-10: senha do PJe deixa de ser obrigatória; apagar senha/2FA guardados só com a flag APAGAR_CREDENCIAL_PJE_ATIVO=true.
+    await aplicarMigracoesS10({ db, migrar })
+      .catch(e => console.warn('[Migration] S-10 credenciais_tribunal:', e.message));
+    // S-13 (30/09/2026): a auditoria guarda o retrato do autor (nome e e-mail no momento da ação) e
+    // a tabela passa a aceitar só INSERT. Duas migrações separadas: as colunas são obrigatórias (o
+    // INSERT do log depende delas: se falharem, o boot falha e a versão anterior segue no ar); a
+    // trava contra UPDATE/DELETE é defesa extra e, se falhar, só avisa; ela é criada por ÚLTIMO (depois da migração
+    // do S-03, ver abaixo): enquanto a versão anterior ainda atende, ou se o boot falhar antes, o gatilho não existe
+    // e o código antigo (que anula usuario_id ao excluir usuário) segue funcionando.
+    await migrar('2026_10_S13_auditoria_autor', () => migrarAuditoriaAutor(db));
+    // S-05 / D-S4 (30/09/2026): aprovador do re-protocolo marcado no cadastro (usuarios.aprova_reprotocolo),
+    // COMBINADO com REPROTOCOLO_APROVADORES (união: quem aprova hoje continua aprovando). A migração cria a
+    // coluna e marca, uma única vez, os Masters ativos cujo e-mail está na variável; depois disso a marcação
+    // se altera pela tela (só o Master 01). O ALTER solto garante a coluna a cada boot, mesmo que a marcação falhe.
+    await db.query(`ALTER TABLE usuarios ADD COLUMN IF NOT EXISTS aprova_reprotocolo BOOLEAN NOT NULL DEFAULT false`)
+      .catch(e => console.warn('[Migration] usuarios.aprova_reprotocolo:', e.message));
+    await migrar('2026_10_S05_aprovador_reprotocolo', () => aplicarAprovadorReprotocolo({ conexao: db, emails: aprovadoresConfigurados() }))
+      .catch(e => console.warn('[Migration] Aprovador do re-protocolo no cadastro:', e.message));
+    // R-06 (30/09/2026): captura de andamentos por número. processos.datajud_atualizado_em é a marca
+    // (dataHoraUltimaAtualizacao do DataJud) que substitui a janela; sync_execucoes ganha status_http,
+    // hits e casados. Só colunas anuláveis (ver services/tribunal/syncMigracao.js).
+    // SEM .catch: o sync novo lê processos.datajud_atualizado_em; se a migração falhar, o boot falha e a versão
+    // anterior continua no ar (melhor que promover um sync que erra a cada hora).
+    await migrar('2026_09_30_sync_datajud_r06', () => aplicarMigracaoSyncR06(db));
 
     // Chaves para integrações externas: guarda somente SHA-256, nunca o segredo em texto.
     await db.query(`CREATE TABLE IF NOT EXISTS chaves_api_externas (
@@ -752,10 +969,19 @@ async function iniciar() {
     // (A reescrita antiga de "Período a solicitar" foi removida: o período do ciclo agora é
     //  estruturado em tarefas.ciclo_inicio e calculado até o mês atual na consulta.)
 
+    // S-03 (sessão revogável): usuarios.sessao_versao + sessoes_refresh. SEM .catch: se falhar, o boot falha e o
+    // /health segue em 503 -- o Railway não promove o deploy e a versão anterior continua no ar.
+    await migrar('2026_10_S03_sessao_revogavel', () => migrarSessaoRevogavel((sql) => db.execute(sql)));
+    // S-13: gatilho de auditoria só-inserção, por último entre as migrações do esquema (ver o comentário do S-13 acima).
+    await migrar('2026_10_S13_auditoria_imutavel', () => protegerAuditoria(db))
+      .catch(e => console.warn('[Migration] Trava de UPDATE/DELETE em logs_auditoria:', e.message));
+
     const { recarregarAiConfig } = await import('./config/ai.js');
     await recarregarAiConfig(db);
     // Só libera as rotas quando o esquema obrigatório estiver inteiramente pronto.
     dbOk = true;
+    // Tempo de boot: é o que o healthcheckTimeout do railway.json precisa cobrir (com folga).
+    console.log(`[BOOT] Esquema pronto em ${process.uptime().toFixed(1)}s — /health passa a responder 200.`);
   } catch (err) {
     console.error('[FATAL] PostgreSQL falhou:', err.stack || err);
     process.exit(1);

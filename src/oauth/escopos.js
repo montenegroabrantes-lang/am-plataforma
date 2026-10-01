@@ -5,7 +5,8 @@
 // - token OAuth NOVO carrega `escopos` e só é aceito em /mcp e nas áreas dos seus escopos
 //   (confinamento em middleware/auth.js → autenticar);
 // - token OAuth emitido ANTES dos escopos (sem o claim, identificado pela conta de serviço) é
-//   tratado como só "acervo" nas rotas que exigem escopo (exigirEscopo);
+//   RECUSADO com 401 por `autenticar` (S-18, 30/09/2026): "reconecte o conector". Antes valia como
+//   "acervo" nas rotas que exigem escopo e, fora delas, como Master da API inteira;
 // - sessão normal de usuário (login do AM) não tem escopo: vale o perfil (apenasMaster etc.).
 export const CONTA_SERVICO_EMAIL = 'integracao-claude@abrantesemontenegro.com.br';
 
@@ -36,10 +37,19 @@ export function normalizarEscopos(valor) {
   return ESCOPOS_VALIDOS.filter(e => pedidos.has(e));
 }
 
+export const MSG_CONECTOR_ANTIGO = 'Token do conector antigo — reconecte o conector do AM no Claude '
+  + '(Configurações → Conectores → desconectar e conectar de novo).';
+
+// Token da conta de serviço sem o claim `escopos` (emitido antes dos escopos de 28/09/2026).
+export function tokenConectorSemEscopos(usuario) {
+  return String(usuario?.email ?? '').toLowerCase() === CONTA_SERVICO_EMAIL && !Array.isArray(usuario?.escopos);
+}
+
 // null = sessão de usuário, sem restrição de escopo.
 export function escoposDoToken(usuario) {
   if (Array.isArray(usuario?.escopos)) return normalizarEscopos(usuario.escopos);
-  if (usuario?.email === CONTA_SERVICO_EMAIL) return ['acervo'];
+  // Já recusado por `autenticar`; se chegar aqui, falha fechada: nenhum escopo.
+  if (tokenConectorSemEscopos(usuario)) return [];
   return null;
 }
 

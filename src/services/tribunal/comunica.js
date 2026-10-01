@@ -5,6 +5,7 @@
  * Sem autenticação — busca por número de OAB + UF.
  */
 import axios from 'axios';
+import { urlHttpsOuNulo } from '../../utils/validacao.js';
 
 const BASE = 'https://comunicaapi.pje.jus.br/api/v1';
 
@@ -122,7 +123,7 @@ export async function sincronizarPublicacoes(db, numeroOab, ufOab, diasAtras = 3
         item.tipoDocumento || null,
         item.nomeOrgao || null,
         item.texto || null,
-        item.link || null,
+        urlHttpsOuNulo(item.link), // S-23: link fora de https:// vira null
         item.status || null,
         cancelada,
       ]

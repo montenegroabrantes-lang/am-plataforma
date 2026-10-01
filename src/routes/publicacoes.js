@@ -3,7 +3,9 @@ import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
 import { extrairPrazoPublicacao, prazoPlausivel } from '../services/publicacoes/extrairPrazo.js';
-import { paginacaoSegura, uuidValido } from '../utils/validacao.js';
+import { paginacaoSegura, uuidValido, urlHttpsOuNulo } from '../utils/validacao.js';
+import { mesmaChave } from '../utils/seguranca.js';
+import { registrarAuditoria } from '../middleware/auditoria.js';
 
 export const publicacoesRouter = Router();
 
@@ -273,6 +275,14 @@ publicacoesRouter.patch('/:id/prazo', apenasMaster, async (req, res) => {
     [publicacao.id]
   );
 
+  // S-13: quem confirmou ou corrigiu o prazo (o id da publicação não é UUID: vai em entidade_ref).
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'confirmar_prazo', entidade: 'publicacao', entidadeId: publicacao.id,
+    valorAntes: existente ? { prazo_data: existente.prazo_data, atribuido_a: existente.atribuido_a, status: existente.status } : null,
+    valorDepois: { tarefa_id: tarefa.id, prazo_data, atribuido_a: responsavel, urgencia },
+    ip: req._ip,
+  });
+
   let calendarSincronizado = false;
   const dataHora = new Date(`${prazo_data}T08:00:00-03:00`);
   try {
@@ -310,7 +320,7 @@ publicacoesRouter.patch('/:id/triagem', apenasMaster, async (req, res) => {
     return res.status(400).json({ ok: false, erro: 'Situação de triagem inválida.' });
   }
 
-  const publicacao = await db.queryOne(`SELECT id FROM publicacoes WHERE id = $1 AND cancelada = false`, [req.params.id]);
+  const publicacao = await db.queryOne(`SELECT id, triagem_status FROM publicacoes WHERE id = $1 AND cancelada = false`, [req.params.id]);
   if (!publicacao) return res.status(404).json({ ok: false, erro: 'Publicação não encontrada.' });
 
   if (status !== 'pendente') {
@@ -332,16 +342,27 @@ publicacoesRouter.patch('/:id/triagem', apenasMaster, async (req, res) => {
     [status, req.user.id, publicacao.id]
   );
 
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'triar_publicacao', entidade: 'publicacao', entidadeId: publicacao.id,
+    valorAntes: { triagem_status: publicacao.triagem_status ?? null }, valorDepois: { triagem_status: status }, ip: req._ip,
+  });
+
   res.json({ ok: true, triagem_status: status });
 });
 
 // PATCH /api/publicacoes/:id/lida — marca como lida
 publicacoesRouter.patch('/:id/lida', async (req, res) => {
   if (!publicacaoIdValido(req.params.id)) return res.status(400).json({ ok: false, erro: 'Publicação inválida.' });
-  await db.execute(
+  const r = await db.execute(
     `UPDATE publicacoes SET lido = true, lido_em = NOW(), lido_por = $1 WHERE id = $2`,
     [req.user.id, req.params.id]
   );
+  if (r.rowCount > 0) {
+    await registrarAuditoria({
+      usuarioId: req.user.id, acao: 'marcar_publicacao_lida', entidade: 'publicacao', entidadeId: req.params.id,
+      valorDepois: { lido: true }, ip: req._ip,
+    });
+  }
   res.json({ ok: true });
 });
 
@@ -351,10 +372,14 @@ publicacoesRouter.patch('/marcar-todas-lidas', apenasMaster, async (req, res) =>
   let where = 'lido = false AND cancelada = false';
   const params = [req.user.id];
   if (data) { params.push(data); where += ` AND data_disponibilizacao = $${params.length}`; }
-  await db.execute(
+  const r = await db.execute(
     `UPDATE publicacoes SET lido = true, lido_em = NOW(), lido_por = $1 WHERE ${where}`,
     params
   );
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'marcar_publicacoes_lidas', entidade: 'publicacao',
+    valorDepois: { quantidade: r.rowCount, data: data || null }, ip: req._ip,
+  });
   res.json({ ok: true });
 });
 
@@ -363,7 +388,8 @@ publicacoesRouter.patch('/marcar-todas-lidas', apenasMaster, async (req, res) =>
 export async function importarPublicacoesHandler(req, res) {
   const chaveEnv = process.env.SYNC_KEY;
   if (!chaveEnv) return res.status(503).json({ ok: false, erro: 'SYNC_KEY não configurada no servidor.' });
-  if (req.headers['x-sync-key'] !== chaveEnv) {
+  // Tempo constante (S-08): `!==` deixava medir, pelo tempo de resposta, quantos caracteres da chave batiam.
+  if (!mesmaChave(req.headers['x-sync-key'], chaveEnv)) {
     return res.status(401).json({ ok: false, erro: 'Chave inválida.' });
   }
 
@@ -419,7 +445,7 @@ export async function importarPublicacoesHandler(req, res) {
           item.data_disponibilizacao,
           item.siglaTribunal || null, item.tipoComunicacao || null,
           item.tipoDocumento || null, item.nomeOrgao || null,
-          item.texto || null, item.link || null,
+          item.texto || null, urlHttpsOuNulo(item.link), // S-23: link fora de https:// vira null (o lote segue)
           item.status || null, cancelada,
         ]
       ).catch(() => []);
@@ -444,6 +470,11 @@ export async function importarPublicacoesHandler(req, res) {
   ).catch(() => {});
 
   console.log(`[Comunica/Import] ${inseridas} novas, ${vinculadas} vinculadas (${items.length} recebidas).`);
+  // S-13: a importação automática (chave SYNC_KEY) não tem usuário; fica registrada como ação do sistema.
+  await registrarAuditoria({
+    acao: 'importar_publicacoes_sync', entidade: 'publicacao',
+    valorDepois: { recebidas: items.length, inseridas, vinculadas }, ip: req._ip,
+  });
   res.json({ ok: true, inseridas, vinculadas });
 }
 
@@ -497,7 +528,7 @@ publicacoesRouter.post('/importar-browser', apenasMaster, async (req, res) => {
           item.data_disponibilizacao,
           item.siglaTribunal || null, item.tipoComunicacao || null,
           item.tipoDocumento || null, item.nomeOrgao || null,
-          item.texto || null, item.link || null,
+          item.texto || null, urlHttpsOuNulo(item.link), // S-23: link fora de https:// vira null (o lote segue)
           item.status || null, cancelada,
         ]
       ).catch(() => []);
@@ -516,6 +547,10 @@ publicacoesRouter.post('/importar-browser', apenasMaster, async (req, res) => {
      ON CONFLICT (categoria, chave) DO UPDATE SET valor = $1, atualizado_em = NOW()`,
     [new Date().toISOString()]
   ).catch(() => {});
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'importar_publicacoes_navegador', entidade: 'publicacao',
+    valorDepois: { recebidas: items.length, inseridas, vinculadas: processoMap2.size }, ip: req._ip,
+  });
   res.json({ ok: true, inseridas, vinculadas: processoMap2.size });
 });
 
@@ -579,5 +614,9 @@ publicacoesRouter.post('/reprocessar-prazos', apenasMaster, async (req, res) => 
     } catch { ignoradas++; }
   }
 
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'reprocessar_prazos_publicacoes', entidade: 'publicacao',
+    valorDepois: { criadas, ignoradas, total: pubs.length }, ip: req._ip,
+  });
   res.json({ ok: true, criadas, ignoradas, total: pubs.length });
 });

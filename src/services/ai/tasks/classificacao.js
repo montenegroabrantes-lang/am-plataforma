@@ -113,23 +113,58 @@ ${historico || 'Nenhuma movimentação disponível'}`;
   try {
     const limpo  = texto.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     const parsed = JSON.parse(limpo);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
 
-    return {
+    // Valor inválido ou ausente vira null (e não 'nao_iniciado'/'a_definir'): o UPDATE das rotas usa
+    // COALESCE, então um default aqui apagaria o status que o escritório já definiu à mão (R-07).
+    const resultado = {
       situacao_atual:        SITUACOES.includes(parsed.situacao_atual)            ? parsed.situacao_atual        : null,
       etapa_atual:           parsed.etapa_atual?.slice(0, 200)                    || null,
       localizacao_processual: LOCALIZACOES.includes(parsed.localizacao_processual) ? parsed.localizacao_processual : null,
-      tipo_requisicao:       TIPOS_REQUISICAO.includes(parsed.tipo_requisicao)    ? parsed.tipo_requisicao       : 'a_definir',
-      status_rpv:            STATUS_RPV.includes(parsed.status_rpv)               ? parsed.status_rpv            : 'nao_iniciado',
-      status_precatorio:     STATUS_PRECATORIO.includes(parsed.status_precatorio) ? parsed.status_precatorio     : 'nao_iniciado',
-      status_alvara:         STATUS_ALVARA.includes(parsed.status_alvara)         ? parsed.status_alvara         : 'nao_iniciado',
+      tipo_requisicao:       TIPOS_REQUISICAO.includes(parsed.tipo_requisicao)    ? parsed.tipo_requisicao       : null,
+      status_rpv:            STATUS_RPV.includes(parsed.status_rpv)               ? parsed.status_rpv            : null,
+      status_precatorio:     STATUS_PRECATORIO.includes(parsed.status_precatorio) ? parsed.status_precatorio     : null,
+      status_alvara:         STATUS_ALVARA.includes(parsed.status_alvara)         ? parsed.status_alvara         : null,
       confianca:             ['ALTA','MEDIA','BAIXA'].includes(parsed.confianca)  ? parsed.confianca             : 'BAIXA',
     };
+
+    // Nenhum campo aproveitável: é o mesmo que resposta ilegível — o chamador não deve gravar nada.
+    const aproveitavel = Object.entries(resultado).some(([campo, valor]) => campo !== 'confianca' && valor !== null);
+    return aproveitavel ? resultado : null;
   } catch {
-    return {
-      situacao_atual: null, etapa_atual: null, localizacao_processual: null,
-      tipo_requisicao: 'a_definir', status_rpv: 'nao_iniciado',
-      status_precatorio: 'nao_iniciado', status_alvara: 'nao_iniciado',
-      confianca: 'BAIXA',
-    };
+    // Resposta que não é JSON: devolve null para o chamador não tocar no processo (R-07).
+    return null;
   }
+}
+
+// R-07: decide o que da requisição (tipo e status de RPV/precatório/alvará) a IA pode gravar por cima do que o
+// processo já tem. A IA nunca rebaixa nem sobrescreve o que o escritório definiu à mão:
+//  - status só AVANÇA na progressão (o valor novo precisa estar depois do atual na lista);
+//  - tipo só é preenchido quando está vazio ou 'a_definir'; se a IA discordar de um tipo já definido,
+//    a requisição inteira fica como está (não grava status de um tipo que o processo não tem).
+// O que não puder ser gravado sai como null, e o UPDATE com COALESCE mantém o valor atual.
+export function preservarRequisicaoManual(atual, resultado) {
+  const a = atual || {};
+  const tipoAtual = a.tipo_requisicao && a.tipo_requisicao !== 'a_definir' ? a.tipo_requisicao : null;
+  const tipoIA    = resultado.tipo_requisicao && resultado.tipo_requisicao !== 'a_definir' ? resultado.tipo_requisicao : null;
+
+  if (tipoAtual && tipoIA && tipoAtual !== tipoIA) {
+    return { ...resultado, tipo_requisicao: null, status_rpv: null, status_precatorio: null, status_alvara: null };
+  }
+
+  const avanca = (ordem, novo, corrente) => {
+    if (!novo) return null;
+    const posNovo = ordem.indexOf(novo);
+    if (posNovo < 0) return null;
+    if (corrente && ordem.indexOf(corrente) < 0) return null; // valor atual fora da lista: não mexe
+    return posNovo > ordem.indexOf(corrente) ? novo : null;
+  };
+
+  return {
+    ...resultado,
+    tipo_requisicao:   tipoAtual ? null : tipoIA,
+    status_rpv:        avanca(STATUS_RPV,        resultado.status_rpv,        a.status_rpv),
+    status_precatorio: avanca(STATUS_PRECATORIO, resultado.status_precatorio, a.status_precatorio),
+    status_alvara:     avanca(STATUS_ALVARA,     resultado.status_alvara,     a.status_alvara),
+  };
 }

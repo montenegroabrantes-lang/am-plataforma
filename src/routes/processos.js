@@ -2,12 +2,26 @@ import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { apenasMaster }       from '../middleware/auth.js';
+import {
+  ehMaster, protegerDadosDoJunior, condicaoBuscaCpf, temTarefaNoProcesso, idsProcessosEditaveis,
+  liberarEdicaoDoJunior, liberarClassificacaoDoJunior, MSG_SO_RESPONSAVEL,
+} from '../middleware/perfilJunior.js';
 import { ETAPA_WHERE, ETAPA_CASE } from '../utils/etapas.js';
 import { criarEventoCalendar, atualizarEventoCalendar, deletarEventoCalendar } from '../services/calendar/index.js';
 import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
 import { extrairIdProcessoPje, obterAcessoTribunal } from '../services/acessoTribunal.js';
+import { preservarRequisicaoManual } from '../services/ai/tasks/classificacao.js';
+import { daTabela } from '../utils/tabelaSegura.js';
+import { erroInterno } from '../middleware/erros.js';
+import { celulaCsv } from '../utils/csv.js';
+import { diferenca } from '../utils/auditoriaCampos.js';
+import { filtroVisibilidade, usuarioVeVisibilidade, podeVerProcesso } from '../utils/visibilidade.js';
+import { criarLimiteIA } from '../middleware/limites.js';
 
 export const processosRouter = Router();
+
+// S-27: júnior recebe o CPF mascarado em qualquer resposta JSON deste router.
+processosRouter.use(protegerDadosDoJunior);
 
 // Rejeita :id malformado antes de bater no banco (evita 500 cru do Postgres — ver auditoria de segurança)
 processosRouter.param('id', (req, res, next, id) => {
@@ -15,20 +29,27 @@ processosRouter.param('id', (req, res, next, id) => {
   next();
 });
 
-// Filtro de visibilidade: restritos só para pode_marcar_restrito
-function filtroVisibilidade(user) {
-  if (user.pode_marcar_restrito) return '';
-  return `AND (p.visibilidade = 'normal')`;
-}
+// Visibilidade (S-21): a regra mora em utils/visibilidade.js — restrito só para o Master 01. Quem não
+// pode ver recebe 404, igual a um id inexistente (não revela que o processo existe).
+const processoNaoEncontrado = (res) => res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+// S-20: chamada paga de IA — 20 por hora por usuário
+const limiteClassificar = criarLimiteIA('classificar');
 
 // Todos os usuários veem todos os processos (filtroVisibilidade já bloqueia os restritos)
 
+// Última atualização do processo = a mais recente entre movimentação (DataJud) e publicação
+// (Comunica/DJEN) não cancelada. Ordena a lista e alimenta "dias parado" e os filtros de período.
+// data_disponibilizacao é DATE: vira meia-noite de Brasília (sem isso, meia-noite UTC = dia anterior na tela).
+const PUB_EM = `(data_disponibilizacao::timestamp AT TIME ZONE 'America/Sao_Paulo')`;
+const ULT_PUBLICACAO = `(SELECT MAX(${PUB_EM}) FROM publicacoes WHERE processo_id = p.id AND cancelada IS NOT TRUE)`;
+const ULT_ATUALIZACAO = `GREATEST((SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id), ${ULT_PUBLICACAO})`;
+
 const FILTROS_PERIODO = {
-  'hoje':   `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date`,
-  '7d':     `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= NOW() - INTERVAL '7 days'`,
-  '30d':    `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= NOW() - INTERVAL '30 days'`,
-  'sem30d': `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) < NOW() - INTERVAL '30 days'`,
-  'sem60d': `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) < NOW() - INTERVAL '60 days'`,
+  'hoje':   `AND ${ULT_ATUALIZACAO} >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date`,
+  '7d':     `AND ${ULT_ATUALIZACAO} >= NOW() - INTERVAL '7 days'`,
+  '30d':    `AND ${ULT_ATUALIZACAO} >= NOW() - INTERVAL '30 days'`,
+  'sem30d': `AND ${ULT_ATUALIZACAO} < NOW() - INTERVAL '30 days'`,
+  'sem60d': `AND ${ULT_ATUALIZACAO} < NOW() - INTERVAL '60 days'`,
 };
 
 // Formato CNJ: NNNNNNN-DD.AAAA.J.TR.OOOO (com pontuação) ou só dígitos (20 chars)
@@ -66,14 +87,14 @@ processosRouter.get('/', async (req, res) => {
   if (tipo_requisicao)       { params.push(tipo_requisicao);       condicoes.push(`AND p.tipo_requisicao = $${params.length}`); }
   if (produto_id)            { params.push(produto_id);            condicoes.push(`AND p.produto_id = $${params.length}`); }
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
-  if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
+  if (daTabela(FILTROS_PERIODO, periodo)) condicoes.push(FILTROS_PERIODO[periodo]);
   if (etapa) {
     // etapa_atual é texto livre (gerado pela IA) e nunca é igual a um rótulo fixo de
     // ETAPA_WHERE — o fallback abaixo só entra quando `etapa` é uma etapa customizada
     // (salva via /api/processos/etapas-custom), que não tem entrada em ETAPA_WHERE.
     // Só empurra o parâmetro quando o fallback de fato o usa, senão o bind do
     // Postgres quebra por parâmetro sobrando sem placeholder correspondente.
-    if (ETAPA_WHERE[etapa]) {
+    if (daTabela(ETAPA_WHERE, etapa)) {
       condicoes.push(`AND ${ETAPA_WHERE[etapa]}`);
     } else {
       params.push(etapa);
@@ -85,7 +106,7 @@ processosRouter.get('/', async (req, res) => {
   const tempoNum = Number(tempo_parado_min);
   if (tempo_parado_min && !isNaN(tempoNum)) {
     params.push(tempoNum);
-    condicoes.push(`AND EXTRACT(DAY FROM NOW() - ult.data_movimentacao) >= $${params.length}`);
+    condicoes.push(`AND EXTRACT(DAY FROM NOW() - ${ULT_ATUALIZACAO}) >= $${params.length}`);
   }
   if (funcao_cliente)         { params.push(`%${funcao_cliente}%`);  condicoes.push(`AND c.cargo ILIKE $${params.length}`); }
   if (busca) {
@@ -94,33 +115,25 @@ processosRouter.get('/', async (req, res) => {
     params.push(t); const iNome  = params.length;
     params.push(t); const iPAtiv = params.length;
     params.push(t); const iPPass = params.length;
-    let cpfCond = '';
-    const soDigitos = busca.replace(/\D/g, '');
-    if (soDigitos.length >= 6) {
-      params.push(`%${soDigitos}%`);
-      cpfCond = ` OR REGEXP_REPLACE(c.cpf,'[^0-9]','','g') ILIKE $${params.length}`;
-    }
+    // S-27: o júnior só busca por CPF inteiro (senão a busca parcial desmascara o CPF).
+    const cpfCond = condicaoBuscaCpf(req, busca.replace(/\D/g, ''), params);
     condicoes.push(`AND (p.numero ILIKE $${iNum} OR c.nome ILIKE $${iNome} OR p.polo_ativo ILIKE $${iPAtiv} OR p.polo_passivo ILIKE $${iPPass}${cpfCond})`);
   }
 
   const where = condicoes.filter(Boolean).join(' ');
-  const precisaUlt = !!tempo_parado_min && !isNaN(Number(tempo_parado_min));
 
   const [{ total }] = await db.query(
     `SELECT COUNT(*) AS total
      FROM processos p
      LEFT JOIN clientes c ON c.id = p.cliente_id
-     ${precisaUlt ? `LEFT JOIN LATERAL (
-       SELECT data_movimentacao FROM movimentacoes
-       WHERE processo_id = p.id ORDER BY data_movimentacao DESC LIMIT 1
-     ) ult ON true` : ''}
      WHERE ${where}`,
     params
   );
 
   params.push(limiteSeguro, offset);
 
-  // JOIN LATERAL evita 3 subqueries por linha — uma única busca da última movimentação.
+  // JOIN LATERAL evita 3 subqueries por linha — uma única busca da última movimentação e da última publicação.
+  // Empate no dia fica com a movimentação (a publicação só tem a data, sem hora).
   const rows = await db.query(
     `SELECT p.id, p.numero, p.tribunal, p.vara, p.status, p.acao,
             p.polo_ativo, p.polo_passivo,
@@ -138,7 +151,12 @@ processosRouter.get('/', async (req, res) => {
             pr.nome AS produto_nome,
             ult.data_movimentacao AS ultima_movimentacao,
             ult.texto             AS ultima_mov_texto,
-            EXTRACT(DAY FROM NOW() - ult.data_movimentacao)::int AS dias_parado,
+            GREATEST(ult.data_movimentacao, pub.data_disponibilizacao) AS ultima_atualizacao,
+            CASE WHEN pub.data_disponibilizacao > ult.data_movimentacao
+                   OR (ult.data_movimentacao IS NULL AND pub.data_disponibilizacao IS NOT NULL)
+                 THEN 'publicacao' WHEN ult.data_movimentacao IS NOT NULL THEN 'movimentacao' END AS ultima_atualizacao_origem,
+            pub.resumo            AS ultima_pub_resumo,
+            EXTRACT(DAY FROM NOW() - GREATEST(ult.data_movimentacao, pub.data_disponibilizacao))::int AS dias_parado,
             ${ETAPA_CASE} AS etapa,
             EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id) AS tem_cessao
      FROM processos p
@@ -151,8 +169,16 @@ processosRouter.get('/', async (req, res) => {
        ORDER BY data_movimentacao DESC
        LIMIT 1
      ) ult ON true
+     LEFT JOIN LATERAL (
+       SELECT ${PUB_EM} AS data_disponibilizacao,
+              CONCAT_WS(' — ', NULLIF(tipo_documento, ''), NULLIF(LEFT(REGEXP_REPLACE(texto, '\\s+', ' ', 'g'), 200), '')) AS resumo
+       FROM publicacoes
+       WHERE processo_id = p.id AND cancelada IS NOT TRUE
+       ORDER BY data_disponibilizacao DESC
+       LIMIT 1
+     ) pub ON true
      WHERE ${where}
-     ORDER BY p.urgente DESC, ult.data_movimentacao DESC NULLS LAST
+     ORDER BY p.urgente DESC, GREATEST(ult.data_movimentacao, pub.data_disponibilizacao) DESC NULLS LAST
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );
@@ -171,7 +197,11 @@ processosRouter.get('/', async (req, res) => {
     if (!classifMap[c.processo_id]) classifMap[c.processo_id] = {};
     classifMap[c.processo_id][c.campo_id] = c.valor;
   }
-  const processosComClassif = rows.map(r => ({ ...r, classif_valores: classifMap[r.id] || {} }));
+  // S-27: o júnior só marca urgência (e edita) onde tem tarefa; a tela usa isso para não oferecer o botão.
+  const editaveis = await idsProcessosEditaveis(req, ids);
+  const processosComClassif = rows.map(r => ({
+    ...r, classif_valores: classifMap[r.id] || {}, pode_editar: editaveis ? editaveis.has(r.id) : true,
+  }));
 
   res.json({ ok: true, processos: processosComClassif, total: Number(total), page, limite: limiteSeguro });
 });
@@ -197,7 +227,7 @@ function construirFiltrosExportar(query, user) {
     // (salva via /api/processos/etapas-custom), que não tem entrada em ETAPA_WHERE.
     // Só empurra o parâmetro quando o fallback de fato o usa, senão o bind do
     // Postgres quebra por parâmetro sobrando sem placeholder correspondente.
-    if (ETAPA_WHERE[etapa]) {
+    if (daTabela(ETAPA_WHERE, etapa)) {
       condicoes.push(`AND ${ETAPA_WHERE[etapa]}`);
     } else {
       params.push(etapa);
@@ -209,10 +239,10 @@ function construirFiltrosExportar(query, user) {
   const tempoNum = Number(tempo_parado_min);
   if (tempo_parado_min && !isNaN(tempoNum)) {
     params.push(tempoNum);
-    condicoes.push(`AND EXTRACT(DAY FROM NOW() - (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id)) >= $${params.length}`);
+    condicoes.push(`AND EXTRACT(DAY FROM NOW() - ${ULT_ATUALIZACAO}) >= $${params.length}`);
   }
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
-  if (periodo && FILTROS_PERIODO[periodo]) condicoes.push(FILTROS_PERIODO[periodo]);
+  if (daTabela(FILTROS_PERIODO, periodo)) condicoes.push(FILTROS_PERIODO[periodo]);
   if (movimentacao_pendente === 'true') condicoes.push(`AND p.requer_revisao = true`);
   if (cessao === 'true') condicoes.push(`AND EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id)`);
   if (busca) {
@@ -221,12 +251,7 @@ function construirFiltrosExportar(query, user) {
     params.push(t2); const iNome2  = params.length;
     params.push(t2); const iPAtiv2 = params.length;
     params.push(t2); const iPPass2 = params.length;
-    let cpfCond2 = '';
-    const soDigitos2 = busca.replace(/\D/g, '');
-    if (soDigitos2.length >= 6) {
-      params.push(`%${soDigitos2}%`);
-      cpfCond2 = ` OR REGEXP_REPLACE(c.cpf,'[^0-9]','','g') ILIKE $${params.length}`;
-    }
+    const cpfCond2 = condicaoBuscaCpf({ user }, busca.replace(/\D/g, ''), params);
     condicoes.push(`AND (p.numero ILIKE $${iNum2} OR c.nome ILIKE $${iNome2} OR p.polo_ativo ILIKE $${iPAtiv2} OR p.polo_passivo ILIKE $${iPPass2}${cpfCond2})`);
   }
 
@@ -246,7 +271,7 @@ processosRouter.get('/exportar', async (req, res) => {
   const rows = await db.query(
     `SELECT p.numero, c.nome AS cliente_nome, p.situacao_atual, p.vara,
             EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id) AS tem_cessao,
-            (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) AS ultima_movimentacao
+            ${ULT_ATUALIZACAO} AS ultima_movimentacao
      FROM processos p
      LEFT JOIN clientes c ON c.id = p.cliente_id
      WHERE ${condicoes.filter(Boolean).join(' ')}
@@ -264,12 +289,14 @@ processosRouter.get('/exportar', async (req, res) => {
 // GET /api/processos/exportar-excel — lista filtrada em CSV (abre no Excel)
 processosRouter.get('/exportar-excel', async (req, res) => {
   const { condicoes, params } = construirFiltrosExportar(req.query, req.user);
+  // S-27: o CSV do júnior sai sem a coluna CPF (a coluna some, não fica em branco).
+  const comCpf = ehMaster(req);
 
   const rows = await db.query(
-    `SELECT p.numero, c.nome AS cliente_nome, c.cpf AS cliente_cpf, p.situacao_atual, p.tribunal, p.vara,
+    `SELECT p.numero, c.nome AS cliente_nome, ${comCpf ? 'c.cpf AS cliente_cpf,' : ''} p.situacao_atual, p.tribunal, p.vara,
             p.polo_passivo, p.urgente, p.data_distribuicao,
             EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id) AS tem_cessao,
-            (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) AS ultima_movimentacao
+            ${ULT_ATUALIZACAO} AS ultima_movimentacao
      FROM processos p
      LEFT JOIN clientes c ON c.id = p.cliente_id
      WHERE ${condicoes.filter(Boolean).join(' ')}
@@ -278,10 +305,10 @@ processosRouter.get('/exportar-excel', async (req, res) => {
     params
   );
 
-  const colunas = ['Número', 'Cliente', 'CPF', 'Situação', 'Tribunal', 'Vara', 'Polo Passivo', 'Urgente', 'Cessão de Crédito', 'Distribuição', 'Última Movimentação'];
-  const escapar = v => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const colunas = ['Número', 'Cliente', ...(comCpf ? ['CPF'] : []), 'Situação', 'Tribunal', 'Vara', 'Polo Passivo', 'Urgente', 'Cessão de Crédito', 'Distribuição', 'Última Atualização'];
+  const escapar = celulaCsv; // S-25: neutraliza células que começam como fórmula (= + - @)
   const linhas = rows.map(r => [
-    r.numero, r.cliente_nome, r.cliente_cpf, formatarSituacao(r.situacao_atual), r.tribunal, r.vara,
+    r.numero, r.cliente_nome, ...(comCpf ? [r.cliente_cpf] : []), formatarSituacao(r.situacao_atual), r.tribunal, r.vara,
     r.polo_passivo, r.urgente ? 'Sim' : 'Não', r.tem_cessao ? 'Sim' : 'Não',
     r.data_distribuicao ? new Date(r.data_distribuicao).toLocaleDateString('pt-BR') : '',
     r.ultima_movimentacao ? new Date(r.ultima_movimentacao).toLocaleDateString('pt-BR') : '',
@@ -375,8 +402,7 @@ processosRouter.post('/etapas-custom', async (req, res) => {
     }
     res.json({ ok: true, opcoes });
   } catch (err) {
-    console.error('[etapas-custom POST]', err.message);
-    res.status(500).json({ ok: false, erro: err.message });
+    erroInterno(res, err);
   }
 });
 
@@ -395,9 +421,7 @@ processosRouter.get('/:id', async (req, res) => {
 
   if (!p) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
 
-  if (p.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
-    return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
-  }
+  if (!usuarioVeVisibilidade(req.user, p.visibilidade)) return processoNaoEncontrado(res);
 
   const [cessoes, tesesCliente] = await Promise.all([
     db.query(
@@ -421,9 +445,12 @@ processosRouter.get('/:id', async (req, res) => {
       : Promise.resolve([]),
   ]);
 
+  // S-27: a ficha diz se o usuário pode editar (Master sempre; júnior só com tarefa no processo).
+  const podeEditar = ehMaster(req) || await temTarefaNoProcesso(req.user?.id, req.params.id);
+
   res.json({
     ok: true,
-    processo: { ...p, tem_cessao: cessoes.length > 0, acesso_tribunal: obterAcessoTribunal(p) },
+    processo: { ...p, tem_cessao: cessoes.length > 0, pode_editar: podeEditar, acesso_tribunal: obterAcessoTribunal(p) },
     cessoes,
     teses_cliente: tesesCliente,
   });
@@ -438,8 +465,8 @@ processosRouter.post('/:id/cessao', apenasMaster, async (req, res) => {
     return res.status(400).json({ ok: false, erro: 'Nome do cessionário é obrigatório.' });
   }
 
-  const proc = await db.queryOne(`SELECT id, numero FROM processos WHERE id = $1`, [req.params.id]);
-  if (!proc) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  const proc = await db.queryOne(`SELECT id, numero, visibilidade FROM processos WHERE id = $1`, [req.params.id]);
+  if (!proc || !usuarioVeVisibilidade(req.user, proc.visibilidade)) return processoNaoEncontrado(res);
 
   const [cessao] = await db.query(
     `INSERT INTO cessoes_credito
@@ -473,6 +500,7 @@ processosRouter.post('/:id/cessao', apenasMaster, async (req, res) => {
 
 // DELETE /api/processos/:id/cessao/:cessaoId — remove registro de cessão
 processosRouter.delete('/:id/cessao/:cessaoId', apenasMaster, async (req, res) => {
+  if (await podeVerProcesso(req.user, req.params.id) !== true) return processoNaoEncontrado(res);
   const cessao = await db.queryOne(
     `SELECT * FROM cessoes_credito WHERE id = $1 AND processo_id = $2`,
     [req.params.cessaoId, req.params.id]
@@ -564,11 +592,10 @@ processosRouter.post('/', async (req, res) => {
 // PATCH /api/processos/:id
 processosRouter.patch('/:id', async (req, res) => {
   const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, visibilidade, tribunal, grau FROM processos WHERE id = $1', [req.params.id]);
-  if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  if (!dono || !usuarioVeVisibilidade(req.user, dono.visibilidade)) return processoNaoEncontrado(res);
 
-  if (dono.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
-    return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
-  }
+  // S-27 (IDOR de 11/07): júnior só edita processo em que tem tarefa, e sem valor da causa/RPV/status.
+  if (!(await liberarEdicaoDoJunior(req, res, req.params.id))) return;
 
   const campos      = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas', 'periodo_inicio', 'periodo_fim', 'classificacao'];
   const camposData  = new Set(['periodo_inicio', 'periodo_fim']);
@@ -596,6 +623,9 @@ processosRouter.patch('/:id', async (req, res) => {
 
   // Visibilidade: só Master 01 pode marcar restrito
   if (req.body.visibilidade !== undefined) {
+    if (!['normal', 'restrito'].includes(req.body.visibilidade)) {
+      return res.status(400).json({ ok: false, erro: 'visibilidade deve ser normal ou restrito.' });
+    }
     if (req.body.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
       return res.status(403).json({ ok: false, erro: 'Apenas Master 01 pode marcar processos como restritos.' });
     }
@@ -605,6 +635,13 @@ processosRouter.patch('/:id', async (req, res) => {
 
   if (updates.length === 0) return res.status(400).json({ ok: false, erro: 'Nenhum campo para atualizar.' });
 
+  // S-13: retrato dos campos que vão mudar, para o log trazer só o antes e o depois deles. Os nomes
+  // das colunas saem dos próprios `updates` montados acima (literais do código, nada do cliente), e
+  // os valores são os de fato gravados (ex.: o id extraído de `pje_id_processo`).
+  const gravados = Object.fromEntries(updates.map(u => { const [campo, marca] = u.split(' = $'); return [campo, params[Number(marca) - 1]]; }));
+  const camposGravados = Object.keys(gravados);
+  const antes = await db.queryOne(`SELECT ${camposGravados.join(', ')} FROM processos WHERE id = $1`, [req.params.id]);
+
   params.push(req.params.id);
   updates.push(`atualizado_em = NOW()`);
 
@@ -612,6 +649,15 @@ processosRouter.patch('/:id', async (req, res) => {
     `UPDATE processos SET ${updates.join(', ')} WHERE id = $${params.length}`,
     params
   );
+
+  // `notas` é texto livre: o log só marca que mudou. O resto entra com antes e depois.
+  const mudancas = diferenca(antes, gravados, camposGravados, { ocultar: ['notas'] });
+  if (mudancas.mudou) {
+    await registrarAuditoria({
+      usuarioId: req.user.id, acao: 'editar', entidade: 'processo', entidadeId: req.params.id,
+      valorAntes: mudancas.antes, valorDepois: mudancas.depois, ip: req._ip,
+    });
+  }
 
   res.json({ ok: true });
 });
@@ -627,9 +673,14 @@ processosRouter.post('/sync-todos', apenasMaster, async (req, res) => {
 
   if (forcar) {
     try {
+      // R-06: "forçar" só tira um lock PARADO (sem batimento). Apagar o de uma execução viva deixava
+      // dois syncs rodando ao mesmo tempo; com o lock vivo, o job enfileirado abaixo espera ou é ignorado.
       const { redis } = await import('../cache/redis.js');
-      await redis.del('sync:global:lock');
-      console.log('[Sync] Lock removido por solicitação manual (force=true)');
+      const { liberarLockSeInativo } = await import('../services/tribunal/syncLock.js');
+      const liberou = await liberarLockSeInativo(redis);
+      console.log(liberou
+        ? '[Sync] Lock parado removido por solicitação manual (force=true)'
+        : '[Sync] force=true: não há lock parado (nada removido)');
     } catch { /* Redis indisponível */ }
   }
 
@@ -660,14 +711,14 @@ processosRouter.post('/sync-todos', apenasMaster, async (req, res) => {
     const fail = resultado.filter(r => !r.ok).length;
     res.json({ ok: true, total: resultado.length, sincronizados: ok, falhas: fail });
   } catch (err) {
-    console.error('[Sync todos]', err.message);
-    res.status(500).json({ ok: false, erro: err.message });
+    erroInterno(res, err);
   }
 });
 
 // POST /api/processos/:id/sync — enfileira sync individual (não bloqueia — Puppeteer leva 60-90s)
 processosRouter.post('/:id/sync', async (req, res) => {
   const { id } = req.params;
+  if (await podeVerProcesso(req.user, id) !== true) return processoNaoEncontrado(res);
   try {
     const { enfileirarSincronizarProcesso } = await import('../workers/index.js');
     await enfileirarSincronizarProcesso(id);
@@ -681,21 +732,30 @@ processosRouter.post('/:id/sync', async (req, res) => {
     const resultado = await sincronizarProcesso(id);
     res.json({ ok: true, ...resultado });
   } catch (err) {
-    console.error('[Sync individual]', err.message);
-    res.status(500).json({ ok: false, erro: err.message });
+    erroInterno(res, err);
   }
 });
 
 // PATCH /api/processos/:id/urgente — marcar/desmarcar urgência
 processosRouter.patch('/:id/urgente', async (req, res) => {
-  const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado FROM processos WHERE id = $1', [req.params.id]);
-  if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, visibilidade FROM processos WHERE id = $1', [req.params.id]);
+  if (!dono || !usuarioVeVisibilidade(req.user, dono.visibilidade)) return processoNaoEncontrado(res);
+
+  // S-27 (IDOR de 11/07): júnior só marca urgência em processo em que tem tarefa atribuída.
+  if (!ehMaster(req) && !(await temTarefaNoProcesso(req.user?.id, req.params.id))) {
+    return res.status(403).json({ ok: false, erro: MSG_SO_RESPONSAVEL });
+  }
 
   const { urgente } = req.body;
+  const antes = await db.queryOne('SELECT urgente FROM processos WHERE id = $1', [req.params.id]);
   await db.execute(
     `UPDATE processos SET urgente = $1, classificado_por = $2, classificado_em = NOW(), atualizado_em = NOW() WHERE id = $3`,
     [!!urgente, req.user.id, req.params.id]
   );
+  await registrarAuditoria({
+    usuarioId: req.user.id, acao: 'urgente', entidade: 'processo', entidadeId: req.params.id,
+    valorAntes: { urgente: !!antes?.urgente }, valorDepois: { urgente: !!urgente }, ip: req._ip,
+  });
   res.json({ ok: true });
 });
 
@@ -709,10 +769,10 @@ processosRouter.patch('/:id/situacao', async (req, res, next) => {
      FROM processos WHERE id = $1`,
     [req.params.id]
   );
-  if (!dono) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
-  if (dono.visibilidade === 'restrito' && !req.user.pode_marcar_restrito) {
-    return res.status(403).json({ ok: false, erro: 'Processo restrito.' });
-  }
+  if (!dono || !usuarioVeVisibilidade(req.user, dono.visibilidade)) return processoNaoEncontrado(res);
+
+  // S-27: a classificação segue aberta ao júnior, mas sem o valor homologado e com urgência só nos processos dele.
+  if (!(await liberarClassificacaoDoJunior(req, res, req.params.id))) return;
 
   const campos  = ['situacao_atual','etapa_atual','localizacao_processual','tipo_requisicao',
                    'status_rpv','status_precatorio','status_alvara','valor_homologado','urgente',
@@ -892,13 +952,23 @@ processosRouter.patch('/:id/situacao', async (req, res, next) => {
  } catch (err) { next(err); }
 });
 
-// POST /api/processos/:id/classificar — classifica com Claude
-processosRouter.post('/:id/classificar', async (req, res) => {
+// R-07: relê tipo e status da requisição logo antes de gravar (a chamada da IA demora) e deixa a IA só
+// avançar o que já existe, nunca rebaixar nem sobrescrever o que foi definido à mão.
+async function requisicaoPreservandoManual(processoId, resultado) {
+  const atual = await db.queryOne(
+    `SELECT tipo_requisicao, status_rpv, status_precatorio, status_alvara FROM processos WHERE id = $1`,
+    [processoId]
+  );
+  return preservarRequisicaoManual(atual, resultado);
+}
+
+// POST /api/processos/:id/classificar — classifica com Claude (chamada paga: só Master)
+processosRouter.post('/:id/classificar', apenasMaster, limiteClassificar, async (req, res) => {
   const processo = await db.queryOne(
     `SELECT p.*, pr.nome AS produto_nome FROM processos p LEFT JOIN produtos pr ON pr.id = p.produto_id WHERE p.id = $1`,
     [req.params.id]
   );
-  if (!processo) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  if (!processo || !usuarioVeVisibilidade(req.user, processo.visibilidade)) return processoNaoEncontrado(res);
 
   const movimentacoes = await db.query(
     `SELECT texto, data_movimentacao FROM movimentacoes WHERE processo_id = $1 ORDER BY data_movimentacao DESC LIMIT 15`,
@@ -911,6 +981,12 @@ processosRouter.post('/:id/classificar', async (req, res) => {
     produto: processo.produto_nome, movimentacoes,
     situacao_atual: processo.situacao_atual,
   });
+
+  // Resposta ilegível da IA: não grava nada (antes, o fallback gravava 'nao_iniciado'/'a_definir' por cima do manual)
+  if (!resultado) {
+    return res.status(502).json({ ok: false, erro: 'A IA não devolveu uma classificação utilizável. Nada foi alterado no processo.' });
+  }
+  const requisicao = await requisicaoPreservandoManual(req.params.id, resultado);
 
   const situacaoMudou = resultado.situacao_atual && resultado.situacao_atual !== processo.situacao_atual;
 
@@ -931,8 +1007,8 @@ processosRouter.post('/:id/classificar', async (req, res) => {
      WHERE id = $10`,
     [
       resultado.situacao_atual, resultado.etapa_atual, resultado.localizacao_processual,
-      resultado.tipo_requisicao, resultado.status_rpv, resultado.status_precatorio,
-      resultado.status_alvara, resultado.confianca === 'BAIXA',
+      requisicao.tipo_requisicao, requisicao.status_rpv, requisicao.status_precatorio,
+      requisicao.status_alvara, resultado.confianca === 'BAIXA',
       situacaoMudou, req.params.id,
     ]
   );
@@ -981,7 +1057,7 @@ processosRouter.post('/completar-polos/reset', apenasMaster, async (req, res) =>
     await redis.del('polos:progress');
     res.json({ ok: true, mensagem: 'Flag de polos resetado.' });
   } catch (err) {
-    res.status(500).json({ ok: false, erro: err.message });
+    erroInterno(res, err);
   }
 });
 
@@ -1101,6 +1177,9 @@ processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
               situacao_atual: proc.situacao_atual,
             });
 
+            if (!resultado) throw new Error('A IA não devolveu uma classificação utilizável.');
+            const requisicao = await requisicaoPreservandoManual(proc.id, resultado);
+
             const mudou = resultado.situacao_atual && resultado.situacao_atual !== proc.situacao_atual;
 
             await db.execute(
@@ -1120,8 +1199,8 @@ processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
                WHERE id = $10`,
               [
                 resultado.situacao_atual, resultado.etapa_atual, resultado.localizacao_processual,
-                resultado.tipo_requisicao, resultado.status_rpv, resultado.status_precatorio,
-                resultado.status_alvara, resultado.confianca === 'BAIXA', mudou, proc.id,
+                requisicao.tipo_requisicao, requisicao.status_rpv, requisicao.status_precatorio,
+                requisicao.status_alvara, resultado.confianca === 'BAIXA', mudou, proc.id,
               ]
             );
 
@@ -1162,7 +1241,7 @@ processosRouter.post('/classificar-lote', apenasMaster, async (req, res) => {
 // DELETE /api/processos/:id — apenas Master
 processosRouter.delete('/:id', apenasMaster, async (req, res) => {
   const antes = await db.queryOne('SELECT * FROM processos WHERE id = $1', [req.params.id]);
-  if (!antes) return res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
+  if (!antes || !usuarioVeVisibilidade(req.user, antes.visibilidade)) return processoNaoEncontrado(res);
 
   const pid = req.params.id;
   try {
@@ -1177,8 +1256,7 @@ processosRouter.delete('/:id', apenasMaster, async (req, res) => {
     await db.execute('UPDATE tarefas SET processo_id = NULL WHERE processo_id = $1', [pid]).catch(e => console.error('[DEL] tarefas:', e.message));
     await db.execute('DELETE FROM processos WHERE id = $1', [pid]);
   } catch(e) {
-    console.error('[DEL] ERRO FINAL:', e.message);
-    return res.status(500).json({ ok: false, erro: e.message });
+    return erroInterno(res, e);
   }
 
   await registrarAuditoria({

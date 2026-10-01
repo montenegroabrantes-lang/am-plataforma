@@ -9,6 +9,8 @@ import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { autenticar } from '../middleware/auth.js';
+import { urlHttpsOuNulo } from '../utils/validacao.js';
+import { somenteBearer } from '../middleware/somenteBearer.js';
 
 export const mcpRouter = Router();
 
@@ -56,6 +58,11 @@ const qs = o => {
   const s = p.toString();
   return s ? `?${s}` : '';
 };
+
+// S-23: links gravados no acervo só https:// (a rota do acervo também confere e devolve 422).
+// Nos campos opcionais, texto vazio segue valendo como "sem link".
+const urlHttpsObrigatoria = z.string().url().refine(v => urlHttpsOuNulo(v) !== null, { message: 'Use um endereço que comece com https://' });
+const urlHttpsOpcional = z.string().refine(v => v.trim() === '' || urlHttpsOuNulo(v) !== null, { message: 'Use um endereço que comece com https://' }).optional();
 
 const ENTES = ['municipio-joao-pessoa','estado-paraiba','municipio-outro-pb','estado-pernambuco','estado-espirito-santo','uniao','inss','alpb','particular','outro'];
 const INSTANCIAS = ['1grau','2grau','turma-recursal','stj','stf','tre-pb','tse','administrativo'];
@@ -105,7 +112,7 @@ function construirServidor(token) {
       relator: z.string().optional(),
       data_protocolo: z.string().optional().describe('AAAA-MM-DD'),
       drive_file_id: z.string().optional(),
-      drive_url: z.string().optional(),
+      drive_url: urlHttpsOpcional,
       resultado: z.enum(RESULTADOS).optional(),
       resumo: z.string().optional(),
       modelo_aprovado: z.boolean().optional(),
@@ -140,9 +147,9 @@ function construirServidor(token) {
       ente: z.enum(ENTES).optional(),
       ementa: z.string().optional(),
       vinculante: z.boolean().optional(),
-      fonte_primaria_url: z.string().optional(),
+      fonte_primaria_url: urlHttpsOpcional,
       drive_file_id: z.string().optional(),
-      drive_url: z.string().optional(),
+      drive_url: urlHttpsOpcional,
     },
   }, async a => saida(await chamar('POST', '/acervo/precedentes', token, a)));
 
@@ -151,7 +158,7 @@ function construirServidor(token) {
     description: 'Marca um precedente como conferido, exigindo a URL da fonte primária. Só use depois de ter lido a ementa na fonte.',
     inputSchema: {
       id: z.string().uuid(),
-      fonte_primaria_url: z.string(),
+      fonte_primaria_url: urlHttpsObrigatoria,
     },
   }, async ({ id, fonte_primaria_url }) => saida(await chamar('PATCH', `/acervo/precedentes/${id}/conferir`, token, { fonte_primaria_url })));
 
@@ -214,8 +221,9 @@ function construirServidor(token) {
   return s;
 }
 
-mcpRouter.post('/', autenticar, async (req, res) => {
-  const token = req.cookies?.am_token || req.headers.authorization?.replace('Bearer ', '');
+// (S-01) /mcp é isento da checagem de Origin: só aceita Bearer, nunca o cookie de sessão.
+mcpRouter.post('/', somenteBearer, autenticar, async (req, res) => {
+  const token = req.headers.authorization.replace('Bearer ', '');
   const servidor = construirServidor(token);
   const transporte = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on('close', () => { transporte.close(); servidor.close(); });

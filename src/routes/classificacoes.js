@@ -1,8 +1,12 @@
 import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
+import { podeVerProcesso } from '../utils/visibilidade.js';
 
 export const classificacoesRouter = Router();
+
+// S-21: processo restrito (ou inexistente / id malformado) responde 404 a quem não pode vê-lo
+const processoNaoEncontrado = (res) => res.status(404).json({ ok: false, erro: 'Processo não encontrado.' });
 
 // GET /api/classif — retorna todos os campos com suas opções
 classificacoesRouter.get('/', async (req, res) => {
@@ -48,6 +52,7 @@ classificacoesRouter.post('/campos/:id/opcoes', async (req, res) => {
 classificacoesRouter.patch('/processo/:processoId', async (req, res) => {
   const { campo_id, valor } = req.body;
   if (!campo_id) return res.status(400).json({ ok: false, erro: 'campo_id é obrigatório.' });
+  if (await podeVerProcesso(req.user, req.params.processoId) !== true) return processoNaoEncontrado(res);
   await db.execute(
     `INSERT INTO processo_classif (processo_id, campo_id, valor)
      VALUES ($1, $2, $3)
@@ -59,6 +64,7 @@ classificacoesRouter.patch('/processo/:processoId', async (req, res) => {
 
 // GET /api/classif/processo/:processoId — retorna valores do processo
 classificacoesRouter.get('/processo/:processoId', async (req, res) => {
+  if (await podeVerProcesso(req.user, req.params.processoId) !== true) return processoNaoEncontrado(res);
   const rows = await db.query(
     `SELECT campo_id, valor FROM processo_classif WHERE processo_id = $1`,
     [req.params.processoId]

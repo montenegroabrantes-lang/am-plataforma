@@ -8,10 +8,14 @@ import { db }  from './index.js';
 import fs      from 'fs';
 import path    from 'path';
 import { fileURLToPath } from 'url';
+import { confirmacaoEmProducaoOk } from '../utils/travaProducao.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function seed() {
+  // S-06: em produção só roda com --confirmo.
+  if (!confirmacaoEmProducaoOk()) process.exit(1);
+
   const nome  = process.env.MASTER_NOME  || 'Ramona';
   const email = process.env.MASTER_EMAIL;
   const senha = process.env.MASTER_SENHA;

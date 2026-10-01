@@ -5,6 +5,7 @@ import { Router } from 'express';
 import { db }     from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { paginacaoSegura } from '../utils/validacao.js';
+import { fontePush } from '../services/pushTJ/fonte.js';
 
 export const pushTJRouter = Router();
 
@@ -32,7 +33,8 @@ pushTJRouter.get('/saude', async (req, res) => {
 
   // Configurado e sem e-mail há mais de 48h úteis é suspeito: ou o tribunal
   // parou de enviar, ou a regra da caixa mudou, ou a credencial expirou.
-  const configurado = Boolean(process.env.OUTLOOK_REFRESH_TOKEN);
+  const fonte = fontePush();
+  const configurado = Boolean(fonte);
   const alerta = !configurado ? 'nao_configurado'
                : ultima?.erro   ? 'erro_na_ultima_execucao'
                : horasSemEmail !== null && horasSemEmail > 48 ? 'silencioso'
@@ -42,6 +44,7 @@ pushTJRouter.get('/saude', async (req, res) => {
   res.json({
     ok: true,
     configurado,
+    fonte,
     alerta,
     ultima_execucao: ultima || null,
     ultimo_email: agregado?.ultimo_email || null,

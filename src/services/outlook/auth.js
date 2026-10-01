@@ -17,11 +17,11 @@ export const ESCOPOS = 'offline_access Mail.Read';
 
 let cache = { token: null, expiraEm: 0 };
 
-export function outlookConfigurado() {
+export function outlookConfigurado(env = process.env) {
   return Boolean(
-    process.env.OUTLOOK_CLIENT_ID &&
-    process.env.OUTLOOK_CLIENT_SECRET &&
-    process.env.OUTLOOK_REFRESH_TOKEN
+    env.OUTLOOK_CLIENT_ID &&
+    env.OUTLOOK_CLIENT_SECRET &&
+    env.OUTLOOK_REFRESH_TOKEN
   );
 }
 

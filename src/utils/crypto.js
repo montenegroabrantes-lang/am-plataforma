@@ -1,7 +1,10 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
 
 // AES-256-GCM (autenticado) — protege contra padding oracle e adulteração silenciosa.
-// Formato novo: "gcm:<iv_hex>:<authTag_hex>:<ciphertext_hex>"
+// Formato atual de escrita: "gcm:<iv_hex>:<authTag_hex>:<ciphertext_hex>"
+// Formato versionado (S-10, só LEITURA por enquanto): "gcm:v1:<iv_hex>:<authTag_hex>:<ciphertext_hex>" — prepara a
+// rotação de chave. A ESCRITA continua em "gcm:" de propósito: só depois que esta leitura estiver em produção
+// o encrypt passa a gravar "gcm:v1:" (senão, revertido este deploy, o que foi gravado ficaria ilegível).
 // Formato legado (CBC): "<iv_hex>:<ciphertext_hex>" — ainda lido para não invalidar credenciais existentes.
 const GCM_ALGO = 'aes-256-gcm';
 const CBC_ALGO = 'aes-256-cbc';
@@ -22,12 +25,16 @@ export function encrypt(texto) {
   return `gcm:${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted.toString('hex')}`;
 }
 
+let avisouCbc = false;
+
 export function decrypt(blob) {
   if (typeof blob !== 'string') throw new Error('decrypt: blob inválido');
 
-  // Formato novo: gcm:iv:authTag:ciphertext
+  // Formatos GCM: gcm:iv:authTag:ciphertext (atual) e gcm:v1:iv:authTag:ciphertext (versionado, mesma chave).
+  // "v1" não é hexadecimal, então nunca se confunde com o iv do formato atual.
   if (blob.startsWith('gcm:')) {
-    const [, ivHex, tagHex, encHex] = blob.split(':');
+    const partes = blob.split(':');
+    const [ivHex, tagHex, encHex] = partes[1] === 'v1' ? partes.slice(2) : partes.slice(1);
     const decipher = createDecipheriv(GCM_ALGO, key(), Buffer.from(ivHex, 'hex'));
     decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
     const dec = Buffer.concat([decipher.update(Buffer.from(encHex, 'hex')), decipher.final()]);
@@ -35,6 +42,11 @@ export function decrypt(blob) {
   }
 
   // Formato legado CBC: iv:ciphertext — só leitura; tudo que é re-salvo vira GCM.
+  // Avisa uma vez por processo, para dar para ver no log se ainda sobrou dado nesse formato.
+  if (!avisouCbc) {
+    avisouCbc = true;
+    console.warn('[crypto] Lido um valor no formato legado CBC (só leitura). Regrave-o para migrar para GCM.');
+  }
   const [ivHex, encHex] = blob.split(':');
   const decipher = createDecipheriv(CBC_ALGO, key(), Buffer.from(ivHex, 'hex'));
   const dec = Buffer.concat([decipher.update(Buffer.from(encHex, 'hex')), decipher.final()]);

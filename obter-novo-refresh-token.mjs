@@ -1,4 +1,11 @@
-// Script de uso único: reautoriza a conta Google do Drive e gera um novo GOOGLE_REFRESH_TOKEN.
+// Script de uso único: reautoriza a conta Google (Drive e Agenda) e gera um novo GOOGLE_REFRESH_TOKEN.
+//
+// O mesmo token serve o Drive (pastas de cliente, backup) e o Calendar (prazos e audiências), por
+// isso o script pede os DOIS escopos (lista em src/services/google/escopos.js; o Sheets não é
+// usado e não é pedido). Até 30/09/2026 pedia só `drive` e o Calendar ficava sem permissão.
+// Na tela de consentimento do Google, NÃO desmarque nenhuma das permissões — o script confere
+// no fim se as duas vieram e avisa se faltar. Depois de trocar a variável no Railway, o teste
+// diário do token (verificar-token-google) passa a acusar se algo ainda estiver errado.
 //
 // Como usar:
 //   1. node obter-novo-refresh-token.mjs
@@ -16,6 +23,7 @@
 import 'dotenv/config';
 import http from 'node:http';
 import { google } from 'googleapis';
+import { ESCOPOS_GOOGLE, escoposFaltando } from './src/services/google/escopos.js';
 
 const PORT = 8765;
 const REDIRECT_URI = `http://localhost:${PORT}/callback`;
@@ -29,7 +37,7 @@ const oauth2Client = new google.auth.OAuth2(
 const authUrl = oauth2Client.generateAuthUrl({
   access_type: 'offline',
   prompt: 'consent', // força o Google a emitir um refresh_token novo, mesmo se já tiver autorizado antes
-  scope: ['https://www.googleapis.com/auth/drive'],
+  scope: ESCOPOS_GOOGLE,
 });
 
 console.log('\nAbra esta URL no navegador e autorize com a conta Google certa:\n');
@@ -60,6 +68,11 @@ const server = http.createServer(async (req, res) => {
       console.warn('\nO Google não devolveu um refresh_token novo (isso acontece se a conta já tinha uma sessão de consentimento muito recente). Revogue o acesso do app em https://myaccount.google.com/permissions e rode o script de novo.');
     } else {
       console.log('\nCopie o valor acima e atualize GOOGLE_REFRESH_TOKEN no Railway.');
+    }
+    // A tela de consentimento deixa desmarcar permissões: confere o que o token realmente tem.
+    const faltando = tokens.scope ? escoposFaltando(String(tokens.scope).split(/\s+/)) : [];
+    if (faltando.length) {
+      console.warn('\nATENÇÃO: este token NÃO tem todas as permissões. Faltam: ' + faltando.join(', ') + '\nRefaça a autorização sem desmarcar nada (revogue o acesso em https://myaccount.google.com/permissions se preciso).');
     }
   } catch (e) {
     console.error('\nFalha ao trocar o código pelo token:', e.message);

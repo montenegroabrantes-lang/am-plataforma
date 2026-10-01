@@ -156,23 +156,39 @@ function parseSessaoVirtual(texto) {
   return { data: prazo, tipo: 'Sustentação Oral' };
 }
 
+const PADRAO_EXTENSO_COM_HORA = /(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})\s*,?\s*[àa]s?\s+(\d{1,2})h(\d{2})?/gi;
+
+// A palavra "audiência" ou "sessão" precisa aparecer junto da data: até 120 caracteres antes
+// ("designada audiência para o dia ...") ou, na mesma frase, até 60 depois
+// ("..., às 14h, será realizada a audiência").
+function contextoDeAudiencia(texto, m) {
+  const fim = m.index + m[0].length;
+  const antes = texto.slice(Math.max(0, m.index - 120), m.index);
+  const depois = texto.slice(fim, fim + 60).split(/\.\s/)[0];
+  return /audi[eê]ncia|sess[aã]o/i.test(antes + ' ' + depois);
+}
+
 function parseDataHoraAudiencia(texto) {
   // "audiência para o dia 20/08/2026 às 14h30"
   const padroes = [
     /audi[eê]ncia[^.]*?(\d{1,2}\/\d{1,2}\/\d{2,4})[^.]*?(?:[àa]s?\s*(\d{1,2})h(\d{2})?)?/i,
     /designou[^.]*?(\d{1,2}\/\d{1,2}\/\d{2,4})[^.]*?(?:[àa]s?\s*(\d{1,2})h(\d{2})?)?/i,
-    /(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})\s*,?\s*[àa]s?\s+(\d{1,2})h(\d{2})?/i,
   ];
 
   for (const p of padroes) {
     const m = texto.match(p);
     if (!m) continue;
-    if (m[1] && m[1].includes('/')) {
-      const base = parseDateBR(m[1]);
-      if (!base) continue;
-      if (m[2]) { base.setHours(parseInt(m[2]), m[3] ? parseInt(m[3]) : 0, 0); }
-      return { data: base, tipo: 'Audiência', prazo_dias: null, uteis: false };
-    }
+    const base = parseDateBR(m[1]);
+    if (!base) continue;
+    if (m[2]) { base.setHours(parseInt(m[2]), m[3] ? parseInt(m[3]) : 0, 0); }
+    return { data: base, tipo: 'Audiência', prazo_dias: null, uteis: false };
+  }
+
+  // R-22: data por extenso com hora ("10 de dezembro de 2026, às 14h") casa também com a data
+  // de uma decisão ou de um despacho. Só vale como audiência/sessão quando o próprio texto diz
+  // isso perto da data; senão o prazo cai nas regras de "até DD/MM/AAAA" e "prazo de N dias".
+  for (const m of texto.matchAll(PADRAO_EXTENSO_COM_HORA)) {
+    if (!contextoDeAudiencia(texto, m)) continue;
     const d = parseDateExtenso(m[0]);
     if (d) return { data: d, tipo: 'Audiência', prazo_dias: null, uteis: false };
   }
@@ -224,11 +240,13 @@ function extrairDiasPrazo(texto) {
 function detectarTipoAto(texto) {
   const t = texto.toLowerCase();
   if (/audi[eê]ncia/.test(t))                        return 'Audiência';
+  // R-22: contrarrazões antes de contestação, embargos, apelação e recurso — o texto
+  // "contrarrazões ao recurso de apelação" citaria os três e viraria "Recurso".
+  if (/contrarraz[oõ]es/.test(t))                    return 'Prazo — Contrarrazões';
   if (/contesta[cç][aã]o/.test(t))                   return 'Prazo — Contestação';
   if (/embargos\s+de\s+declara[cç][aã]o/.test(t))   return 'Prazo — Embargos de Declaração';
   if (/apela[cç][aã]o/.test(t))                      return 'Prazo — Apelação';
   if (/recurso/.test(t))                             return 'Prazo — Recurso';
-  if (/contrarraz[oõ]es/.test(t))                    return 'Prazo — Contrarrazões';
   if (/impugna[cç][aã]o/.test(t))                    return 'Prazo — Impugnação';
   if (/manifesta[cç][aã]o/.test(t))                  return 'Prazo — Manifestação';
   if (/pagamento/.test(t))                           return 'Prazo — Pagamento';
@@ -242,6 +260,8 @@ function detectarTipoAto(texto) {
 /**
  * Extrai prazo/data de um texto de publicação.
  * Retorna { dataEvento, titulo, descricao } ou null se não encontrar data.
+ * Quando a data é incerta, vem também { conferir: true, motivoConferir } e o título termina
+ * em "(conferir data)".
  */
 export function extrairPrazoPublicacao(texto, dataDisponibilizacao, processo) {
   if (!texto) return null;
@@ -268,40 +288,67 @@ export function extrairPrazoPublicacao(texto, dataDisponibilizacao, processo) {
     };
   }
 
-  // 2. Tenta data explícita ("até DD/MM/YYYY")
+  // 2. Data explícita ("até DD/MM/YYYY") e/ou "prazo de N dias" calculado a partir da data de disponibilização
   const explicita = parseDataExplicita(texto);
+  const prazoDias = extrairDiasPrazo(texto);
+  const dataPorDias = prazoDias ? calcularDataPorDias(prazoDias, dataDisponibilizacao) : null;
+  const sufixoTitulo = processo?.numero ? ` — ${processo.numero}` : '';
+
+  // R-22: com os dois no mesmo texto, a data explícita não tem mais precedência — ela pode ser
+  // posterior ao prazo real (ex.: "prazo de 5 dias ... diferenças devidas até 31/12"). Vale a
+  // MENOR das duas e o prazo sai marcado "conferir" para o advogado olhar no PJe.
+  if (explicita && dataPorDias && chaveDia(explicita.data) !== chaveDia(dataPorDias)) {
+    const explicitaMenor = explicita.data < dataPorDias;
+    const dataEvento = explicitaMenor ? explicita.data : dataPorDias;
+    const motivoConferir = `o texto traz prazo de ${prazoDias.dias} dias${prazoDias.uteis ? ' úteis' : ''} (${dataPorDias.toLocaleDateString('pt-BR')}) `
+      + `e data explícita (${explicita.data.toLocaleDateString('pt-BR')}); foi usada a menor`;
+    return {
+      dataEvento,
+      titulo: `${tipo}${sufixoTitulo} (conferir data)`,
+      descricao: montarDescricao(tipo, dataEvento, explicitaMenor ? null : prazoDias.dias, explicitaMenor ? false : prazoDias.uteis, processo, texto, motivoConferir),
+      conferir: true,
+      motivoConferir,
+    };
+  }
+
   if (explicita) {
     return {
       dataEvento: explicita.data,
-      titulo: `${tipo}${processo?.numero ? ` — ${processo.numero}` : ''}`,
+      titulo: `${tipo}${sufixoTitulo}`,
       descricao: montarDescricao(tipo, explicita.data, null, false, processo, texto),
     };
   }
 
-  // 3. Tenta extrair número de dias e calcular a partir da data de disponibilização
-  const prazoDias = extrairDiasPrazo(texto);
-  if (prazoDias) {
-    // CPC art. 224 — exclui o dia da publicação/disponibilização; a contagem começa
-    // no primeiro dia útil seguinte.
-    let base = normalizarDataCivil(dataDisponibilizacao);
-    base.setHours(8, 0, 0, 0);
-    base.setDate(base.getDate() + 1);
-    base = proximoDiaUtil(base);
-    const dataEvento = prazoDias.uteis
-      ? adicionarDiasUteis(base, prazoDias.dias)
-      : adicionarDias(base, prazoDias.dias);
-
+  if (dataPorDias) {
     return {
-      dataEvento,
-      titulo: `${tipo}${processo?.numero ? ` — ${processo.numero}` : ''}`,
-      descricao: montarDescricao(tipo, dataEvento, prazoDias.dias, prazoDias.uteis, processo, texto),
+      dataEvento: dataPorDias,
+      titulo: `${tipo}${sufixoTitulo}`,
+      descricao: montarDescricao(tipo, dataPorDias, prazoDias.dias, prazoDias.uteis, processo, texto),
     };
   }
 
   return null;
 }
 
-function montarDescricao(tipo, data, dias, uteis, processo, textoOriginal) {
+// CPC art. 224 — exclui o dia da publicação/disponibilização; a contagem começa no primeiro dia
+// útil seguinte. Devolve null quando a data de disponibilização é inválida.
+function calcularDataPorDias(prazoDias, dataDisponibilizacao) {
+  let base = normalizarDataCivil(dataDisponibilizacao);
+  if (Number.isNaN(base.getTime())) return null;
+  base.setHours(8, 0, 0, 0);
+  base.setDate(base.getDate() + 1);
+  base = proximoDiaUtil(base);
+  return prazoDias.uteis
+    ? adicionarDiasUteis(base, prazoDias.dias)
+    : adicionarDias(base, prazoDias.dias);
+}
+
+// Dia civil como número (AAAAMMDD), para comparar datas sem olhar a hora.
+function chaveDia(data) {
+  return data.getFullYear() * 10000 + (data.getMonth() + 1) * 100 + data.getDate();
+}
+
+function montarDescricao(tipo, data, dias, uteis, processo, textoOriginal, motivoConferir) {
   const linhas = [];
   if (tipo)                linhas.push(`Tipo: ${tipo}`);
   if (processo?.numero)   linhas.push(`Processo: ${processo.numero}`);
@@ -309,6 +356,7 @@ function montarDescricao(tipo, data, dias, uteis, processo, textoOriginal) {
   if (processo?.vara)     linhas.push(`Vara: ${processo.vara}`);
   if (dias)               linhas.push(`Prazo: ${dias} dias${uteis ? ' úteis' : ''}`);
   if (data)               linhas.push(`Vencimento: ${data.toLocaleDateString('pt-BR')}`);
+  if (motivoConferir)     linhas.push(`Conferir no PJe: ${motivoConferir}`);
   if (textoOriginal)      linhas.push(`\nPublicação:\n${textoOriginal.slice(0, 500)}${textoOriginal.length > 500 ? '...' : ''}`);
   return linhas.join('\n');
 }

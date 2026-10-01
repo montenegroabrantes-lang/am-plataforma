@@ -5,9 +5,17 @@ import { Router }  from 'express';
 import { db }      from '../db/index.js';
 import { encrypt } from '../utils/crypto.js';
 import { recarregarAiConfig } from '../config/ai.js';
+import { apenasMaster } from '../middleware/auth.js';
+import { registrarAuditoria } from '../middleware/auditoria.js';
+import { criarLimiteIA } from '../middleware/limites.js';
 import axios from 'axios';
+import { erroInterno } from '../middleware/erros.js';
+import { diferenca } from '../utils/auditoriaCampos.js';
 
 export const configAiRouter = Router();
+
+// S-20: o teste faz chamada paga ao provedor — 20 por hora por usuário
+const limiteTesteIA = criarLimiteIA('teste');
 
 // Carrega configuração atual
 configAiRouter.get('/', async (req, res) => {
@@ -19,7 +27,7 @@ configAiRouter.get('/', async (req, res) => {
     rows.forEach(r => { config[r.chave] = r.valor; });
     res.json({ ok: true, config });
   } catch (e) {
-    res.status(500).json({ ok: false, erro: e.message });
+    erroInterno(res, e);
   }
 });
 
@@ -44,6 +52,11 @@ configAiRouter.post('/', async (req, res) => {
   ];
 
   try {
+    // S-13: valores anteriores das chaves que serão gravadas (para o log trazer só o que mudou)
+    const anteriores = await db.query(
+      `SELECT chave, valor FROM configuracoes WHERE categoria = 'ia' AND chave = ANY($1::text[])`,
+      [pares.map(p => p.chave)]
+    );
     // UPSERT — insere ou atualiza cada par
     for (const { chave, valor } of pares) {
       await db.query(
@@ -58,9 +71,19 @@ configAiRouter.post('/', async (req, res) => {
     // Recarrega o aiConfig em memória sem reiniciar o servidor
     await recarregarConfigAI();
 
+    const mudancas = diferenca(
+      Object.fromEntries(anteriores.map(r => [r.chave, r.valor])),
+      Object.fromEntries(pares.map(p => [p.chave, p.valor])),
+      pares.map(p => p.chave)
+    );
+    await registrarAuditoria({
+      usuarioId: req.user.id, acao: 'alterar_config_ia', entidade: 'configuracao',
+      valorAntes: mudancas.antes, valorDepois: mudancas.depois, ip: req._ip,
+    });
+
     res.json({ ok: true, mensagem: 'Configurações salvas com sucesso.' });
   } catch (e) {
-    res.status(500).json({ ok: false, erro: e.message });
+    erroInterno(res, e);
   }
 });
 
@@ -70,8 +93,8 @@ configAiRouter.get('/status', async (req, res) => {
   res.json(ai.status());
 });
 
-// Testa conexão com um provedor
-configAiRouter.get('/test', async (req, res) => {
+// Testa conexão com um provedor (faz chamada paga à API: só Master)
+configAiRouter.get('/test', apenasMaster, limiteTesteIA, async (req, res) => {
   const { provider } = req.query;
 
   try {
@@ -120,24 +143,61 @@ configAiRouter.get('/camila', async (req, res) => {
   }
 });
 
-// POST /api/config/camila-ia — aplica config na Camila em tempo real
-configAiRouter.post('/camila', async (req, res) => {
-  if (req.user?.perfil !== 'master') return res.status(403).json({ ok: false, erro: 'Apenas Master.' });
-  const url    = process.env.CAMILA_ADMIN_URL;
-  const secret = process.env.CAMILA_ADMIN_SECRET;
-  if (!url) return res.status(503).json({ ok: false, erro: 'CAMILA_ADMIN_URL não configurada no Railway.' });
-  try {
-    const MODELOS_CLAUDE = ['claude-sonnet-5', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-haiku-4-5-20251001', 'claude-opus-4-8', 'claude-opus-4-7'];
-    const MODELOS_OPENAI = ['gpt-4o', 'gpt-4.5', 'gpt-5'];
-    const payload = { ...req.body };
-    if (payload.claude_modelo          && !MODELOS_CLAUDE.includes(payload.claude_modelo))          delete payload.claude_modelo;
-    if (payload.claude_modelo_processo && !MODELOS_CLAUDE.includes(payload.claude_modelo_processo)) delete payload.claude_modelo_processo;
-    if (payload.openai_modelo          && !MODELOS_OPENAI.includes(payload.openai_modelo))          delete payload.openai_modelo;
-    const { data } = await axios.post(`${url}/admin/ia-config`, payload, {
-      headers: { 'x-admin-secret': secret || '', 'Content-Type': 'application/json' }, timeout: 5000,
-    });
-    res.json(data);
-  } catch (err) {
-    res.status(502).json({ ok: false, erro: 'Camila offline ou inacessível.' });
+// POST /api/config/ai/camila — aplica config na Camila em tempo real (S-09).
+// Repassa SÓ os campos que a tela de Configurações usa (lista branca), nunca o corpo inteiro,
+// e audita quem mudou o quê (provedores e modelos apenas — não há segredo nesse payload).
+const CAMILA_PROVEDORES = ['claude', 'openai'];
+const CAMILA_MODELOS_CLAUDE = ['claude-sonnet-5', 'claude-sonnet-4-6', 'claude-haiku-4-5', 'claude-haiku-4-5-20251001', 'claude-opus-4-8', 'claude-opus-4-7'];
+// Alinhada ao que a Camila aceita em /admin/ia-config (camila/server.js): o que ela não
+// aceita era descartado por lá sem aviso.
+const CAMILA_MODELOS_OPENAI = ['gpt-4.1', 'gpt-4o', 'gpt-4.1-mini'];
+const CAMILA_CAMPOS = {
+  vendas:                 CAMILA_PROVEDORES,
+  processo:               CAMILA_PROVEDORES,
+  claude_modelo:          CAMILA_MODELOS_CLAUDE,
+  claude_modelo_processo: CAMILA_MODELOS_CLAUDE,
+  openai_modelo:          CAMILA_MODELOS_OPENAI,
+};
+
+// Só campos conhecidos com valor permitido; `descartados` lista os NOMES do que ficou de fora.
+export function filtrarConfigCamila(corpo) {
+  const payload = {};
+  const descartados = [];
+  const origem = corpo && typeof corpo === 'object' && !Array.isArray(corpo) ? corpo : {};
+  for (const [campo, valor] of Object.entries(origem)) {
+    if (Object.hasOwn(CAMILA_CAMPOS, campo) && typeof valor === 'string' && CAMILA_CAMPOS[campo].includes(valor)) payload[campo] = valor;
+    else descartados.push(campo);
   }
-});
+  return { payload, descartados };
+}
+
+export function criarSalvarCamila({ http = axios, auditar = registrarAuditoria } = {}) {
+  return async (req, res) => {
+    const url    = process.env.CAMILA_ADMIN_URL;
+    const secret = process.env.CAMILA_ADMIN_SECRET;
+    if (!url) return res.status(503).json({ ok: false, erro: 'CAMILA_ADMIN_URL não configurada no Railway.' });
+    const { payload, descartados } = filtrarConfigCamila(req.body);
+    if (!Object.keys(payload).length) {
+      return res.status(400).json({ ok: false, erro: 'Nenhum campo válido para salvar.', descartados });
+    }
+    const headers = { 'x-admin-secret': secret || '' };
+    try {
+      // Config de antes, só para o registro de auditoria: se a Camila não responder, segue sem ela.
+      const antes = await http.get(`${url}/admin/ia-config`, { headers, timeout: 5000 })
+        .then(r => filtrarConfigCamila(r?.data?.config).payload)
+        .catch(() => null);
+      const { data } = await http.post(`${url}/admin/ia-config`, payload, {
+        headers: { ...headers, 'Content-Type': 'application/json' }, timeout: 5000,
+      });
+      await auditar({
+        usuarioId: req.user.id, acao: 'alterar_config_ia_camila', entidade: 'config_ia_camila',
+        valorAntes: antes, valorDepois: payload, ip: req._ip,
+      });
+      res.json(data && typeof data === 'object' && !Array.isArray(data) && descartados.length ? { ...data, descartados } : data);
+    } catch (err) {
+      res.status(502).json({ ok: false, erro: 'Camila offline ou inacessível.' });
+    }
+  };
+}
+
+configAiRouter.post('/camila', apenasMaster, criarSalvarCamila());

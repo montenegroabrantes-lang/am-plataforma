@@ -1,17 +1,30 @@
 # Contexto permanente — Sistema AM
 
-**Última atualização:** 30/09/2026 (Camila: prazo e documentos publicados; 29/09: consulta oficial PB/PE agora roda no navegador; Camila: acuse curto após valor+PDF passa a conduzir aos documentos — ver seção de 29/09/2026 no fim; antes, 28/09/2026 — Camila: sem transferência ao Jurídico por outro advogado/sindicato, prazo 6 a 11 meses, trava do fechamento genérico; worker de backup corrigido e publicado — ver as seções de 28/09/2026 no fim)
+**Última atualização:** 01/10/2026 (Camila: campanha INSS, caso Sabrina e nono dígito publicados; lista de processos ordenada pela última atualização — movimentação ou publicação; DataJud com lote 40 — ver a seção de 01/10/2026 no fim)
 **Finalidade:** continuidade segura do desenvolvimento em outros chats e sessões.
 
 Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
 qualquer alteração e atualizado depois de mudanças materiais no código, banco,
 integrações ou produção. Não registrar segredos neste documento.
 
-> **LER PRIMEIRO — estado ao fim da sessão de 28/09/2026:** o levantamento de re-protocolo JÁ
-> ESTÁ EM PRODUÇÃO (publicado por engano, sem revisão do usuário); há uma correção da fila de
-> re-protocolo ESCRITA em `src/index.js`, SEM COMMIT e fora do ar; a estratégia de automação do
-> re-protocolo NÃO foi confirmada pelo usuário — o próximo passo é consolidá-la e pedir "sim"
-> explícito antes de executar qualquer coisa. Detalhes em "28/09/2026 — Fechamento da sessão".
+> **LER PRIMEIRO — estado em 29/09/2026 (noite):** o **re-protocolo automatizado está NO AR e
+> configurado** (Fase 0, verificação gravada no AM, pacote em modo sombra, aprovação e importação):
+> backend `2b24638..fa09938` e `fa09938..fdd2a82` (deploys Railway `effb5521` e `969cb387`),
+> frontend `1238607..e6a3fba` e `13c44e9..eb13304` (deploys `8472f278` e `cdc49c2d`). Variáveis do
+> backend aplicadas pelo usuário (deploy `8467b4a0`): `SALARIO_MINIMO_VIGENTE=1621` e
+> `REPROTOCOLO_APROVADORES` (e-mail do usuário Master Luciano Montenegro; sem ela ninguém aprova).
+> `REPROTOCOLO_EXIGE_CONFIRMACAO` segue DESLIGADA (o aceite do ciclo não exige confirmação).
+> Verificado em produção: 3 migrações aplicadas, 5+2 tabelas novas, 186 ciclos adiados e 5 tarefas à
+> triagem (fila "Novos ciclos" de 364 para 178), rotas novas respondem 401 sem login.
+> **Falta o USUÁRIO operar a tela** (Tarefas > Novos ciclos / Re-protocolo): importar a apuração
+> (arquivo local `importacao-reprotocolo.json`, fora do Git, contém nomes de pastas), confirmar o
+> grupo Confirmado, colar o link do arquivo do modelo de inicial do Município (o acervo tem esse
+> modelo SEM arquivo do Drive), reservar/montar os pacotes; o Luciano aprova informando o valor da
+> causa. Decisões do usuário: procuração ANTERIOR reaproveitada; modelos de inicial vêm do acervo;
+> salário mínimo 1621; aprovador = Luciano. **Ainda não existe:** fórmula do valor da causa (os 8% são
+> só referência), geração da inicial, indexador do Drive no servidor, ferramentas de escrita do chat,
+> piloto no PJe. O levantamento de 28/09 segue no ar (decisão de manter/reverter pendente). O diff
+> antigo de `src/index.js` foi guardado em `git stash` no checkout principal (superado).
 
 > **PENDENTE — autorizado por Ramon em 21/09/2026 pra executar na mesma noite:** o restante da
 > Fase 6 do cronograma de resiliência (auditoria transacional, migrações versionadas,
@@ -2264,10 +2277,11 @@ prompt novo). `test:safe` e `test:continuidade` (224) verdes.
 
 - **Token do GitHub:** ver item PENDENTE na seção "(tarde)" acima (apagar "SIATEMA AM", renovar
   credencial pelo chaveiro ou `gh auth login`).
-- **Fila de re-protocolo (`src/index.js`, sem commit):** migração de boot que altera dados de
-  produção; só publicar depois de o usuário revisar o SQL.
+- **Fila de re-protocolo:** SUPERADO em 29/09 — a correção virou a migração única
+  `2026_09_28_saneamento_fila_reprotocolo` (usa `migrar()`), commitada na Fase 0 e aguardando o push
+  do usuário; o diff antigo de `src/index.js` no checkout principal deve ser descartado.
 - **Re-protocolo publicado por engano (7 commits):** decidir manter e revisar, ou reverter
-  (mantendo `7c5f64b`); estratégia do chat segue NÃO confirmada; caso Iradira (prazo 06/10).
+  (mantendo `7c5f64b`); a estratégia foi CONFIRMADA em 28/09 (noite); caso Iradira (prazo 06/10): as 2 tarefas vão à triagem pela migração da Fase 0.
 - **Devolução de chamados parados (Camila `7c7dc96`):** flag `DEVOLUCAO_ATENDENTE_PARADO_ATIVO`
   desligada; ligar é decisão de Ramon + João Lucas.
 - **6 teses sem cobertura (Camila `8bbdd11`):** revisão de advogado (13º salário, equiparação no
@@ -2569,3 +2583,298 @@ prompt novo). `test:safe` e `test:continuidade` (224) verdes.
   atrás da `main` e tem alterações locais não commitadas (`server.js`, `leads.js`,
   `camila/origem-lead.js`) e um commit local órfão (`99565c9`, já incorporado) — sincronizar antes de
   trabalhar nela. A branch local `publicar-pacote` do web tem `30a7987`, já publicado como `e4eb796`.
+
+### 28/09/2026 (noite) — Estratégia do re-protocolo CONFIRMADA + Fase 0 implementada (branch local, NÃO publicada)
+
+**Estratégia confirmada pelo usuário** (sequência de execução; cada fase só começa com novo "sim"):
+- Fluxo por caso: levantamento (já existe) → autorização do Master pelo chat → documentos (o AM gera
+  a procuração e aponta o que falta; a equipe colhe assinatura/documentos do período) → pacote no AM
+  (pasta no Drive, inicial a partir da anterior + modelo aprovado, valor da causa, relatório) →
+  rascunho no PJe feito pelo robô no navegador do escritório, que para antes de assinar → o advogado
+  confere, assina com o token e protocola → o chat registra número e período no AM, guarda o recibo
+  e registra a peça no acervo.
+- Fases: 0 saneamento; 1 descoberta (regra de documentos a partir das emendas por juízo; modelo de
+  inicial aprovado por ente); 2 pacote; 3 piloto de 10 rascunhos; 4 escala. Travas: nada assina nem
+  protocola sozinho; um rascunho por demanda; período sempre gravado; nenhum acesso ao TJPB a partir
+  do servidor nem plugin de evasão de detecção; escrita pelo chat com lista + confirmação e auditoria.
+- Recusadas pelo usuário (não reintroduzir): checar o resultado do processo anterior; avisar o
+  cliente pela Camila. Decisões ainda abertas: manter/reverter o levantamento já no ar; procuração
+  nova a cada re-protocolo (recomendado, por causa do Tema 1198 do STJ); modelo da inicial por ente;
+  pasta destino (`_REPROTOCOLO - 2026` recomendada); quem aprova; certificado A1×A3 (assumido A3).
+
+**Fase 0 — código** (branch `reprotocolo-fase0` em `am-plataforma` e `am-plataforma-web`; commits
+locais, sem push):
+- `PATCH /api/tarefas/:id/concluir-com-numero` (`src/routes/tarefas.js`): o fim do período passa a
+  ser obrigatório (mês/ano, não posterior ao mês atual) e o início passa a ser gravado. Em
+  re-protocolo o início é o `ciclo_inicio` da tarefa e nunca antes dele (antes disso o período é do
+  processo anterior); em protocolo inicial o início é opcional. Regra em `src/utils/periodoProtocolo.js`
+  (8 testes). Processo já existente tem o período completado sem sobrescrever o já gravado. A
+  demanda da tarefa passa a `protocolada` e recebe o `processo_id` (nenhuma rotina fechava demanda).
+  A auditoria `protocolar` registra início e fim.
+- `PATCH /api/tarefas/:id/ciclo/aceitar` e `/ciclos/aceitar-lote`: recusam ciclo de cliente com
+  `vinculo_ativo=true` E `vinculo_fim` preenchido (cadastro contraditório). Individual: 409 com a
+  explicação. Lote: ignora esses itens e devolve `ignoradas`. Motivo: o aceite zera
+  `precisa_triagem`, então qualquer sinalização seria apagada sem aviso. Corrigir o cadastro
+  destrava.
+- `src/index.js`: migração ÚNICA `2026_09_28_saneamento_fila_reprotocolo` (usa `migrar()`, em uma
+  transação, com auditoria `saneamento_fila_reprotocolo`): (1) adia (`ciclo_adiado_ate`) os ciclos
+  `ciclo` criados pela restauração de 19/09 antes de completar o intervalo da tese, até
+  `ciclo_inicio + intervalo_meses - 1`; (2) marca `precisa_triagem=true` nas tarefas de ciclo cujo
+  cliente tem vínculo ativo com data de fim. Nada é cancelado. Medido em produção em 28/09 (somente
+  leitura): 186 a adiar e 5 a sinalizar (Iradira Juvino 2 `ciclo_aceito`, Joana Marta 2 e Francisco
+  Isidio 1, em "Novos ciclos"). Substitui o diff antigo do checkout principal, que rodava a cada boot
+  e desfaria triagens humanas.
+- Frontend (`tarefas/page.js`): o modal "Concluir e iniciar monitoramento" exige mês e ano do fim
+  ("Fim do Período Solicitado *"), mostra o início do ciclo quando é re-protocolo, e o aceite em lote
+  avisa quantos ciclos foram ignorados pelo vínculo contraditório.
+
+**Verificado:** suíte do backend 131/131 sem `backup.worker.test.js` (123 anteriores + 8 novos); esse
+arquivo passa 4/4 isolado mas o processo NÃO encerra sem Redis alcançável (importar o worker abre
+`src/cache/redis.js`, que reconecta para sempre) — `npm test` trava localmente; item enviado à
+sessão que mantém o backup. Build isolado do Next.js passou. SQL novo validado por `EXPLAIN` em
+transação somente leitura contra produção. **Nada foi gravado em produção; o comportamento novo só
+existe depois de push e deploy, que dependem do usuário.**
+
+**Conferências só de leitura (28/09/2026):**
+- `processos`: 812 processos, **nenhum com `periodo_inicio`**; 5 sem `periodo_fim` (3 FGTS, 1 Piso, 1
+  sem tese). Processo sem fim conta como "cobrindo o ciclo" para o cron, então esses clientes não
+  recebem ciclo novo. O risco de o cliente sumir dos ciclos é pequeno (5); o problema geral é o
+  início nunca ter sido gravado.
+- Ciclos abertos: 366; **36 com meses anteriores às últimas 60 competências** — 5 sem processo
+  anterior da tese (o ciclo parte do início do vínculo; é ajuizamento novo, não re-protocolo) e 31 com
+  processo anterior cujo período terminou antes de 09/2021. A ausência de período nos processos NÃO
+  explica esses 36. Ficam fora do piloto até decisão do advogado.
+- Duplicidade com re-protocolos feitos à mão (pastas `_REPROTOCOLO`): 14 nomes sem o processo novo no
+  AM (9 na pasta 2025, 5 na de 2026). 12 clientes têm tarefa de ciclo aberta e devem ser conferidos
+  antes de aceitar: nome exato — Lauristela Cabral Sarinho, Mariluce Ferreira de Araujo, Saulo Soares
+  de Carvalho, Sonize de Araujo Alves, Sybele Cristina da Silva Assis (nas duas pastas), Diva Alves da
+  Costa Batista, Nilma de Pontes Cordeiro, Silverio Goncalves de Assis (comprovante de 25/09/2026),
+  Suely da Silva Assis; nome incerto (o cadastro mais parecido pode ser outra pessoa) — Deusimar Morais,
+  Ronilda Silva dos Santos, Suenia Araujo da Silva Souza. Ivanna Martins do Nascimento não tem tarefa
+  aberta (protocolada à mão em 06/01/2026). Ainda NADA foi marcado no banco para esses casos.
+
+**Pendências:** publicar a Fase 0 (backend antes ou junto do frontend; migração roda no boot) —
+depende do "sim" do usuário; ao publicar, descartar o diff antigo de `src/index.js` no checkout
+principal e conferir `git log origin/main..HEAD` antes de qualquer push; triagem dos 5 casos pelo
+usuário (prazo das tarefas da Iradira: 06/10/2026); decisão sobre os 12 clientes com possível
+duplicidade; manter/reverter o levantamento; `npm test` que não encerra sem Redis; 3 pontos de
+revisão do worker de backup (exit code do gzip, erro de pipe derrubando o processo, gzip pendurado)
+enviados à sessão "Alinhamento de atendimento Camila".
+
+### 29/09/2026 — Verificação dos re-protocolos pendentes (somente leitura)
+
+Executada a etapa 1 da estratégia confirmada. Nada foi alterado no AM, no Drive nem no PJe; o banco
+foi lido em transação `READ ONLY`, o Drive só por metadados (nomes e datas, sem abrir arquivos).
+Resultado sobre as **366 tarefas de ciclo em aberto** (2 em Re-protocolo + 364 em Novos ciclos):
+- **Confirmado 73** (64 Município de João Pessoa, 9 Estado da Paraíba): ciclo vencido, sem alertas,
+  pasta antiga única no Drive. **Conferir 95** e **Bloqueado 198**: 186 ainda não completaram o
+  intervalo da tese (voltam sozinhos ao vencer) e 12 têm possível protocolo à mão (pasta na equipe
+  em `_REPROTOCOLO`/pendentes sem o processo no AM).
+- Conferir, por motivo (um caso pode ter vários): 35 com meses fora das últimas 60 competências; 27
+  sem pasta antiga e 22 com pasta ambígua; 27 com juízo do processo anterior que é gabinete/núcleo; 30
+  com alerta na fonte oficial PB/PE (14 sem vínculo encontrado, 10 com último pagamento antigo, 3
+  regime diferente de temporário, 2 homônimos, 1 fonte indisponível); 4 com cadastro contraditório
+  (vínculo ativo com data de fim); 5 sem processo anterior; 5 com polo genérico ou ausente.
+- Pastas antigas em OUTORGANTES (119 listadas; 587 pastas lidas nos anos 2022 a 2026, `_REPROTOCOLO`
+  e pendentes): identidade em 92%, inicial anterior 90%, procuração 95%, comprovante de vínculo 88%,
+  contracheques/fichas 40%, comprovante de residência 33%. Só identidade e inicial anterior são
+  reaproveitáveis; procuração, vínculo e contracheques do período novo são sempre novos.
+- Conferência oficial PB/PE feita em 50 casos (vencidos com ente confirmado); município sem fonte.
+- Limites: re-protocolo à mão sem pasta, comprovante ou publicação não aparece; pastas achadas por
+  nome (sem CPF); listagem de 2024–2025 transcrita à mão por um agente (3 pastas conferidas, 3 de 3).
+- Achado de processo: uma listagem do Drive tem pasta com senha no título de uma pasta de 2023 —
+  não registrada aqui; convém a equipe renomear.
+- Entregues ao usuário: página HTML e planilha (fora do repositório, contêm dados de clientes).
+- Pendências: usuário confirma a lista Confirmado (amostra de 5) e decide os grupos Conferir/Bloqueado;
+  depois, publicar a Fase 0 (aguarda "sim"), Descoberta, Pacote, Piloto e Escala.
+
+### 29/09/2026 — Fase 2 do re-protocolo: verificação gravada no AM + pacote (commits locais, SEM push)
+
+Aprovado pelo usuário: gravar a confirmação da verificação no AM e seguir para o pacote. Branches
+locais: backend `reprotocolo-pacote` (empilhada sobre a Fase 0) e frontend `reprotocolo-fase2`.
+**Nada foi publicado e nada foi gravado no banco de produção**; as migrações rodam no deploy.
+
+- **Regra decidida:** o juízo do processo anterior NÃO entra (re-protocolo é sempre processo novo,
+  sem dependência). O alerta `juizo_nao_e_de_origem` deixou de mandar conferir.
+- **Verificação** (`src/services/reprotocolo/verificacao.js`): cada ciclo aberto cai em Confirmado,
+  Conferir ou Bloqueado. Bloqueio: intervalo da tese incompleto; processo cobrindo o período;
+  possível protocolo à mão (pasta da equipe em `_REPROTOCOLO`/pendentes, decidido pela tese da pasta e
+  ignorando a pasta `Outorgantes {ano}` do ano do processo anterior). Conferir: meses fora das 60
+  competências, sem processo anterior, vínculo/polo/ente, publicação de processo desconhecido,
+  alertas da fonte oficial PB/PE, pasta antiga não localizada/ambígua. A decisão humana fica em
+  `verificacoes_reprotocolo`, presa a um hash dos dados (o fim do período fica fora do hash para não
+  invalidar tudo na virada do mês); perde a validade se os dados mudarem ou após 30 dias. Bloqueio por
+  prazo ou processo existente nunca é confirmado; "protocolo à mão" pode ser liberado com observação.
+  Validado contra a produção somente leitura: o motor reproduz a classificação feita à mão.
+- **Rotas** (`src/routes/reprotocolo.js`, Master): leitura também pelo conector com escopo
+  `reprotocolo` (`GET /verificacao`, `/pacotes`, `/pacotes/:id`, `/modelos`); escrita SÓ por sessão do
+  AM, nunca pelo conector (`POST /verificacao/confirmar`, `POST /verificacao/:id/oficial`,
+  `PUT /pasta-antiga/:clienteId`, `POST /pacotes/reservar|:id/montar|:id/cancelar`, `PUT /modelos`,
+  `POST /importar`). Tudo auditado; CPF sempre mascarado.
+- **Gate do aceite:** `REPROTOCOLO_EXIGE_CONFIRMACAO=true` faz `ciclo/aceitar` recusar (409) e o
+  aceite em lote ignorar ciclo sem confirmação válida. Desligada por padrão: nada muda até ligar.
+- **Pacote** (`pacote.js`, `valorCausa.js`, `checklist.js`), modo sombra, não gera peça: reserva única
+  por tarefa e por demanda (índices únicos parciais); relatório com período pedido (por padrão o do
+  ciclo; começar depois é permitido, antes do ciclo nunca), valor da causa como PROPOSTA (8% da
+  remuneração oficial PB/PE; município, outras teses e valor acima do teto do Juizado vão ao advogado;
+  teto = 60 salários mínimos lidos de `SALARIO_MINIMO_VIGENTE`, sem valor fixo em código), checklist
+  (só a identidade se reaproveita; procuração, vínculo e contracheques do período novo são sempre
+  novos; inicial anterior é fonte de dados; residência = regra pendente) e modelos aprovados por
+  ente/tese (`modelos_reprotocolo`). Pendências do relatório: modelos ausentes e valor a informar.
+- **Migrações novas** (via `migrar()`): `2026_09_29_verificacao_reprotocolo` (verificacoes_reprotocolo,
+  reprotocolo_pasta_antiga, reprotocolo_conferencia_oficial) e `2026_09_29_pacote_reprotocolo`
+  (pacotes_reprotocolo, modelos_reprotocolo).
+- **Tela** (`am-plataforma-web`, `VerificacaoReprotocolo.jsx` + encaixes em `tarefas/page.js`, só
+  Master, abas Re-protocolo e Novos ciclos): painel com totais e filtro por grupo, botão para
+  confirmar o grupo Confirmado, selo e motivos em cada card, ações (confirmar, aceitar motivos com
+  observação, liberar protocolo à mão, conferir fonte oficial, vincular pasta antiga colando o link) e
+  botão "Importar apuração" (simula, mostra totais e só grava após confirmação).
+- **Carga inicial:** as tabelas nascem vazias; sem carga todo ciclo apareceria como "pasta não
+  verificada". A apuração de 29/09 (353 clientes com pasta/duplicidade/inventário e 49 conferências
+  oficiais) foi gerada como arquivo JSON local (fora do repositório, contém nomes de pastas) para ser
+  importada pelo botão depois do deploy.
+- **Verificado:** suíte do backend 185/185 (sem `backup.worker.test.js`, que não encerra sem Redis);
+  paridade do motor com a produção somente leitura; relatórios de pacote gerados com dados reais;
+  build isolado do Next.js compila; componente renderizado em servidor nos 5 estados.
+- **Ordem para publicar:** revisar; push do backend (Fase 0 + Fase 2) e depois do frontend; depois do
+  deploy, importar a apuração pelo botão; conferir a fonte oficial dos casos pendentes; só então
+  considerar `REPROTOCOLO_EXIGE_CONFIRMACAO=true` e configurar `SALARIO_MINIMO_VIGENTE`.
+- **Pendências:** indexador do Drive no servidor (hoje a pasta antiga entra por importação ou por
+  vínculo manual); tela do pacote (reservar, montar, ver relatório); geração de inicial e procuração
+  (depende dos modelos aprovados por ente e do modelo de procuração); quem aprova o dossiê; ferramentas
+  de escrita do chat em escopo separado; regra de residência por juízo (das emendas à inicial); piloto
+  no PJe (Fase 3).
+
+### 29/09/2026 (fim do dia) — Decisões do usuário e aprovação do pacote (commits locais, SEM push)
+
+**Decisões do usuário:** (1) **a procuração anterior será reaproveitada** (o checklist deixou de gerar
+procuração nova; a data da procuração aparece no relatório com o aviso do Tema 1198 do STJ); (2) **as
+iniciais aprovadas já estão no sistema**: o pacote lê o modelo do acervo (peça `inicial` com
+`modelo_aprovado`, por ente e tese); (3) **salário mínimo vigente: R$ 1.621** (teto do Juizado = 60 ×
+esse valor = R$ 97.260); (4) **quem aprova o dossiê é o Luciano Montenegro** (usuário Master
+`luciano montenegro`).
+
+**Achado no acervo (produção, leitura):** só 2 iniciais aprovadas — Estado da Paraíba (`estado-paraiba`,
+tese `fgts-nulidade`, com arquivo do Drive) e Município de João Pessoa (`municipio-joao-pessoa`,
+`fgts-nulidade`, **sem arquivo do Drive**). Como 67 dos 78 ciclos Confirmados são do Município, o
+pacote deles fica com a pendência `modelo_sem_arquivo` (bloqueia a aprovação) até o arquivo ser
+vinculado. O acervo não tem rota para editar o link de uma peça; o pacote aceita um ajuste manual
+(tabela `modelos_reprotocolo`, com precedência) — a tela do pacote tem o campo para colar o link.
+
+**Implementado (branches `reprotocolo-aprovacao` no backend e no frontend):**
+- `checklist.js`: identidade e procuração reaproveitadas; sem procuração na pasta antiga → pedir ao
+  cliente; vínculo e contracheques novos.
+- `pacote.js`: modelo de inicial do acervo (`slugEnteAcervo`/`slugTeseAcervo`), pendências
+  estruturadas (`modelo_inicial`, `modelo_sem_arquivo`, `valor`, `documentos`), `aprovarPacote` e
+  `pacotesPorTarefas`. Aprovação: só e-mails em `REPROTOCOLO_APROVADORES` (sem a variável ninguém
+  aprova), só por sessão do AM; exige pacote montado, sem pendência de modelo, valor da causa > 0
+  informado pelo aprovador (a proposta do sistema fica registrada), ciência explícita acima do teto e
+  confirmação da verificação ainda válida. Pacote aprovado ainda pode ser cancelado com motivo.
+- `POST /api/reprotocolo/pacotes/:id/aprovar`; `GET /verificacao` traz o pacote de cada ciclo e
+  `pode_aprovar`.
+- Tela: reservar, montar, ver relatório, cancelar, vincular o modelo de inicial (colar o link) e
+  aprovar (só o aprovador).
+- **Configuração a fazer no Railway (backend):** `SALARIO_MINIMO_VIGENTE=1621` e
+  `REPROTOCOLO_APROVADORES=<e-mail do usuário Luciano Montenegro>`. Nenhuma foi aplicada ainda
+  (o modo automático nega mudanças de produção; o usuário aplica).
+- **Verificado:** suíte 194/194 (sem `backup.worker.test.js`); build isolado do Next.js; estados do
+  card renderizados em servidor; relatórios de exemplo com dados reais (Estado: modelo achado com
+  arquivo; Município: modelo sem arquivo).
+
+**Publicação de 29/09/2026 (noite) — concluída:** backend `fa09938..fdd2a82` (deploy `969cb387`), frontend
+`13c44e9..eb13304` (o commit `f52f4ff` foi reaplicado pelo usuário com `cherry-pick` por cima de uma correção
+de Estimativas feita por outra sessão; deploy `cdc49c2d`; o JavaScript publicado de Tarefas contém
+"Reservar pacote", "Aprovar pacote", "Vincular modelo" e "Importar apuração") e variáveis do Railway
+(deploy `8467b4a0`, conferidas). Lição de processo: o modo automático nega `git push`/`rebase` e mudança de
+variável de produção mesmo com pedido do usuário no chat; o usuário roda esses comandos no próprio
+terminal, e o assistente confere o resultado (deploy, rotas, variáveis) em seguida.
+
+
+### 30/09/2026 — Lote S, Onda 9 (S-27): perfil júnior — PREPARADO, ainda NÃO publicado
+
+Aplicada a matriz D6 na versão recomendada do plano (a decisão D6 ainda não foi respondida pelo
+usuário; ele mandou "execute tudo"). Só código e testes; nada foi ao ar, então **não há estado
+verificado em produção** (a verificação é a do plano: conta de teste júnior, depois que a Onda 8
+permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra a regra
+("não é exatamente `master` = júnior"); os routers só ganharam poucas linhas.
+- **CPF mascarado** (`***.456.789-**`, a máscara de Tarefas) em toda resposta JSON dos routers de
+  clientes, processos, tarefas e triagem, por `router.use(protegerDadosDoJunior)` (mascara qualquer
+  chave `cpf`/`cliente_cpf`; rota nova nesses routers já nasce protegida). Busca por CPF do júnior só
+  com o CPF inteiro (a busca parcial de 6+ dígitos viraria oráculo). O Master segue igual.
+- **Clientes:** o júnior não recebe nem decifra `anotacoes`; PATCH com `anotacoes` ou `ativo` → 403.
+- **CSV de processos** (`/exportar-excel`) do júnior sai sem a coluna CPF.
+- **Processos (IDOR de 11/07 fechado):** `PATCH /:id` e `PATCH /:id/urgente` só em processo em que o
+  júnior tem tarefa atribuída (não cancelada); `PATCH /:id` sem `status`, `valor_causa`, `valor_rpv`
+  (reenviar o valor já gravado passa e é ignorado: o formulário antigo manda `status` sempre).
+  `PATCH /:id/situacao` (classificação do dia a dia) segue aberto, mas sem `valor_homologado` e com
+  urgência só nos processos dele. Lista e ficha de processo ganharam `pode_editar`.
+- **Conversas de lead:** `GET /api/estimativas/leads/:contactId/mensagens` agora é `apenasMaster`
+  (conflita com a exceção "aberta de propósito" da D7; prevaleceu a D6 mais conservadora).
+- **Protocolo:** `PATCH /api/tarefas/:id/concluir-com-numero` deixou de ser `apenasMaster` (voltou a
+  valer a conferência de responsável que já existia na rota, agora antes das demais): o júnior
+  registra o protocolo da tarefa dele; Master registra qualquer um.
+- Testes: `src/routes/junior.acesso.test.js` (26 casos, com o Master ao lado de cada regra).
+- **Limitações/pendências:** Diligências segue só para Master na tela (a página Relatório inteira é
+  Master por decisão de 28/09; o endpoint continua aberto); o júnior perde "Abrir conversa" na aba
+  Processual de Estimativas; `status_rpv`/`status_precatorio` "paga" feitos por júnior ainda geram o
+  honorário automático quando já há valor homologado (não estava na matriz); `cessionario_documento`
+  (cessões) e o CPF do onboarding em que o júnior é responsável não são mascarados.
+
+### 01/10/2026 — Lista de processos ordenada pela última atualização (movimentação ou publicação) e DataJud com lote 40
+
+- **O que mudou:** `GET /api/processos` passa a ordenar por `urgente DESC` e depois pela última
+  atualização = `GREATEST(última movimentação, última publicação não cancelada)`. A data da
+  publicação (`publicacoes.data_disponibilizacao`, tipo DATE) é tratada como meia-noite de Brasília.
+  Publicação nova também zera "dias parado" e conta nos filtros de período (`hoje`/`7d`/`30d`/`sem30d`/
+  `sem60d`), no filtro de tempo parado e nas exportações (WhatsApp e Excel; coluna "Última Atualização").
+  Campos novos na resposta: `ultima_atualizacao`, `ultima_atualizacao_origem` (`movimentacao`|
+  `publicacao`) e `ultima_pub_resumo`. Na tela, a coluna virou "Última Atualização", com o selo azul
+  "Publicação" e o resumo quando a mais recente é uma publicação. Decisão do usuário: urgentes
+  continuam no topo; publicação zera dias parado.
+- **Achado antes da mudança:** 104 processos tinham publicação mais nova que a última movimentação
+  (apareciam abaixo do que deviam). Das 336 publicações, 299 estão vinculadas; as 37 órfãs não casam
+  com nenhum processo cadastrado — não há religação a fazer.
+- **Verificado:** SQL gerado pela rota executado em leitura contra produção (até ~360 ms; 2 urgentes
+  no topo, depois os processos com publicação do dia); suíte do backend 979/979; build do frontend ok.
+- **Em produção:** backend `8f282de..179ee68` (deploy `89d3d0e2` SUCCESS; `/health` 200; rota 401 sem
+  login; sem erros no log); frontend `77f34c0..e399ff9` (deploy `f4931354` SUCCESS; o JS publicado de
+  /processos contém o campo novo). Pushes feitos por mim após o "execute" do usuário.
+- **DataJud:** `DATAJUD_TAMANHO_LOTE=40` aplicado pelo usuário no Railway em 01/10 (~00:35 BRT; antes
+  100). Antes da mudança: 507 `ok`, 300 `erro_sync`, 4 aguardando; execuções horárias alternam entre
+  sucesso parcial e falha total (0 casados às 19h, 23h e 03h UTC). Conferir após 06:00 UTC se as falhas
+  caíram; se não, baixar para 20 (o padrão é por faixa de horário do DataJud, não só tamanho de lote).
+- **Pendências:** a tela não foi aberta logada para conferência visual (subir o backend local contra o
+  banco de produção rodaria as migrações de boot); o painel/dashboard ainda calcula "parado" só por
+  movimentação (fora do escopo desta mudança).
+- **Acesso a produção pelo Claude:** liberado pelo usuário em 01/10 por regras de permissão
+  (`railway run …`). Leitura do banco de fora do Railway usa o serviço Postgres
+  (`railway run --service Postgres` com a URL pública), sempre com `.q-tmp.mjs` em modo somente leitura.
+
+### 01/10/2026 — DataJud: diagnóstico final e push do TJPB por e-mail via IMAP (Gmail)
+
+- **DataJud (verificado às 18:06 BRT, só leitura):** 596 `ok`, 201 `erro_sync`, 14 aguardando primeira
+  captura (meio-dia: 65 em erro; o número oscila conforme o DataJud recusa ou não cada hora). Das 12
+  execuções do dia, 5 falharam por completo (0 casados) e **nenhuma gravou andamento novo desde 03:01**.
+  Causa confirmada na API do CNJ: o índice do TJPB está parado — a última atualização dos nossos
+  processos é de 10/09 e os andamentos vêm com meses de atraso (processo `0801815-11.2026` teve
+  sentença publicada no DJEN em 01/10 e o DataJud mostra último movimento em 04/06). O 429 vem da
+  chave pública do CNJ, compartilhada por todos (não existe chave própria); baixar mais o lote não
+  resolve. **Decisão: manter `DATAJUD_TAMANHO_LOTE=40`, tratar o DataJud como histórico e usar o push
+  por e-mail como fonte de novidade.** Alternativa de cobertura total: API paga de monitoramento
+  (Escavador/Judit/Codilo) — não cotada.
+- **Push do TJPB:** o leitor por Outlook/Graph (commit `d637c0f`, 12/08) nunca rodou e **não pode
+  rodar**: conta pessoal Hotmail não registra mais aplicativo na Microsoft ("A capacidade de criar
+  aplicativos fora de um diretório foi preterida", verificado no portal.azure.com com a conta do
+  usuário em 01/10). Decisão do usuário: receber os e-mails do PJe em `ramonoliveiraabrantes@gmail.com`
+  e ler por IMAP com senha de app.
+- **Implementado (branch `push-tj-imap`, à frente de `7b1d3ed`):** `src/services/imap/leitor.js`
+  (`imapflow` + `mailparser`; devolve o mesmo formato do Graph; busca por remetente + SINCE, corte
+  exato pela data interna, id = Message-ID ou UIDVALIDITY:UID, HTML→texto; só leitura);
+  `src/services/pushTJ/fonte.js` (`fontePush()`: IMAP vence Outlook; `remetentePush()`);
+  worker, `workers/index.js` e `GET /api/push-tj/saude` (campo `fonte`) passam a usar a fonte
+  configurada. Variáveis: `PUSH_TJ_IMAP_HOST/PORT/USER/SENHA/PASTA`, `PUSH_TJ_REMETENTE`
+  (documentadas no `.env.example`). Testes: 8 novos com servidor IMAP falso; suíte 987/987.
+- **Pendente do usuário:** trocar o e-mail do perfil no PJe para o Gmail; criar a senha de app
+  (verificação em duas etapas) e gravar as variáveis no Railway (script interativo preparado, a senha
+  não passa pelo chat); publicar a branch. Depois: conferir `[Workers] Push do TJPB ativo via imap`,
+  `/api/push-tj/saude` e as primeiras linhas em `push_tj_mensagens`.
