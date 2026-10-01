@@ -37,12 +37,19 @@ const limiteClassificar = criarLimiteIA('classificar');
 
 // Todos os usuários veem todos os processos (filtroVisibilidade já bloqueia os restritos)
 
+// Última atualização do processo = a mais recente entre movimentação (DataJud) e publicação
+// (Comunica/DJEN) não cancelada. Ordena a lista e alimenta "dias parado" e os filtros de período.
+// data_disponibilizacao é DATE: vira meia-noite de Brasília (sem isso, meia-noite UTC = dia anterior na tela).
+const PUB_EM = `(data_disponibilizacao::timestamp AT TIME ZONE 'America/Sao_Paulo')`;
+const ULT_PUBLICACAO = `(SELECT MAX(${PUB_EM}) FROM publicacoes WHERE processo_id = p.id AND cancelada IS NOT TRUE)`;
+const ULT_ATUALIZACAO = `GREATEST((SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id), ${ULT_PUBLICACAO})`;
+
 const FILTROS_PERIODO = {
-  'hoje':   `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date`,
-  '7d':     `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= NOW() - INTERVAL '7 days'`,
-  '30d':    `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) >= NOW() - INTERVAL '30 days'`,
-  'sem30d': `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) < NOW() - INTERVAL '30 days'`,
-  'sem60d': `AND (SELECT MAX(data_movimentacao) FROM movimentacoes WHERE processo_id = p.id) < NOW() - INTERVAL '60 days'`,
+  'hoje':   `AND ${ULT_ATUALIZACAO} >= (NOW() AT TIME ZONE 'America/Sao_Paulo')::date`,
+  '7d':     `AND ${ULT_ATUALIZACAO} >= NOW() - INTERVAL '7 days'`,
+  '30d':    `AND ${ULT_ATUALIZACAO} >= NOW() - INTERVAL '30 days'`,
+  'sem30d': `AND ${ULT_ATUALIZACAO} < NOW() - INTERVAL '30 days'`,
+  'sem60d': `AND ${ULT_ATUALIZACAO} < NOW() - INTERVAL '60 days'`,
 };
 
 // Formato CNJ: NNNNNNN-DD.AAAA.J.TR.OOOO (com pontuação) ou só dígitos (20 chars)
@@ -99,7 +106,7 @@ processosRouter.get('/', async (req, res) => {
   const tempoNum = Number(tempo_parado_min);
   if (tempo_parado_min && !isNaN(tempoNum)) {
     params.push(tempoNum);
-    condicoes.push(`AND EXTRACT(DAY FROM NOW() - ult.data_movimentacao) >= $${params.length}`);
+    condicoes.push(`AND EXTRACT(DAY FROM NOW() - ${ULT_ATUALIZACAO}) >= $${params.length}`);
   }
   if (funcao_cliente)         { params.push(`%${funcao_cliente}%`);  condicoes.push(`AND c.cargo ILIKE $${params.length}`); }
   if (busca) {
@@ -114,23 +121,19 @@ processosRouter.get('/', async (req, res) => {
   }
 
   const where = condicoes.filter(Boolean).join(' ');
-  const precisaUlt = !!tempo_parado_min && !isNaN(Number(tempo_parado_min));
 
   const [{ total }] = await db.query(
     `SELECT COUNT(*) AS total
      FROM processos p
      LEFT JOIN clientes c ON c.id = p.cliente_id
-     ${precisaUlt ? `LEFT JOIN LATERAL (
-       SELECT data_movimentacao FROM movimentacoes
-       WHERE processo_id = p.id ORDER BY data_movimentacao DESC LIMIT 1
-     ) ult ON true` : ''}
      WHERE ${where}`,
     params
   );
 
   params.push(limiteSeguro, offset);
 
-  // JOIN LATERAL evita 3 subqueries por linha — uma única busca da última movimentação.
+  // JOIN LATERAL evita 3 subqueries por linha — uma única busca da última movimentação e da última publicação.
+  // Empate no dia fica com a movimentação (a publicação só tem a data, sem hora).
   const rows = await db.query(
     `SELECT p.id, p.numero, p.tribunal, p.vara, p.status, p.acao,
             p.polo_ativo, p.polo_passivo,
@@ -148,7 +151,12 @@ processosRouter.get('/', async (req, res) => {
             pr.nome AS produto_nome,
             ult.data_movimentacao AS ultima_movimentacao,
             ult.texto             AS ultima_mov_texto,
-            EXTRACT(DAY FROM NOW() - ult.data_movimentacao)::int AS dias_parado,
+            GREATEST(ult.data_movimentacao, pub.data_disponibilizacao) AS ultima_atualizacao,
+            CASE WHEN pub.data_disponibilizacao > ult.data_movimentacao
+                   OR (ult.data_movimentacao IS NULL AND pub.data_disponibilizacao IS NOT NULL)
+                 THEN 'publicacao' WHEN ult.data_movimentacao IS NOT NULL THEN 'movimentacao' END AS ultima_atualizacao_origem,
+            pub.resumo            AS ultima_pub_resumo,
+            EXTRACT(DAY FROM NOW() - GREATEST(ult.data_movimentacao, pub.data_disponibilizacao))::int AS dias_parado,
             ${ETAPA_CASE} AS etapa,
             EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id) AS tem_cessao
      FROM processos p
@@ -161,8 +169,16 @@ processosRouter.get('/', async (req, res) => {
        ORDER BY data_movimentacao DESC
        LIMIT 1
      ) ult ON true
+     LEFT JOIN LATERAL (
+       SELECT ${PUB_EM} AS data_disponibilizacao,
+              CONCAT_WS(' — ', NULLIF(tipo_documento, ''), NULLIF(LEFT(REGEXP_REPLACE(texto, '\\s+', ' ', 'g'), 200), '')) AS resumo
+       FROM publicacoes
+       WHERE processo_id = p.id AND cancelada IS NOT TRUE
+       ORDER BY data_disponibilizacao DESC
+       LIMIT 1
+     ) pub ON true
      WHERE ${where}
-     ORDER BY p.urgente DESC, ult.data_movimentacao DESC NULLS LAST
+     ORDER BY p.urgente DESC, GREATEST(ult.data_movimentacao, pub.data_disponibilizacao) DESC NULLS LAST
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );
@@ -223,7 +239,7 @@ function construirFiltrosExportar(query, user) {
   const tempoNum = Number(tempo_parado_min);
   if (tempo_parado_min && !isNaN(tempoNum)) {
     params.push(tempoNum);
-    condicoes.push(`AND EXTRACT(DAY FROM NOW() - (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id)) >= $${params.length}`);
+    condicoes.push(`AND EXTRACT(DAY FROM NOW() - ${ULT_ATUALIZACAO}) >= $${params.length}`);
   }
   if (urgente === 'true') condicoes.push(`AND p.urgente = true`);
   if (daTabela(FILTROS_PERIODO, periodo)) condicoes.push(FILTROS_PERIODO[periodo]);
@@ -255,7 +271,7 @@ processosRouter.get('/exportar', async (req, res) => {
   const rows = await db.query(
     `SELECT p.numero, c.nome AS cliente_nome, p.situacao_atual, p.vara,
             EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id) AS tem_cessao,
-            (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) AS ultima_movimentacao
+            ${ULT_ATUALIZACAO} AS ultima_movimentacao
      FROM processos p
      LEFT JOIN clientes c ON c.id = p.cliente_id
      WHERE ${condicoes.filter(Boolean).join(' ')}
@@ -280,7 +296,7 @@ processosRouter.get('/exportar-excel', async (req, res) => {
     `SELECT p.numero, c.nome AS cliente_nome, ${comCpf ? 'c.cpf AS cliente_cpf,' : ''} p.situacao_atual, p.tribunal, p.vara,
             p.polo_passivo, p.urgente, p.data_distribuicao,
             EXISTS (SELECT 1 FROM cessoes_credito cc WHERE cc.processo_id = p.id) AS tem_cessao,
-            (SELECT MAX(m.data_movimentacao) FROM movimentacoes m WHERE m.processo_id = p.id) AS ultima_movimentacao
+            ${ULT_ATUALIZACAO} AS ultima_movimentacao
      FROM processos p
      LEFT JOIN clientes c ON c.id = p.cliente_id
      WHERE ${condicoes.filter(Boolean).join(' ')}
@@ -289,7 +305,7 @@ processosRouter.get('/exportar-excel', async (req, res) => {
     params
   );
 
-  const colunas = ['Número', 'Cliente', ...(comCpf ? ['CPF'] : []), 'Situação', 'Tribunal', 'Vara', 'Polo Passivo', 'Urgente', 'Cessão de Crédito', 'Distribuição', 'Última Movimentação'];
+  const colunas = ['Número', 'Cliente', ...(comCpf ? ['CPF'] : []), 'Situação', 'Tribunal', 'Vara', 'Polo Passivo', 'Urgente', 'Cessão de Crédito', 'Distribuição', 'Última Atualização'];
   const escapar = celulaCsv; // S-25: neutraliza células que começam como fórmula (= + - @)
   const linhas = rows.map(r => [
     r.numero, r.cliente_nome, ...(comCpf ? [r.cliente_cpf] : []), formatarSituacao(r.situacao_atual), r.tribunal, r.vara,
