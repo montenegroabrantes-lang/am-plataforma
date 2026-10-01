@@ -2535,3 +2535,37 @@ prompt novo). `test:safe` e `test:continuidade` (224) verdes.
   Consequência direta: os 3 commits locais da Camila (`c7ad344`, `ac28a45`, `d14a816`) entrarão em
   produção no primeiro push que os incluir.
 
+
+### 01/10/2026 — Camila: campanha INSS, aprendizado do caso Sabrina e nono dígito
+
+- **Caso Sabrina (contact `4aaab889`) incorporado ao prompt de vendas** (`camila/prompt-vendas.js`):
+  (a) quando o lead condiciona o avanço a uma ação que já tem ("não quero que mexa no valor de lá"),
+  a Camila acolhe e explica que esta análise é própria, contra a Fazenda Pública, independente da
+  ação existente, sem prometer ausência de conflito, e conduz; (b) várias dúvidas seguidas são
+  respondidas num bloco só (5 anos, estimativa, conferência dos vínculos, prazo médio, honorários no
+  êxito). O achado "lei federal especial = RISCO" do aprendizado foi descartado (texto aprovado,
+  `FIXA-BASE-LOGICA`).
+- **Campanha INSS** (página `restituicao-previdenciaria-educacao`): o formulário não chama a
+  Camila; abre o WhatsApp com a frase "Olá! Quero conferir o desconto do INSS no meu contracheque."
+  e as linhas Nome/Onde trabalho/Cargo/Início do vínculo/Fim do vínculo (só desligados)/Situação.
+  A Camila reconhece a frase (`camila/origem-lead.js`, origem `inss`, rótulo "Campanha INSS"), lê o
+  formulário, pede o contracheque e dispara `CALCULAR` direto (contexto `ENTRADA_INSS`), sem repetir
+  a qualificação. A foto do contracheque de lead INSS fora da fase `documentos` não conta como
+  documento, não encerra e não transfere: responde "Recebido, [nome]…" uma vez e marca
+  `dados.contrachequeRecebidoEm` na pendência. A venda segue o fluxo normal da tese de restituição.
+- **Aba Estimativas (web):** etiqueta "INSS · outra tese — conferir envio do contracheque"
+  (amarela) / "contracheque recebido" (verde) e filtro "Campanha INSS".
+- **Nono dígito:** a abertura por número da calculadora, ao receber do Digisac 400 "contact does not
+  exist" com celular de 8 dígitos, tenta uma vez a versão com o 9 e grava o telefone corrigido na
+  pendência. Caso real: pendência 157 (Rossana Barbosa) teve o telefone corrigido manualmente pelo
+  usuário para o número localizado no Digisac.
+- **Publicado e verificado:** Camila `37567ea` (inclui `8b544a7`), deploy `65cfa977` SUCCESS,
+  `/health` ok, `prompt_versao` `7361898c44eb`; web `e4eb796`, deploy `dc3fb1f4` SUCCESS.
+  Testes: 253 de 254 em `tests/` e `test:safe` ok; a 1 falha (`continuidade.test.js`, modo retomada)
+  já falha na `main` anterior e depende do horário (fora da janela de vendas).
+- **Limites:** sem teste automatizado da recepção do contracheque nem do card; sem teste ponta a
+  ponta com WhatsApp real (sugerido: usuário enviar a mensagem da página de um número próprio).
+  A pasta principal da Camila (`~/Documents/Claude/Projects/camila-abrantes-montenegro`) está
+  atrás da `main` e tem alterações locais não commitadas (`server.js`, `leads.js`,
+  `camila/origem-lead.js`) e um commit local órfão (`99565c9`, já incorporado) — sincronizar antes de
+  trabalhar nela. A branch local `publicar-pacote` do web tem `30a7987`, já publicado como `e4eb796`.
