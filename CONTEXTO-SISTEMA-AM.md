@@ -1,6 +1,6 @@
 # Contexto permanente — Sistema AM
 
-**Última atualização:** 29/09/2026, noite (re-protocolo: verificação, confirmação, pacote e aprovação NO AR e configurados; ver o aviso "LER PRIMEIRO" e as seções de 29/09/2026 no fim)
+**Última atualização:** 01/10/2026 (lista de processos ordenada pela última atualização — movimentação ou publicação; DataJud com lote 40 — ver a seção de 01/10/2026 no fim)
 **Finalidade:** continuidade segura do desenvolvimento em outros chats e sessões.
 
 Este é o registro canônico do estado do Sistema AM. Deve ser lido antes de
@@ -2534,3 +2534,33 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   Processual de Estimativas; `status_rpv`/`status_precatorio` "paga" feitos por júnior ainda geram o
   honorário automático quando já há valor homologado (não estava na matriz); `cessionario_documento`
   (cessões) e o CPF do onboarding em que o júnior é responsável não são mascarados.
+
+### 01/10/2026 — Lista de processos ordenada pela última atualização (movimentação ou publicação) e DataJud com lote 40
+
+- **O que mudou:** `GET /api/processos` passa a ordenar por `urgente DESC` e depois pela última
+  atualização = `GREATEST(última movimentação, última publicação não cancelada)`. A data da
+  publicação (`publicacoes.data_disponibilizacao`, tipo DATE) é tratada como meia-noite de Brasília.
+  Publicação nova também zera "dias parado" e conta nos filtros de período (`hoje`/`7d`/`30d`/`sem30d`/
+  `sem60d`), no filtro de tempo parado e nas exportações (WhatsApp e Excel; coluna "Última Atualização").
+  Campos novos na resposta: `ultima_atualizacao`, `ultima_atualizacao_origem` (`movimentacao`|
+  `publicacao`) e `ultima_pub_resumo`. Na tela, a coluna virou "Última Atualização", com o selo azul
+  "Publicação" e o resumo quando a mais recente é uma publicação. Decisão do usuário: urgentes
+  continuam no topo; publicação zera dias parado.
+- **Achado antes da mudança:** 104 processos tinham publicação mais nova que a última movimentação
+  (apareciam abaixo do que deviam). Das 336 publicações, 299 estão vinculadas; as 37 órfãs não casam
+  com nenhum processo cadastrado — não há religação a fazer.
+- **Verificado:** SQL gerado pela rota executado em leitura contra produção (até ~360 ms; 2 urgentes
+  no topo, depois os processos com publicação do dia); suíte do backend 979/979; build do frontend ok.
+- **Em produção:** backend `8f282de..179ee68` (deploy `89d3d0e2` SUCCESS; `/health` 200; rota 401 sem
+  login; sem erros no log); frontend `77f34c0..e399ff9` (deploy `f4931354` SUCCESS; o JS publicado de
+  /processos contém o campo novo). Pushes feitos por mim após o "execute" do usuário.
+- **DataJud:** `DATAJUD_TAMANHO_LOTE=40` aplicado pelo usuário no Railway em 01/10 (~00:35 BRT; antes
+  100). Antes da mudança: 507 `ok`, 300 `erro_sync`, 4 aguardando; execuções horárias alternam entre
+  sucesso parcial e falha total (0 casados às 19h, 23h e 03h UTC). Conferir após 06:00 UTC se as falhas
+  caíram; se não, baixar para 20 (o padrão é por faixa de horário do DataJud, não só tamanho de lote).
+- **Pendências:** a tela não foi aberta logada para conferência visual (subir o backend local contra o
+  banco de produção rodaria as migrações de boot); o painel/dashboard ainda calcula "parado" só por
+  movimentação (fora do escopo desta mudança).
+- **Acesso a produção pelo Claude:** liberado pelo usuário em 01/10 por regras de permissão
+  (`railway run …`). Leitura do banco de fora do Railway usa o serviço Postgres
+  (`railway run --service Postgres` com a URL pública), sempre com `.q-tmp.mjs` em modo somente leitura.
