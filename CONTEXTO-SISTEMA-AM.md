@@ -2909,3 +2909,19 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   a calculadora cria a pendência pelo formulário (`/publico/simulacao`) e o botão diz "Acabei de
   preencher a Calculadora…"; a página INSS não cria pendência pelo formulário, só abre o WhatsApp com
   "Quero conferir o desconto do INSS…", e a pendência nasce quando a Camila lê essa mensagem.
+
+### 02/10/2026 — Push do TJPB via Gmail funcionando; texto da movimentação corrigido
+
+- **Estado em produção:** push via IMAP ligado desde 01/10 21:20 (deploy `0e4b5cad`, variáveis
+  `PUSH_TJ_*` gravadas por janela do macOS com campo oculto). O usuário trocou o e-mail no PJe e
+  cadastrou os processos no Push do PJe em 02/10. **1º e-mail real:** 02/10 12:17 de
+  `pje@tjpb.jus.br`, lido às 12:20, casado com o processo (`0836519-21.2024`), status `sem_prazo`,
+  movimentação gravada. Leitor sem nenhuma falha em ~180 execuções.
+- **Defeito achado no 1º e-mail:** a movimentação era gravada com o e-mail inteiro ("PJe Push —
+  Tribunal de Justiça da Paraíba…") e na hora do recebimento. O corpo do PJe traz a tabela
+  "Data - Movimento" (`02/10/2026 12:04 - Juntada de RPV`). **Correção (branch
+  `push-tj-movimentos`):** `extrairMovimentos()` em `services/outlook/pushTJ.js` grava cada linha como
+  uma movimentação, com a data real (hora de Brasília); layout desconhecido cai no comportamento
+  antigo. Testes novos em `pushTJ.test.js`; suíte 991/991.
+- **Pendente:** publicar; corrigir a 1ª movimentação já gravada com o texto do e-mail (só com
+  autorização do usuário).

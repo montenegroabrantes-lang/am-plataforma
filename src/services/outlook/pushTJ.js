@@ -33,6 +33,30 @@ export function extrairNumerosCNJ(texto = '') {
  * positivos afogam os prazos reais no topo da lista. Melhor recusar e mandar
  * para conferência do que criar uma tarefa que mente.
  */
+// Linha da tabela do e-mail: "02/10/2026 12:04 - Juntada de RPV" (hora em Brasília).
+const LINHA_MOVIMENTO = /^\s*(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})(?::\d{2})?\s+-\s+(.+?)\s*$/gm;
+
+/**
+ * Extrai as linhas "data hora - movimento" do corpo do push do PJe.
+ * A hora vem no horário de Brasília (UTC-3, sem horário de verão desde 2019).
+ * @returns {{data: Date, texto: string}[]}
+ */
+export function extrairMovimentos(texto = '') {
+  const vistos = new Set();
+  const saida = [];
+  for (const m of String(texto).matchAll(LINHA_MOVIMENTO)) {
+    const [, dd, mm, aaaa, hh, mi, descricao] = m;
+    const data = new Date(`${aaaa}-${mm}-${dd}T${hh}:${mi}:00-03:00`);
+    const desc = descricao.trim().slice(0, 4000);
+    if (Number.isNaN(data.getTime()) || !desc) continue;
+    const chave = `${data.toISOString()}|${desc}`;
+    if (vistos.has(chave)) continue;
+    vistos.add(chave);
+    saida.push({ data, texto: desc });
+  }
+  return saida;
+}
+
 /**
  * Processa uma mensagem já lida do Graph.
  * Não lança: qualquer falha é devolvida no resultado para o worker registrar.
@@ -69,16 +93,28 @@ export async function processarMensagem(msg) {
 
   // Grava a movimentação. O índice único (processo_id, data_movimentacao, texto)
   // já protege contra o mesmo ato chegando também pelo DataJud.
+  // O e-mail do PJe traz uma tabela "Data - Movimento"; cada linha vira uma movimentação
+  // com a data real do ato. Sem linhas reconhecíveis (layout mudou), grava o e-mail inteiro
+  // na data de recebimento, como antes — perder o aviso é pior do que um texto feio.
   const textoMovimentacao = texto.slice(0, 4000) || assunto;
-  const inserida = await db.query(
-    `INSERT INTO movimentacoes (processo_id, data_movimentacao, texto, origem)
-     VALUES ($1, $2, $3, 'push_tj')
-     ON CONFLICT DO NOTHING
-     RETURNING id`,
-    [processo.id, recebidoEm, textoMovimentacao]
-  );
+  const movimentos = extrairMovimentos(texto);
+  const registros = movimentos.length
+    ? movimentos.map(m => [m.data, m.texto])
+    : [[recebidoEm, textoMovimentacao]];
 
-  if (inserida.length === 0) {
+  let inseridas = 0;
+  for (const [data, descricao] of registros) {
+    const inserida = await db.query(
+      `INSERT INTO movimentacoes (processo_id, data_movimentacao, texto, origem)
+       VALUES ($1, $2, $3, 'push_tj')
+       ON CONFLICT DO NOTHING
+       RETURNING id`,
+      [processo.id, data, descricao]
+    );
+    inseridas += inserida.length;
+  }
+
+  if (inseridas === 0) {
     return { status: 'duplicada', numero: processo.numero, processoId: processo.id };
   }
 
