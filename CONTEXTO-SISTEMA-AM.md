@@ -2925,3 +2925,22 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   antigo. Testes novos em `pushTJ.test.js`; suíte 991/991.
 - **Pendente:** publicar; corrigir a 1ª movimentação já gravada com o texto do e-mail (só com
   autorização do usuário).
+
+### 02/10/2026 (tarde) — Quadro de leads: selo de cadastro e cadastro do cliente sem sair do Quadro
+
+- **O que mudou (só frontend; o backend já devolvia `lead.onboarding` em `GET /api/estimativas/leads`):**
+  cada card do Quadro mostra a situação do cadastro (`src/lib/cadastroLead.mjs`): **✓ Cadastrado**
+  (onboarding com `cliente_id` ou em `protocolo_pendente`/`concluido`), **Cadastro pendente · até
+  dd/mm** com botão **"Completar cadastro →"** (Master), ou **Sem cadastro**. A coluna Fechado mostra
+  "N sem cadastro" no cabeçalho. Ao ativar o contrato pelo Quadro (arrastar para Fechado ou "Ativar
+  contrato"), o cadastro abre numa janela por cima do Quadro em vez de ir para `/onboardings/{id}`;
+  ao concluir/salvar/fechar, os leads recarregam. O formulário virou `src/components/CadastroOnboarding.js`,
+  usado também pela página `/onboardings/[id]`. Corrigido de passagem: o aviso "Para liberar os
+  protocolos faltam:" exibia "false". Decisões do usuário: uma coluna Fechado só, com selos; o Quadro
+  continua só para Master (responsável não-Master completa pela tela de Tarefas).
+- **Em produção:** frontend `e4eb796..fa2db61` (deploys `c4d5cca4` e `90b8617f` SUCCESS). Verificado
+  no Chrome logado: selos "Sem cadastro" nos cards, "6 sem cadastro" de 28 no Fechado, "✓ Cadastrado ·
+  protocolo pendente", e a janela de cadastro abrindo com os dados da calculadora (fechada sem salvar).
+- **Limites:** a Lista e o painel de conversa continuam levando à página `/onboardings/{id}` após o
+  fechamento; o selo "Sem cadastro" não distingue "ainda não fechou" de "fechou fora do sistema"
+  (o badge "já é cliente", por nome, segue à parte).
