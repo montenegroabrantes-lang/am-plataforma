@@ -2878,3 +2878,25 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   (verificação em duas etapas) e gravar as variáveis no Railway (script interativo preparado, a senha
   não passa pelo chat); publicar a branch. Depois: conferir `[Workers] Push do TJPB ativo via imap`,
   `/api/push-tj/saude` e as primeiras linhas em `push_tj_mensagens`.
+
+### 01/10/2026 (noite) — Camila assume lead de página que caiu no COMERCIAL (caso Rossana)
+
+- **Causa real do caso Rossana (pendência 157):** não era nono dígito. Ela digitou no formulário um
+  telefone com outros dígitos (`…99120545`, o real é `…98185819`), a confirmação falhou e ela
+  escreveu do número real pelo botão da página ("Olá! Acabei de preencher a Calculadora…"). O
+  chamado caiu no COMERCIAL, onde só o robô nativo do Digisac responde; a Camila ignora
+  departamentos sem "camila" no nome. Ela pediu advogado às 19:54 e ficou sem resposta.
+- **Correção (Camila `a526026`, deploy `a8930e72` SUCCESS, `/health` ok):**
+  1. mensagem pré-preenchida de botão de página (calculadora ou INSS, `camila/vinculo-calculadora.js`)
+     que chega fora dos departamentos da Camila e sem humano atribuído → a Camila puxa o chamado
+     para CAMILA - VENDAS e atende. Isso também cobre a campanha INSS, cujo lead sempre escreve
+     primeiro e antes cairia no robô nativo;
+  2. "Acabei de preencher a Calculadora…" de contato sem pendência (nem pelo `contact_id` nem pelo
+     telefone) → a Camila pede o nome completo, procura pendência dos últimos 7 dias sem conversa
+     com o mesmo nome (sem acento/caixa) e, havendo exatamente uma, vincula `contact_id`/`ticket_id`,
+     corrige o telefone, confirma o recebimento e alerta a equipe; sem pendência única, alerta e
+     segue a qualificação normal.
+- **Limites:** o robô nativo ainda manda o menu de boas-vindas antes da Camila assumir (dispara na
+  criação do chamado). A Rossana não foi recuperada automaticamente (as mensagens dela são
+  anteriores ao deploy): o chamado dela segue no COMERCIAL sem atendente e precisa de humano.
+  Testes: 255/256 (a falha é a antiga, dependente de horário); não testado com WhatsApp real.
