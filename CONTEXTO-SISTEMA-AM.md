@@ -2900,3 +2900,12 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   criação do chamado). A Rossana não foi recuperada automaticamente (as mensagens dela são
   anteriores ao deploy): o chamado dela segue no COMERCIAL sem atendente e precisa de humano.
   Testes: 255/256 (a falha é a antiga, dependente de horário); não testado com WhatsApp real.
+- **Seguimento (01/10/2026, 21:29 local):** a pedido do usuário, enviada à Rossana (chamado
+  `0d8a80d0`, contato `dede5946`) só a confirmação padrão de fora do horário ("Recebemos os dados da
+  sua simulação… retorno… amanhã"). O chamado continua no COMERCIAL sem atendente e ela havia pedido
+  advogado; a pendência 157 (telefone já corrigido para o número real) aguarda aprovação.
+- **Origem da Rossana:** calculadora do site (`origem: 'site'`, sem `campanha`), não a campanha INSS.
+  Até este registro nenhum lead da campanha INSS havia chegado após a publicação. Para distinguir:
+  a calculadora cria a pendência pelo formulário (`/publico/simulacao`) e o botão diz "Acabei de
+  preencher a Calculadora…"; a página INSS não cria pendência pelo formulário, só abre o WhatsApp com
+  "Quero conferir o desconto do INSS…", e a pendência nasce quando a Camila lê essa mensagem.
