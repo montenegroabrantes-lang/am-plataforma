@@ -2944,3 +2944,84 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Limites:** a Lista e o painel de conversa continuam levando à página `/onboardings/{id}` após o
   fechamento; o selo "Sem cadastro" não distingue "ainda não fechou" de "fechou fora do sistema"
   (o badge "já é cliente", por nome, segue à parte).
+
+### 05/10/2026 — Alertas da Camila no WhatsApp: análise de 7 dias e correções (publicado)
+
+- **Análise (só leitura):** 76 mensagens enviadas ao número de alertas entre 28/09 e 05/10, lidas pela
+  API do Digisac. Distribuição: 26 de lead novo, 7 relatórios das 8h, 7 relatórios das 9h, 10 de
+  Google/backup, 8 de "regra violada", 4 de "fase fora do mapa", 4 de Jurídico acionado, 3 de bom-dia,
+  2 de confirmação falha (Rossana), 1 de acompanhamento e 1 de pergunta repetida. Não houve
+  "atendimento quebrado", "ticket fora do departamento" nem "passagem sem resposta".
+- **Achado grave, NÃO resolvido (o usuário vai tratar):** Google `invalid_grant` no AM desde 01/10. O
+  backup diário não chega ao Drive (5 noites seguidas), clientes novos ficam sem pasta e os prazos não
+  vão para a Agenda. Precisa gerar um novo refresh token, como em 21/09.
+- **Correções (Camila `5d122cf`, deploy `a65dadfd` SUCCESS em 05/10 13:51, `/health` ok, boot sem
+  erro):**
+  1. A trava "avisar uma vez" saiu da memória e foi para o banco (tabela nova `alertas_enviados`,
+     validade de 24h por chave). Envio que falha libera a chave.
+  2. As chaves passaram a ser por contato (regra de saída, ação suspeita, várias ações).
+  3. "Contato <id>" vira nome e telefone, consultados no Digisac.
+  4. Alerta que pede ação também é gravado em `monitoramento_achados` (aba Camila do AM, com
+     aceito/descartado), sem duplicar o mesmo texto em aberto há menos de 24h. Avisos informativos
+     ficam de fora: lead novo, lead vinculado, Jurídico e outra tese (esses dois já se registravam).
+  5. Verificação de saída: markdown inequívoco (`**`, `*x*`, `__x__` entre espaços, "* " de lista,
+     sobra de `[ACAO:...]`) é corrigido antes do envio. "Ainda hoje" ligado a retorno/análise deixa de
+     contar como violação.
+  6. Mapa de fases: `qualificacao → vendas / aguardando_atendente_humano` virou transição esperada.
+  7. Monitoramento das 8h: revisa só o trecho novo (coluna nova
+     `revisoes_comportamento.ultima_mensagem`, com as últimas 3 mensagens revisadas), tira
+     `[ACAO:...]` da transcrição, não trata pedido expresso de advogado como violação e manda ao
+     WhatsApp uma linha "RESUMO" por conversa. O texto completo fica na aba Camila.
+  8. O alerta de telefone inexistente passou a dizer a causa. O nono dígito já estava corrigido
+     desde `37567ea`; no caso Rossana o número tinha sido digitado errado.
+- **Testes:** 268/268 em `tests/` e `test:safe` ok. Revisão independente: nenhum achado grave; 6 médios
+  ou baixos corrigidos antes da publicação.
+- **Infraestrutura:** o trial do Railway expirou nesse dia e bloqueou todo deploy (inclusive o
+  automático do push). Os serviços seguiram no ar. O usuário assinou um plano e o deploy passou.
+- **Pendências:** Google (acima); loop de retomada visto no relatório (4 retomadas seguidas para a
+  mesma lead sem resposta, contato `2aa8e066`), não corrigido; `DEVOLUCAO_ATENDENTE_PARADO_ATIVO`
+  segue desligada (modo sombra); o primeiro relatório das 8h no formato novo sai em 06/10 e ainda
+  precisa ser conferido.
+
+### 05/10/2026 (tarde) — Loop de retomada corrigido (caso Allana) — publicado
+
+- **Caso real (leitura no banco da Camila):** a Allana (`2aa8e066`) recebeu 4 mensagens automáticas
+  de 29/09 a 02/10 sem responder nenhuma vez desde 28/09:
+  1. pós-proposta (nível 0) um minuto depois do PDF, usando o texto "retomando sua proposta…" do
+     nível 1;
+  2. retorno agendado em 30/09, marcado fora da conversa;
+  3. nível 1 em 01/10, com a mesma frase e "sou Camila" na frente;
+  4. nível 2 em 02/10.
+  As duas causas: texto repetido entre o nível 0 e o nível 1, e trava de rajada fixa em 24h e só
+  entre níveis >0, que deixou o nível 2 sair no dia seguinte quando o nível 1 atrasou.
+- **Correção (Camila `d8cf906`, deploy `5ac63b6b` SUCCESS, `/health` ok; o push disparou o deploy
+  sozinho):**
+  1. O nível 0 da proposta ganhou texto próprio.
+  2. A repetição é conferida pelo núcleo do texto e, nos níveis 1 e 2, troca por uma variante. Os
+     níveis 3 (prescrição) e 4 (decisão) ficam fixos.
+  3. "Sou Camila" só sai quando a Camila ainda não escreveu no acompanhamento.
+  4. O intervalo mínimo desde o último envio passou a seguir a cadência planejada (24h/48h/96h/168h
+     por nível), contando também o nível 0 (`planejar` em `retomada-contextual.js`).
+- **Verificado:** testes 270/270 e `test:safe` ok. Pendências da Allana: nível 3 em 06/10 20:20 e
+  nível 4 em 13/10 20:20.
+- **Achado não corrigido:** as retomadas que deveriam sair escritas pela IA (`gerar-abordagem.js`)
+  saem sempre pelo texto de reserva. As 4 da Allana têm `origem=camila_template`, então a geração
+  pela IA está falhando ou sendo recusada pela validação. Ainda a investigar.
+
+### 05/10/2026 (noite) — Retomadas pela IA caíam no texto de reserva — corrigido e publicado
+
+- **Investigação (leitura no banco da Camila e reprodução):** em 14 dias saíram 81 retomadas pela IA
+  e 42 pelo texto de reserva (34%; 57% nas pós-proposta). A IA respondeu todas as 127 chamadas: o
+  problema era a validação de `gerar-abordagem.js`, que recusava qualquer "R$". A IA cita o valor
+  da proposta que vê na conversa. Reproduzi 10 casos reais e 16 fictícios: toda recusa foi por
+  esse motivo.
+- **Correção (Camila `5728b88`, deploy `794b519f` SUCCESS, `/health` ok; o push disparou o deploy):**
+  1. R$ é aceito só quando todo valor citado é exatamente o `valor_proposta`
+     (`propostas_enviadas.valor`, passado por `retomada-contextual.js`). No pré-proposta nenhum
+     valor passa.
+  2. A recusa da 1ª versão gera uma 2ª chamada à IA com o motivo (`revisao_recusada`). O texto de
+     reserva só entra se as duas forem recusadas ou o provedor falhar.
+  3. O motivo de cada recusa vai para o log: `[ACOMPANHAMENTO] resposta da IA recusada`.
+  Testes 272/272 e `test:safe` ok.
+- **Pendência:** em 1 a 2 dias, medir a nova proporção IA × reserva (`abordagens_contextuais.modelo`
+  nulo = reserva).
