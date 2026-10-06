@@ -3139,3 +3139,14 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   6. convite para tirar dúvidas e assinar.
 - **Pendências:** o chamado está no JURÍDICO sem atendente; falta ajustar a Camila para não oferecer
   visita presencial nesta tese (aguarda decisão do usuário).
+- **Seguimento (06/10, noite):** a Michelle respondeu que queria ir presencialmente com "mais 2
+  amigas" (a Camila chegou a prometer organizar o agendamento). Enviadas 4 mensagens pedindo, de
+  cada amiga e numerados, nome completo, WhatsApp, órgão, cargo e período, com estimativa para
+  cada uma no próprio WhatsApp e lembrete da procuração disponível. Cadastrar as amigas pela
+  estimativa manual quando os dados chegarem.
+- **Padrão publicado (Camila `fcbd1da`, deploy `f17d3c62` SUCCESS, `prompt_versao` `b701484ea1b2`):**
+  `camila/atendimento-presencial.js`. Depois da proposta, um pedido de presencial ou de "agendar
+  antes de assinar" recebe, uma vez por contato, as mensagens curtas do caso Michelle (com a
+  procuração se o link do Portal já foi enviado e o pedido dos dados de acompanhantes se forem
+  mencionados). O prompt deixa de oferecer visita; se a pessoa insistir, a Camila transfere sem
+  prometer data. Texto neutro em gênero.
