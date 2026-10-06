@@ -3121,3 +3121,21 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   3. Lista de 63 chamados a encerrar (sem atendente, 15+ dias, sem retomada) em
      `analise/digisac-chamados-a-encerrar-2026-10-06.md`, fora do Git. Encerramento aguarda
      confirmação, começando por um só para ver se o Digisac manda mensagem automática.
+
+### 06/10/2026 (noite) — Caso Michelle Arruda (fechamento pela procuração)
+
+- **Michelle Arruda Ramalho Rodrigues de Goes (`60946833`):** proposta de 06/10 12h41 (R$ 12.594,48);
+  documentos completos (CNH, contracheque e fatura) às 13h10; link da procuração do Portal de
+  Assinaturas da OAB enviado pela equipe às 17h51. Às 17h57 ela pediu agendamento antes de assinar
+  (às 13h28 a Camila tinha oferecido visita presencial).
+- **Ação (aprovada pelo usuário):** 6 mensagens curtas enviadas no chamado, com 6s de intervalo:
+  1. acolhimento;
+  2. atendimento presencial só por agendamento e alto volume, por isso a tese é atendida pelo
+     WhatsApp;
+  3. risco da espera (prescrição, em tom condicional);
+  4. identificação (OAB/PB, CNPJ, sede e site);
+  5. procuração padrão do escritório, só para esta ação, assinada pelo Portal da OAB, com
+     acompanhamento a cada etapa;
+  6. convite para tirar dúvidas e assinar.
+- **Pendências:** o chamado está no JURÍDICO sem atendente; falta ajustar a Camila para não oferecer
+  visita presencial nesta tese (aguarda decisão do usuário).
