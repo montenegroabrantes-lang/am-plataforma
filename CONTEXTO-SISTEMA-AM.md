@@ -3099,3 +3099,25 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Camila `d751c0d` (deploy `cac18217` SUCCESS, `prompt_versao` `6787cb96e22b`):** a documentação é
   sempre pedida numerada, um item por linha (prompt de vendas, fatos de apoio e instrução das
   retomadas pela IA), a pedido do usuário. Snapshot do prompt atualizado.
+
+### 06/10/2026 (noite) — Organização do Digisac: diagnóstico e fase 1
+
+- **Diagnóstico (só leitura):** 262 chamados abertos, 216 parados há 3+ dias. CAMILA - VENDAS 78,
+  JURÍDICO 58 (Ramon 42), ATENDIMENTO 54 (João Lucas 48), COMERCIAL 51 (47 sem atendente),
+  CONTRATAÇÃO 0. A contratação acontece de fato no ATENDIMENTO (os 7 leads com 4+ arquivos estão
+  com atendente). O COMERCIAL mistura leads de anúncio, leads de páginas com frases não reconhecidas
+  e clientes perguntando de processo. No AM, só 22 de 404 clientes têm WhatsApp. Atenção:
+  `DIGISAC_HUMAN_DEPARTMENT_ID` aponta para o COMERCIAL, então "transferir para atendente" cai numa
+  caixa sem dono.
+- **Estrutura aprovada pelo usuário (4 fases):** COMERCIAL vira só triagem; caixas por etapa do AM
+  com dono (sugeridos Luciano no fechamento e João Lucas na contratação e no atendimento, a
+  confirmar); encerramento de chamados parados; etiquetas a partir do AM.
+- **Fase 1 publicada (Camila `2c3d0eb`, deploy `6e0830f4` SUCCESS):**
+  1. A Camila reconhece as frases das outras páginas e a saudação exata do anúncio e puxa esses
+     chamados para CAMILA - VENDAS; a saudação do anúncio vale como opção 1, não como pedido
+     jurídico.
+  2. O aviso de cliente esperando (2h+) vale também para COMERCIAL, ATENDIMENTO e JURÍDICO
+     (`DIGISAC_ESPERA_DEPARTAMENTOS`).
+  3. Lista de 63 chamados a encerrar (sem atendente, 15+ dias, sem retomada) em
+     `analise/digisac-chamados-a-encerrar-2026-10-06.md`, fora do Git. Encerramento aguarda
+     confirmação, começando por um só para ver se o Digisac manda mensagem automática.
