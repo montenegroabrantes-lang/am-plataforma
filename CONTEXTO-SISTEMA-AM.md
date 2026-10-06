@@ -3025,3 +3025,19 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   Testes 272/272 e `test:safe` ok.
 - **Pendência:** em 1 a 2 dias, medir a nova proporção IA × reserva (`abordagens_contextuais.modelo`
   nulo = reserva).
+
+### 05/10/2026 (noite) — Consumo de IA da Camila e economia no aprendizado automático
+
+- **Medição (`uso_ia`, desde 15/09, estimada pelo preço de tabela do Sonnet 4.6):** cerca de US$ 22 em
+  20 dias, ou uns US$ 33 por mês. O aprendizado automático respondia por 56% desse valor.
+  - Por que custava tanto: 364 análises para 154 contatos (58% reanálises da conversa inteira; um
+    contato foi analisado 34 vezes) e técnicas retestadas a cada 30 dias. As técnicas foram usadas em
+    só 39 mensagens a clientes no período.
+- **Aplicado (variáveis no Railway da Camila, deploy `7d303ee6` SUCCESS, `/health` ok):**
+  `CAMILA_APRENDIZADO_INATIVIDADE_MINUTOS=1440` (só estuda a conversa depois de 24h parada; antes,
+  2h; fechamentos e desfechos continuam prioritários) e `CAMILA_APRENDIZADO_RETESTE_DIAS=90` (antes,
+  30; a técnica ativa também passa a valer 90 dias). Para reverter, basta apagar as duas variáveis.
+- **Estimativa:** o aprendizado deve cair de cerca de US$ 18 para US$ 7 a 8 por mês.
+- **Opções não aplicadas:** limitar a 1 reanálise por contato por semana, usar o Batch da Anthropic
+  (50% mais barato) e usar o Haiku 4.5 na análise e na crítica.
+- **Pendência:** medir em cerca de 7 dias.
