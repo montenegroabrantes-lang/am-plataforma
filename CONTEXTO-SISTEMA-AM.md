@@ -3041,3 +3041,23 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Opções não aplicadas:** limitar a 1 reanálise por contato por semana, usar o Batch da Anthropic
   (50% mais barato) e usar o Haiku 4.5 na análise e na crítica.
 - **Pendência:** medir em cerca de 7 dias.
+
+### 06/10/2026 — Relatórios do dia, retomadas e identificação oficial do escritório na Camila
+
+- **Relatório das 8h no formato novo:** uma linha por conversa, com nome e telefone (cerca de 800
+  caracteres). Ainda apontou 7 de 10 conversas porque foi a 1ª execução com a marca nova
+  (`ultima_mensagem` vazia, então releu tudo); a partir de 07/10 revisa só o trecho novo. Continua
+  marcando a 3ª retomada (prescrição, texto aprovado) como "falsa urgência" e retomadas espaçadas
+  como "loop". O ajuste no revisor aguarda decisão do usuário.
+- **Retomadas desde 05/10 18h40:** 18 enviadas, todas pela IA (antes, 34% pelo texto de reserva).
+  Citam o valor certo da proposta. Intervalos de 24h, 96h e 168h, conforme a cadência; 9 pendências
+  canceladas porque o cliente respondeu.
+- **Caso Romero (`099e4649`, 05/10 11h):** diante da desconfiança do cliente, a IA informou um CNPJ
+  inventado e mascarado ("11.aaa.aaa/0001-aa"). Corrigido na Camila `8584e9d` (deploy `f35f7b8d`
+  SUCCESS, `prompt_versao` `84bb72760f52`): o prompt de vendas e os fatos de credibilidade trazem a
+  OAB/PB nº 2300244 e o CNPJ nº 52.160.310/0001-77, informados pelo usuário, e proíbem inventar
+  número de documento. Snapshot do prompt atualizado com aprovação.
+- **Falso positivo:** o alerta "ainda hoje" de 06/10 10h20 (André) vem da regra do prompt de vendas
+  que obriga propor dois horários na hesitação; a verificação de saída ainda não aceita esse uso.
+- **Pendências:** ajustar o revisor das 8h; relatório das 9h ainda mostra o `contact_id` em vez do
+  telefone; Google `invalid_grant` (backup fora do Drive, 6ª noite).
