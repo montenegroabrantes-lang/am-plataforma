@@ -3061,3 +3061,29 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   que obriga propor dois horários na hesitação; a verificação de saída ainda não aceita esse uso.
 - **Pendências:** ajustar o revisor das 8h; relatório das 9h ainda mostra o `contact_id` em vez do
   telefone; Google `invalid_grant` (backup fora do Drive, 6ª noite).
+
+### 06/10/2026 (tarde) — Nova estratégia de retomadas, revisor das 8h e relatório das 9h — publicado
+
+- **Análise (40 dias, só leitura):** 19 de 100 propostas fecharam, em média 2,3 dias depois; só 3
+  tiveram retomada antes. Resposta em 24h: pós-proposta 44%, nível 1 25%, nível 2 17%, nível 3
+  (prescrição) 7%, nível 4 13%. Melhor faixa: 11h–13h (cerca de 35%); pior: 16h (7%). As
+  respostas eram dúvidas (origem do valor, golpe, medo no trabalho). 80 de 100 propostas estavam sem
+  desfecho registrado.
+- **Camila `66fa0b7` + `cc4e55f` (deploy `6d2b36ea` SUCCESS, `/health` ok, colunas novas criadas no
+  boot):**
+  1. Retomadas de proposta tratam uma dúvida por nível: 1 origem do valor (Fazenda Pública), 2
+     confiança (OAB/PB 2300244, CNPJ, endereço, site), 3 trabalho (o escritório conduz contra a
+     Fazenda Pública, sem a pessoa tratar com a escola ou a chefia) com a prescrição em uma frase,
+     4 continuar ou pausar. A IA recebe o mesmo tema. Textos aprovados pelo usuário.
+  2. Sem horário habitual confiável do lead, a retomada sai entre 11h e 13h
+     (`RETOMADA_JANELA_PADRAO` muda a faixa).
+  3. `abordagens_contextuais.tema` e `GET /api/reabordagens/desempenho` (resposta em 24h, documento
+     em 7 dias e fechamento por tipo, nível, tema e origem).
+  4. `camila/cliente-esperando.js`: a cada 15 min no expediente, avisa a equipe quando um lead com
+     proposta escreveu há 2h+ sem resposta (ignora cortesia e figurinha). Na primeira simulação
+     apareceu o Bosoerg (`511598f6`), sem resposta havia 5h.
+  5. O revisor das 8h aceita a prescrição aprovada, as retomadas espaçadas e os dois horários da
+     hesitação; o relatório das 9h mostra o telefone.
+  Testes 278/278 e `test:safe` ok.
+- **Pendências:** em 2 a 3 semanas, comparar o desempenho por tema; a equipe deve registrar fechado
+  ou perdido no Quadro para a medição valer.
