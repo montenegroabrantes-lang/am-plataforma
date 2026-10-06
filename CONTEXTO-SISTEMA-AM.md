@@ -3087,3 +3087,15 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   Testes 278/278 e `test:safe` ok.
 - **Pendências:** em 2 a 3 semanas, comparar o desempenho por tema; a equipe deve registrar fechado
   ou perdido no Quadro para a medição valer.
+
+### 06/10/2026 (fim da tarde) — Caso Elielma e lista de documentos numerada
+
+- **Elielma Gonçalo Henrique (`a9e8ce04`, 558381604192):** proposta de 14/09 (R$ 8.565,98, validade da
+  estimativa até 30/09). Dúvida sobre uma ação coletiva de prestadores do Estado; a Camila a passou
+  ao Jurídico em 02/10, e o chamado ficou 4 dias no JURÍDICO sem atendente, com um áudio dela não
+  ouvido. Com aprovação do usuário, enviada às 17h00 uma mensagem afirmando que a tese é
+  independente da ação coletiva, com a identificação OAB/CNPJ e o pedido de documentos. O chamado
+  segue no JURÍDICO e precisa de atendente.
+- **Camila `d751c0d` (deploy `cac18217` SUCCESS, `prompt_versao` `6787cb96e22b`):** a documentação é
+  sempre pedida numerada, um item por linha (prompt de vendas, fatos de apoio e instrução das
+  retomadas pela IA), a pedido do usuário. Snapshot do prompt atualizado.
