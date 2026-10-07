@@ -3231,3 +3231,20 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   - Leonarda ("Não quero."): mensagem cordial de encerramento e desfecho "perdido".
   - Os outros 21 chamados com atendente marcado (João Lucas, Ramon e Luciano) foram transferidos
     para a CAMILA - VENDAS, sem atendente, para a Camila responder a quem retornar.
+
+### 07/10/2026 (noite) — PENDÊNCIA: Camila no Instagram
+
+- **Pedido do usuário:** a Camila interagir no Instagram e captar os leads que curtem, comentam e
+  seguem o perfil @abrantesemontenegro. Marcado como pendência; nada foi feito.
+- **Situação:** o Digisac só tem o WhatsApp conectado. O Instagram não está ligado à Camila, e os
+  comentários ficam sem resposta (exemplo: sol_leiite, "Sim, onde receber esses valores…", em
+  07/10). Só existe o link da bio ("Vim do Instagram…"), que a Camila já reconhece como origem
+  `instagram_organico`.
+- **O que é possível:**
+  1. Comentários: resposta pública e uma mensagem privada com o link, via API do Instagram (app da
+     Meta com permissões de comentários e mensagens; leva dias de aprovação).
+  2. Direct: conectar o Instagram ao Digisac (canal Instagram Direct) para a Camila atender.
+  3. Curtidas, reposts e seguidores: a Meta proíbe mensagem automática; usar remarketing com o
+     público de engajamento do Instagram (30 a 60 dias), levando à calculadora.
+- **Depende do usuário:** escolher a frente, informar o link a usar e ter acesso de administrador
+  ao Gerenciador de Negócios da Meta e ao Digisac.
