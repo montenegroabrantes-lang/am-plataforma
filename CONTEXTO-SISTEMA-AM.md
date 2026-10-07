@@ -3168,3 +3168,15 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   `EXPLICACAO_PRESCRICAO` virou "Com o tempo, parte dos valores a receber pode ir prescrevendo.".
   Vale para a 3ª retomada de pré-proposta, documentos e assinatura, para a resposta a pedido
   presencial, para a instrução da IA e para a retomada legada.
+
+### 07/10/2026 (tarde) — Caso Gabriela: condução aos documentos depois de uma dúvida
+
+- **Gabriela Gouveia Lucena Paiva (`5e7b9908`):** respondeu à 4ª retomada perguntando sobre
+  honorários e valor. A Camila respondeu (respostas rápidas FIXA-HONORARIOS e FIXA-ORIGEM-VALOR) e
+  parou. A pedido do usuário, enviado manualmente o pedido de documentos em 3 mensagens, com a lista
+  numerada.
+- **Causa:** a condução aos documentos só existia quando o cliente já dizia que queria seguir, e
+  só na reentrada (`propostaAnterior`).
+- **Correção (Camila `02cceae`):** com proposta registrada, sem documentos e sem desfecho, a IA
+  responde a dúvida e conduz aos documentos (lista numerada, `[ACAO:SOLICITAR_DOCS]`), salvo
+  recusa. Quando cai no texto aprovado, a condução é acrescentada a ele.
