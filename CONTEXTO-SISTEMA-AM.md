@@ -3180,3 +3180,38 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Correção (Camila `02cceae`):** com proposta registrada, sem documentos e sem desfecho, a IA
   responde a dúvida e conduz aos documentos (lista numerada, `[ACAO:SOLICITAR_DOCS]`), salvo
   recusa. Quando cai no texto aprovado, a condução é acrescentada a ele.
+
+### 07/10/2026 (fim da tarde) — Reabordagem em massa e documentos que ficavam no limbo
+
+- **Análise com agentes (só leitura):** 89 leads com proposta sem fechamento (R$ 930 mil). Quentes 10,
+  mornos 30, frios 43, perdidos 6. Achados: promessas da equipe não cumpridas (horários presenciais,
+  ligações), propostas com valor errado (Ruana R$ 12,32, José Milton R$ 12,22), Joana com duas propostas,
+  Romero já assinado e "RAMON DANTAS" como número interno. Relatórios fora do Git em
+  `analise/leads-sem-fechamento-2026-10-07.md` e `analise/reabordagem-para-aprovar-v2-2026-10-07.md`.
+- **Reabordagem manual aprovada pelo usuário.** Modelo final:
+  1. cumprimento;
+  2. resumo ("No dia DD/MM, enviei a sua estimativa, no valor de R$ X, e ficou pendente…");
+  3. empatia com a correria;
+  4. "não faz sentido deixar para a Fazenda Pública…";
+  5. honorários só no final, quando receber;
+  6. documentos numerados;
+  7. fechamento leve, sem pergunta de cobrança.
+  O 1º lote saiu com o fechamento "por qual prefere começar", considerado agressivo (7 clientes);
+  o envio foi parado e retomado no modelo final.
+  Excluídos: procuração já enviada, recusas, Bosoerg (enviaria hoje), Gabriela, valores errados e
+  número interno. Ely, Maria do Socorro e Thaides (pedido presencial) ficaram para alinhar.
+  Joana, Jailson e Pedro ficaram retidos para conferência. Os 23 chamados com atendente marcado
+  (João Lucas 14, Ramon 7, Luciano 2) também receberam, com o atendente mantido. O grupo C (5) fica
+  para 08/10.
+- **Documentos no limbo, corrigido (Camila `c4e614a`, deploy `c7c50aa2` SUCCESS):**
+  - Em 60 dias, 11 de 17 leads com documentos tinham 1 a 3 arquivos e nunca passaram à equipe,
+    porque a passagem exigia 4.
+  - Agora a passagem acontece com 3 arquivos (`DOCUMENTOS_NECESSARIOS` e `ARQUIVOS_DA_COLETA`).
+  - A equipe é avisada a cada documento recebido; ao chegar a 3 arquivos, "Documentação pronta para
+    contrato", também na aba Camila.
+  - O cliente recebe a confirmação com a lista numerada.
+  - Os avisos comerciais vão para `EQUIPE_WHATSAPP` (lista separada por vírgula; sem ela, para
+    `RELATORIO_WHATSAPP`); o diagnóstico continua só no relatório.
+  - Aviso enviado sobre Geane (2 documentos hoje), Michelle Arruda e Michelle Danser.
+- **Pendência:** o usuário precisa informar os números de Ramon, Miguel Porto, João Lucas e Luciano
+  para `EQUIPE_WHATSAPP`.
