@@ -3164,5 +3164,7 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   achou incompreensível o texto técnico). O validador reconhece "prescrever" e aceita
   "parte desses valores". Retomada com parágrafos sai em mensagens separadas, com 4s de intervalo
   (`RETOMADA_PAUSA_BOLHAS_MS`; `RETOMADA_DIVIDIR_BOLHAS=false` desliga).
-- **Pendência:** o texto técnico de prescrição ainda aparece na 3ª retomada das outras etapas e
-  na resposta a pedido presencial; simplificar se o usuário quiser.
+- **Prescrição simplificada em todos os lugares (Camila `88b877b`, deploy `8e9a4ad8` SUCCESS):**
+  `EXPLICACAO_PRESCRICAO` virou "Com o tempo, parte dos valores a receber pode ir prescrevendo.".
+  Vale para a 3ª retomada de pré-proposta, documentos e assinatura, para a resposta a pedido
+  presencial, para a instrução da IA e para a retomada legada.
