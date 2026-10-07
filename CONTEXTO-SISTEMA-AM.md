@@ -3150,3 +3150,19 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   procuração se o link do Portal já foi enviado e o pedido dos dados de acompanhantes se forem
   mencionados). O prompt deixa de oferecer visita; se a pessoa insistir, a Camila transfere sem
   prometer data. Texto neutro em gênero.
+
+### 07/10/2026 — Retomadas com os textos aprovados pelo usuário — publicado
+
+- **Camila `b462f9b` (deploy `62f2cf98` SUCCESS, `/health` ok):**
+  1. 1ª retomada: origem do valor junto com confiança (OAB/PB, CNPJ e site).
+  2. 2ª: empatia com a rotina e "não faz sentido deixar com a Fazenda Pública valores que podem ser
+     restituídos a você… parte desses valores vai prescrevendo".
+  3. 3ª: aviso "não deixe prescrever os valores que você pode ter a receber da Fazenda Pública",
+     conduzindo aos documentos.
+  4. 4ª: sem mudança.
+- **Regras:** a prescrição aparece nos níveis 2 e 3 da proposta, em linguagem simples (o usuário
+  achou incompreensível o texto técnico). O validador reconhece "prescrever" e aceita
+  "parte desses valores". Retomada com parágrafos sai em mensagens separadas, com 4s de intervalo
+  (`RETOMADA_PAUSA_BOLHAS_MS`; `RETOMADA_DIVIDIR_BOLHAS=false` desliga).
+- **Pendência:** o texto técnico de prescrição ainda aparece na 3ª retomada das outras etapas e
+  na resposta a pedido presencial; simplificar se o usuário quiser.
