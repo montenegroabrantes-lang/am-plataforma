@@ -3215,3 +3215,19 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   - Aviso enviado sobre Geane (2 documentos hoje), Michelle Arruda e Michelle Danser.
 - **Pendência:** o usuário precisa informar os números de Ramon, Miguel Porto, João Lucas e Luciano
   para `EQUIPE_WHATSAPP`.
+- **Seguimento (07/10, noite):**
+  - Padrão de 3 mensagens aprovado para reabordagem: cumprimento + resumo; empatia + Fazenda +
+    honorários; documentos + "vou manter o seu atendimento em aberto".
+  - 64 clientes reabordados no dia; grupo C (5) agendado para 08/10 9h30 (tarefa
+    `reabordagem-grupo-c-08-10`, arquivos em `analise/reabordagem-envio/`).
+  - Respostas no mesmo dia: 7, entre elas a Geane, que mandou 2 documentos.
+  - Vitória ("MARIA DAS", `ebf046a8`) ficou sem resposta porque o chamado estava com o João Lucas;
+    respondida manualmente.
+  - **Novo padrão (Camila `a32b2f6`, deploy `5804fcfe`):** `camila/explicacao-valor.js`. A pergunta
+    "de que se trata esse valor?" depois da proposta recebe 3 mensagens: restituição reconhecida
+    pelos tribunais superiores e pelo STF (mais de 25 meses); quem paga é a Fazenda Pública,
+    liberação pela Justiça em nome da pessoa; honorários de 30% só no êxito; documentos. Sem citar
+    lei. O padrão presencial passa a valer também fora da reentrada.
+  - Leonarda ("Não quero."): mensagem cordial de encerramento e desfecho "perdido".
+  - Os outros 21 chamados com atendente marcado (João Lucas, Ramon e Luciano) foram transferidos
+    para a CAMILA - VENDAS, sem atendente, para a Camila responder a quem retornar.
