@@ -3317,3 +3317,13 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   outra pasta de pendentes, `_PENDENTE A PROTOCOLAR - 2026`, sem o "- AM", que não foi configurada).
 - **Pendências:** vincular as 4 pastas pelo painel; decidir se `_PENDENTE A PROTOCOLAR - 2026` (sem
   "- AM") também entra; comprovante sem texto (imagem escaneada) não tem número lido.
+
+### 08/10/2026 (noite) — Conciliação Drive: várias pastas de pendentes
+
+- **Backend `09b4753` (em `main`):** `GOOGLE_DRIVE_PASTA_PENDENTES` aceita lista de ids; a 1ª recebe as
+  pastas novas e todas entram no relatório, no vínculo e na mudança para Outorgantes (a pasta sai da
+  pendentes em que estiver). Objetivo: incluir também `_PENDENTE A PROTOCOLAR - 2026` (sem "- AM").
+- **Variável no Railway:** o usuário informou ter concluído a atualização ("FEITO"). Não verificado por
+  esta sessão (sem acesso ao Railway).
+- **Pendências:** rodar "📁 Conciliar com o Drive" e confirmar que as 12 tarefas sem pasta caíram;
+  vincular as pastas restantes pelo painel.
