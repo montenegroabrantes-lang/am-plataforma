@@ -3248,3 +3248,18 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
      público de engajamento do Instagram (30 a 60 dias), levando à calculadora.
 - **Depende do usuário:** escolher a frente, informar o link a usar e ter acesso de administrador
   ao Gerenciador de Negócios da Meta e ao Digisac.
+
+### 08/10/2026 — Resultado da reabordagem: fechamentos e documentos
+
+- **Documentos:** Bárbara enviou 3 arquivos às 10h10, e a passagem automática para contrato funcionou
+  pela regra nova dos 3 arquivos. Franck enviou 2. Geane e Michelle Arruda já tinham recebido a
+  procuração. Luã assinou a procuração em 07/10 às 20h38, mas estava marcado como perdido.
+- **Fechados (a pedido do usuário, com o valor da proposta em `valor_fechado`):** Bárbara (R$ 5.979,20),
+  Franck (R$ 8.565,98), Geane (R$ 12.200,00) e Luã (R$ 8.919,55). Total de R$ 35.664,73.
+- **Perdidos:** Leonarda, Adrielio e José Manoel (resposta agressiva). Maria Alexisandra ficou em stand by
+  (acompanhamento pausado).
+- **Grupo C:** o envio agendado para as 9h30 travou esperando a aprovação do comando e foi parado e
+  desativado. O envio foi feito manualmente às 13h55 para José Marcone, Joelma, Selidon e Allana. Ana
+  Cecília ficou de fora porque já tinha recebido uma retomada automática no dia.
+- **Total reabordado:** 68 clientes em 07 e 08/10. Lição: tarefa agendada que roda `railway run` pode
+  parar esperando aprovação. Na próxima, aprovar o comando antes ou rodar dentro da sessão.
