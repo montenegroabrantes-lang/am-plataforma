@@ -3281,3 +3281,39 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Limite:** sugestão não vincula sozinha; o cargo e o órgão precisam ser escolhidos na lista (texto
   digitado diferente não casa). Se no futuro o FGTS ganhar outros perfis sugeridos, acrescentar aos
   critérios em vez de substituir.
+
+### 08/10/2026 — Conciliação Drive × protocolo (pastas da equipe) e token do Google renovado
+
+- **Problema (caso Franklin, `10069639442`):** a equipe organiza o protocolo em
+  `_PENDENTE A PROTOCOLAR - 2026 - AM` e, depois de protocolar, move a pasta para `Outorgantes 2026`;
+  o AM criava outra pasta vazia em `AM Advogados — Clientes` ("CPF — Nome" + 5 subpastas) e nunca
+  sabia do protocolo — a tarefa ficava aberta e vencida. Caso real: Ismania, pasta em Outorgantes
+  desde 30/09 com a tarefa pendente.
+- **Decisão do usuário:** combinação A + B, pasta válida = `_PENDENTE A PROTOCOLAR - 2026 - AM`.
+  Pastas vazias já criadas pelo AM foram mantidas (nada apagado).
+- **Backend `346efeb` (deploys `fc583fcf`/`932ab23b` SUCCESS):** `services/drive/pastasEquipe.js`
+  (sigla do ente PB/PMJP/EMLUR/NATAL/…; nome "NOME x ENTE"; casamento por palavras tolerante a erro
+  de digitação, primeiro nome obrigatório, único candidato) e `services/drive/conciliacao.js`:
+  (A) pasta nova nasce em Pendentes sem subpastas; ao concluir o ÚLTIMO protocolo inicial do cliente
+  (`concluir-com-numero`, pós-commit) a pasta vai para Outorgantes; (B) worker
+  `detectar-protocolos-drive` a cada 30 min marca tarefa aberta cuja pasta está em Outorgantes
+  (`tarefas.drive_protocolo_detectado_em/_pasta_id/_pasta_url/drive_numeros_encontrados`, migração
+  `2026_10_08_drive_protocolo_detectado`) e lê CNJ de PDF "comprovante/protocolo/recibo" (`unpdf`) como
+  sugestão — nunca conclui; (C) `GET /api/drive-conciliacao`, `POST /vincular`, `POST /detectar`
+  (Master). Variáveis: `GOOGLE_DRIVE_PASTA_PENDENTES` e `GOOGLE_DRIVE_PASTA_OUTORGANTES` (ids das pastas,
+  gravadas no Railway; Outorgantes aceita lista, a 1ª é o destino — trocar em 2027). Re-protocolo
+  (`ciclo_inicio`) fica de fora. Suíte 1004/1004.
+- **Frontend `aabfe2a` (deploy `cb111585`):** botão "📁 Conciliar com o Drive" em Tarefas (Master) e selo
+  "PROTOCOLADO NO DRIVE · FALTA O NÚMERO" na tarefa; número lido do comprovante pré-preenche
+  "Concluir com número" quando é único.
+- **Token Google renovado (08/10, ~17:54):** `invalid_grant` desde 01/10 resolvido — reautorizado no
+  Chrome do usuário (conta `montenegroabrantes@gmail.com`, Drive + Agenda), token gravado direto no
+  Railway sem exibição; verificado `TOKEN OK` com os 2 escopos. Isso também religa backup no Drive,
+  pastas de cliente e Agenda (conferir o backup das 02h de 09/10).
+- **1ª execução real:** detector marcou 6 tarefas (Ismania, Dinez ×2, Maria das Graças ×3; nenhum
+  comprovante com número); 4 pastas a vincular (Franklin, Michele Rodrigues, Samuel Amorim, Marcela
+  Ribeiro); 8 pastas em Pendentes sem cliente no AM (ex.: Walber, Barbara, Yraktania — Walber só tem
+  onboarding com cadastro pendente); 12 tarefas sem pasta em Pendentes (parte delas tem pasta na
+  outra pasta de pendentes, `_PENDENTE A PROTOCOLAR - 2026`, sem o "- AM", que não foi configurada).
+- **Pendências:** vincular as 4 pastas pelo painel; decidir se `_PENDENTE A PROTOCOLAR - 2026` (sem
+  "- AM") também entra; comprovante sem texto (imagem escaneada) não tem número lido.
