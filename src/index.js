@@ -39,6 +39,7 @@ import { classificacoesProcessoRouter } from './routes/classificacoesProcesso.js
 import { publicacoesRouter, importarPublicacoesHandler } from './routes/publicacoes.js';
 import { estimativasRouter } from './routes/estimativas.js';
 import { pushTJRouter }      from './routes/pushTJ.js';
+import { driveConciliacaoRouter } from './routes/driveConciliacao.js';
 import { onboardingsRouter } from './routes/onboardings.js';
 import { integracaoCamilaRouter, autenticarIntegracaoCamila } from './routes/integracaoCamila.js';
 import { chavesApiRouter } from './routes/chavesApi.js';
@@ -162,6 +163,7 @@ app.post('/api/publicacoes/importar', importLimiter, importarPublicacoesHandler)
 app.use('/api/publicacoes',   autenticar, publicacoesRouter);
 app.use('/api/estimativas',   autenticar, estimativasRouter);
 app.use('/api/push-tj',       autenticar, pushTJRouter);
+app.use('/api/drive-conciliacao', autenticar, driveConciliacaoRouter);
 app.use('/api/onboardings',   autenticar, onboardingsRouter);
 app.use('/api/chaves-api',    autenticar, chavesApiRouter);
 app.use('/api/acervo',        autenticar, acervoRouter);
@@ -971,6 +973,13 @@ async function iniciar() {
 
     // S-03 (sessão revogável): usuarios.sessao_versao + sessoes_refresh. SEM .catch: se falhar, o boot falha e o
     // /health segue em 503 -- o Railway não promove o deploy e a versão anterior continua no ar.
+    // Conciliação Drive × protocolo (08/10/2026): marca de "protocolado no Drive" detectada pelo worker.
+    await migrar('2026_10_08_drive_protocolo_detectado', async () => {
+      await db.execute(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS drive_protocolo_detectado_em TIMESTAMPTZ`);
+      await db.execute(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS drive_protocolo_pasta_id TEXT`);
+      await db.execute(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS drive_protocolo_pasta_url TEXT`);
+      await db.execute(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS drive_numeros_encontrados JSONB`);
+    });
     await migrar('2026_10_S03_sessao_revogavel', () => migrarSessaoRevogavel((sql) => db.execute(sql)));
     // S-13: gatilho de auditoria só-inserção, por último entre as migrações do esquema (ver o comentário do S-13 acima).
     await migrar('2026_10_S13_auditoria_imutavel', () => protegerAuditoria(db))

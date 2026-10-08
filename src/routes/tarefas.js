@@ -937,6 +937,13 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
     ip: req._ip,
   });
 
+  // Último protocolo inicial do cliente concluído → pasta sai de Pendentes para Outorgantes (Drive).
+  if (!tarefa.ciclo_inicio && tarefa.cliente_id) {
+    import('../services/drive/conciliacao.js')
+      .then(({ moverParaOutorgantesSeConcluido }) => moverParaOutorgantesSeConcluido(tarefa.cliente_id, { usuarioId: req.user.id }))
+      .catch(e => console.error('[Protocolo] Mudança da pasta no Drive falhou:', e.message));
+  }
+
   res.json({ ok: true, processo_id: processoId, numero: numeroLimpo });
 });
 

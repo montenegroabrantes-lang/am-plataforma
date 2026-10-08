@@ -3,7 +3,7 @@ import { db } from '../db/index.js';
 import { cpfValido } from '../utils/cpf.js';
 import { uuidValido } from '../utils/validacao.js';
 import { somarDiasUteis, dataCalendarioValida } from '../utils/diasUteis.js';
-import { criarPastaCliente, criarSubpasta } from './drive/index.js';
+import { criarPastaDoCliente } from './drive/conciliacao.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { vinculoUnicoAtivo } from '../utils/vinculos.js';
 import { resolverDemanda } from '../utils/demandas.js';
@@ -26,12 +26,12 @@ export async function sincronizarDriveCliente(cliente, onboardingId) {
       );
       return;
     }
-    const { id: pastaId, url } = await criarPastaCliente(cliente.cpf, cliente.nome);
+    // Pasta no padrão da equipe ("NOME x ENTE" em Pendentes a protocolar), ou o formato antigo
+    // quando a pasta de Pendentes não está configurada (services/drive/conciliacao.js).
+    const polo = cliente.polo_passivo !== undefined ? cliente.polo_passivo
+      : (await db.queryOne(`SELECT polo_passivo FROM clientes WHERE id=$1`, [cliente.id]))?.polo_passivo;
+    const { id: pastaId, url } = await criarPastaDoCliente({ ...cliente, polo_passivo: polo });
     await db.execute(`UPDATE clientes SET drive_pasta_id=$1, drive_pasta_url=$2 WHERE id=$3`, [pastaId, url, cliente.id]);
-    await Promise.all([
-      criarSubpasta(pastaId, 'Documentos Pessoais'), criarSubpasta(pastaId, 'Vínculo Funcional'),
-      criarSubpasta(pastaId, 'Procurações'), criarSubpasta(pastaId, 'Contratos'), criarSubpasta(pastaId, 'Petições'),
-    ]);
     await db.execute(
       `UPDATE onboardings_contrato SET drive_sync_status='sincronizado',drive_sync_erro=NULL WHERE id=$1`,
       [onboardingId]

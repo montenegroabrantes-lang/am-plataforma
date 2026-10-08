@@ -5,7 +5,8 @@ import { db }        from '../db/index.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { mensagemComCodigo } from '../middleware/erros.js';
 import { uuidValido } from '../utils/validacao.js';
-import { criarPastaCliente, uploadPdf } from '../services/drive/index.js';
+import { uploadPdf } from '../services/drive/index.js';
+import { criarPastaDoCliente } from '../services/drive/conciliacao.js';
 import { ehPdf, limiteDeUploadDoPerfil, LIMITE_MAXIMO_UPLOAD } from '../utils/arquivoPdf.js';
 
 // Documentos do cliente (upload de PDF para o Drive). Montado por clientes.js em
@@ -20,7 +21,7 @@ const CATS_VALIDAS = ['pessoais', 'vinculo', 'procuracao', 'outro'];
 
 export function criarDocumentosRouter({
   banco = db,
-  drive = { criarPastaCliente, uploadPdf },
+  drive = { criarPastaCliente: (cpf, nome, cliente) => criarPastaDoCliente(cliente), uploadPdf },
   auditar = registrarAuditoria,
 } = {}) {
   const router = Router({ mergeParams: true });
@@ -61,14 +62,14 @@ export function criarDocumentosRouter({
     }
 
     const cliente = await banco.queryOne(
-      `SELECT id, nome, cpf, drive_pasta_id FROM clientes WHERE id = $1`, [clienteId]
+      `SELECT id, nome, cpf, polo_passivo, drive_pasta_id FROM clientes WHERE id = $1`, [clienteId]
     );
     if (!cliente) return res.status(404).json({ ok: false, erro: 'Cliente não encontrado.' });
 
     let pastaId = cliente.drive_pasta_id;
     if (!pastaId) {
       try {
-        const { id, url } = await drive.criarPastaCliente(cliente.cpf || clienteId, cliente.nome);
+        const { id, url } = await drive.criarPastaCliente(cliente.cpf || clienteId, cliente.nome, cliente);
         pastaId = id;
         await banco.execute(`UPDATE clientes SET drive_pasta_id=$1, drive_pasta_url=$2 WHERE id=$3`, [id, url, clienteId]);
       } catch (err) {

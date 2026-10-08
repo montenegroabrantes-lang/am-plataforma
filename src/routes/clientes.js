@@ -3,7 +3,7 @@ import { db }        from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { ehMaster, protegerDadosDoJunior, condicaoBuscaCpf, MSG_CAMPOS_DO_CLIENTE } from '../middleware/perfilJunior.js';
-import { criarPastaCliente, criarSubpasta } from '../services/drive/index.js';
+import { criarPastaDoCliente } from '../services/drive/conciliacao.js';
 import { documentosRouter } from './clientes.documentos.js';
 import { criarOuBuscarContato } from '../services/digisac/index.js';
 import { verificarElegibilidadeCliente } from '../services/elegibilidade.js';
@@ -279,7 +279,7 @@ clientesRouter.post('/', async (req, res) => {
               vinculo_inicio, vinculo_fim, polo_passivo, lgpd_consentimento, lgpd_data, vinculo_ativo,
               master_responsavel_id, cadastrado_por)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-       RETURNING id, nome, cpf, whatsapp`,
+       RETURNING id, nome, cpf, whatsapp, polo_passivo`,
       [
         nome.trim(), cpf.replace(/\D/g, ''), whatsapp || null, email || null,
         v1.cargo || null, v1.orgao || null,
@@ -306,21 +306,13 @@ clientesRouter.post('/', async (req, res) => {
     }
 
     // Cria pasta no Google Drive em background (não bloqueia o retorno)
-    criarPastaCliente(novo.cpf, novo.nome)
+    // Mesmo padrão do onboarding: "NOME x ENTE" em Pendentes a protocolar (services/drive/conciliacao.js).
+    criarPastaDoCliente(novo)
       .then(async ({ id: pastaId, url }) => {
         await db.execute(
           'UPDATE clientes SET drive_pasta_id = $1, drive_pasta_url = $2 WHERE id = $3',
           [pastaId, url, novo.id]
         );
-        // Subpastas padrão — mesmo conjunto de 5 usado no fluxo de onboarding
-        // (src/services/onboarding.js); faltava "Contratos" aqui.
-        await Promise.all([
-          criarSubpasta(pastaId, 'Documentos Pessoais'),
-          criarSubpasta(pastaId, 'Vínculo Funcional'),
-          criarSubpasta(pastaId, 'Procurações'),
-          criarSubpasta(pastaId, 'Contratos'),
-          criarSubpasta(pastaId, 'Petições'),
-        ]);
       })
       .catch(err => console.error('[Drive] Falha ao criar pasta:', err.message));
 

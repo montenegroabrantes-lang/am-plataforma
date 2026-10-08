@@ -108,3 +108,64 @@ export async function limparBackupsAntigos(manter = 7) {
     await drive.files.delete({ fileId: f.id }).catch(() => {});
   }
 }
+
+// ── Pastas da equipe (Pendentes a protocolar → Outorgantes) ─────────────────
+
+// Cria uma pasta com nome livre dentro de `paiId` (sem subpastas).
+export async function criarPasta(nome, paiId) {
+  const drive = driveClient();
+  const pasta = await drive.files.create({
+    requestBody: { name: nome, mimeType: 'application/vnd.google-apps.folder', parents: [paiId] },
+    fields: 'id, webViewLink',
+  });
+  return { id: pasta.data.id, url: pasta.data.webViewLink };
+}
+
+// Lista as subpastas (não apagadas) de `paiId`, paginando até o fim.
+export async function listarSubpastas(paiId) {
+  const drive = driveClient();
+  const pastas = [];
+  let pageToken;
+  do {
+    const res = await drive.files.list({
+      q: `'${paiId}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+      fields: 'nextPageToken, files(id, name, webViewLink, createdTime, modifiedTime)',
+      pageSize: 1000,
+      pageToken,
+    });
+    pastas.push(...(res.data.files || []));
+    pageToken = res.data.nextPageToken;
+  } while (pageToken);
+  return pastas.map(p => ({ id: p.id, nome: p.name, url: p.webViewLink, criada_em: p.createdTime, alterada_em: p.modifiedTime }));
+}
+
+// Pais, nome e link de um arquivo/pasta.
+export async function dadosDaPasta(id) {
+  const drive = driveClient();
+  const res = await drive.files.get({ fileId: id, fields: 'id, name, parents, webViewLink, trashed' });
+  return { id: res.data.id, nome: res.data.name, pais: res.data.parents || [], url: res.data.webViewLink, apagada: !!res.data.trashed };
+}
+
+// Move a pasta `id` de `dePaiId` para `paraPaiId` (não copia; o link continua o mesmo).
+export async function moverPasta(id, dePaiId, paraPaiId) {
+  const drive = driveClient();
+  await drive.files.update({ fileId: id, addParents: paraPaiId, removeParents: dePaiId, fields: 'id, parents' });
+}
+
+// Arquivos (não pastas) de `paiId`: nome, tipo e data. Uma página basta para pasta de cliente.
+export async function listarArquivos(paiId) {
+  const drive = driveClient();
+  const res = await drive.files.list({
+    q: `'${paiId}' in parents and mimeType != 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name, mimeType, createdTime)',
+    pageSize: 200,
+  });
+  return (res.data.files || []).map(f => ({ id: f.id, nome: f.name, tipo: f.mimeType, criado_em: f.createdTime }));
+}
+
+// Conteúdo binário de um arquivo (usado só para ler o texto do comprovante de protocolo).
+export async function baixarArquivo(id) {
+  const drive = driveClient();
+  const res = await drive.files.get({ fileId: id, alt: 'media' }, { responseType: 'arraybuffer' });
+  return Buffer.from(res.data);
+}

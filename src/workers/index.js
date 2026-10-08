@@ -181,6 +181,19 @@ export async function iniciarWorkers() {
     }
   );
 
+  // Conciliação Drive × protocolo (08/10/2026): pasta movida pela equipe para Outorgantes com a
+  // tarefa ainda aberta vira "Protocolado no Drive — falta o número". Só lê o Drive; não conclui nada.
+  await alertasQueue.add(
+    'detectar-protocolos-drive',
+    {},
+    {
+      repeat:           { pattern: '*/30 * * * *' },
+      jobId:            'detectar-protocolos-drive-recorrente',
+      removeOnComplete: 3,
+      removeOnFail:     3,
+    }
+  );
+
   // A5-03: mudar padrão ou `tz` de um repeatable cria um agendamento NOVO e mantém o antigo no
   // Redis — sem esta limpeza, o bom dia sairia às 05h (UTC antigo) e às 08h, e o backup 2x por dia.
   // Roda depois dos `add` acima, para nunca haver um instante sem agendamento.
@@ -189,7 +202,7 @@ export async function iniciarWorkers() {
     'lembretes-diarios', 'ciclos-recorrentes', 'escalonamento-vespera', 'verificar-token-google',
   ]);
 
-  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h BRT), Alertas WhatsApp (08h BRT, seg-sex), Ciclos Recorrentes (07h BRT), Escalonamento de Véspera (08h30/16h30 BRT, seg-sex), Reprocessamento de Sync Camila (15/15min), Reprocessamento de Sync Drive (30/30min) e Teste do token Google (08h BRT) iniciados.');
+  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h BRT), Alertas WhatsApp (08h BRT, seg-sex), Ciclos Recorrentes (07h BRT), Escalonamento de Véspera (08h30/16h30 BRT, seg-sex), Reprocessamento de Sync Camila (15/15min), Reprocessamento de Sync Drive (30/30min), Detector de protocolo no Drive (30/30min) e Teste do token Google (08h BRT) iniciados.');
   // Lista dos agendamentos vivos no Redis, com a próxima execução já em Brasília: se algum horário
   // estiver errado (ou sobrar um agendamento antigo), aparece aqui no primeiro deploy.
   for (const fila of [syncQueue, backupQueue, alertasQueue, sacQueue]) {
