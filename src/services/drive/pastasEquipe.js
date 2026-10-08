@@ -7,8 +7,10 @@
 
 export function pastasConfiguradas(env = process.env) {
   const lista = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
+  const pendentesTodas = lista(env.GOOGLE_DRIVE_PASTA_PENDENTES);
   return {
-    pendentes: lista(env.GOOGLE_DRIVE_PASTA_PENDENTES)[0] || null,
+    pendentes: pendentesTodas[0] || null, // a 1ª é onde nascem as pastas novas ("- 2026 - AM")
+    pendentesTodas,                       // todas entram na conciliação e na mudança para Outorgantes
     outorgantes: lista(env.GOOGLE_DRIVE_PASTA_OUTORGANTES), // a 1ª é a do ano corrente (destino da mudança)
   };
 }

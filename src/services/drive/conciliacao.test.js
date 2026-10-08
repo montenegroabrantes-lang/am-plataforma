@@ -62,6 +62,10 @@ test('moverParaOutorgantesSeConcluido: move só sem protocolo aberto e com a pas
   const fora = driveFalso({ dados: { P1: { id: 'P1', nome: 'X', pais: ['RAIZ'] } } });
   r = await moverParaOutorgantesSeConcluido('c', { db: dbFalso(), drive: fora, auditar, env: ENV });
   assert.equal(r.motivo, 'pasta_fora_de_pendentes');
+  // Pasta na 2ª pasta de pendentes (sem "- AM") também é movida, a partir dela.
+  const outra = driveFalso({ dados: { P1: { id: 'P1', nome: 'FULANO x PMJP', pais: ['PEND2'] } } });
+  r = await moverParaOutorgantesSeConcluido('c', { db: dbFalso(), drive: outra, auditar, env: { ...ENV, GOOGLE_DRIVE_PASTA_PENDENTES: 'PEND,PEND2' } });
+  assert.deepEqual(outra.chamadas.at(-1), ['mover', 'P1', 'PEND2', 'OUT26']);
   r = await moverParaOutorgantesSeConcluido('c', { db: dbFalso(), drive, auditar, env: {} });
   assert.equal(r.motivo, 'pastas_nao_configuradas');
 });

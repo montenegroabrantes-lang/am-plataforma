@@ -54,6 +54,6 @@ test('numerosCnj e ehComprovante', () => {
 });
 
 test('pastasConfiguradas: lê ids do ambiente', () => {
-  assert.deepEqual(pastasConfiguradas({ GOOGLE_DRIVE_PASTA_PENDENTES: 'pend', GOOGLE_DRIVE_PASTA_OUTORGANTES: 'out26, out25' }), { pendentes: 'pend', outorgantes: ['out26', 'out25'] });
-  assert.deepEqual(pastasConfiguradas({}), { pendentes: null, outorgantes: [] });
+  assert.deepEqual(pastasConfiguradas({ GOOGLE_DRIVE_PASTA_PENDENTES: 'pendAM, pend', GOOGLE_DRIVE_PASTA_OUTORGANTES: 'out26, out25' }), { pendentes: 'pendAM', pendentesTodas: ['pendAM', 'pend'], outorgantes: ['out26', 'out25'] });
+  assert.deepEqual(pastasConfiguradas({}), { pendentes: null, pendentesTodas: [], outorgantes: [] });
 });

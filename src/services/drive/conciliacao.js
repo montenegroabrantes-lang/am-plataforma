@@ -71,8 +71,8 @@ export async function criarPastaDoCliente(cliente, deps) {
 export async function moverParaOutorgantesSeConcluido(clienteId, { usuarioId = null, ...deps } = {}) {
   const { db, drive, auditar, env } = dependencias(deps);
   try {
-    const { pendentes, outorgantes } = pastasConfiguradas(env);
-    if (!pendentes || !outorgantes.length) return { movida: false, motivo: 'pastas_nao_configuradas' };
+    const { pendentesTodas, outorgantes } = pastasConfiguradas(env);
+    if (!pendentesTodas.length || !outorgantes.length) return { movida: false, motivo: 'pastas_nao_configuradas' };
     const aberta = await db.queryOne(
       `SELECT 1 FROM tarefas t JOIN cliente_produtos cp ON cp.id = t.cliente_produto_id
         WHERE cp.cliente_id = $1 AND t.tipo = 'protocolar' AND t.status NOT IN ('concluida','cancelada')
@@ -81,10 +81,11 @@ export async function moverParaOutorgantesSeConcluido(clienteId, { usuarioId = n
     const cliente = await db.queryOne(`SELECT id, drive_pasta_id FROM clientes WHERE id = $1`, [clienteId]);
     if (!cliente?.drive_pasta_id) return { movida: false, motivo: 'cliente_sem_pasta' };
     const pasta = await drive.dadosDaPasta(cliente.drive_pasta_id);
-    if (!pasta.pais.includes(pendentes)) return { movida: false, motivo: 'pasta_fora_de_pendentes' };
-    await drive.moverPasta(pasta.id, pendentes, outorgantes[0]);
+    const origem = pasta.pais.find(p => pendentesTodas.includes(p));
+    if (!origem) return { movida: false, motivo: 'pasta_fora_de_pendentes' };
+    await drive.moverPasta(pasta.id, origem, outorgantes[0]);
     await auditar({ usuarioId, acao: 'mover_pasta_outorgantes', entidade: 'cliente', entidadeId: clienteId,
-      valorAntes: { pasta_pai: pendentes }, valorDepois: { pasta_pai: outorgantes[0], pasta: pasta.nome } }).catch(() => {});
+      valorAntes: { pasta_pai: origem }, valorDepois: { pasta_pai: outorgantes[0], pasta: pasta.nome } }).catch(() => {});
     return { movida: true };
   } catch (err) {
     console.error('[Drive/Conciliação] Falha ao mover a pasta para Outorgantes:', err.message);
@@ -152,13 +153,14 @@ export async function detectarProtocolosNoDrive(deps) {
 
 export async function relatorioConciliacao(deps) {
   const { db, drive, env } = dependencias(deps);
-  const { pendentes, outorgantes } = pastasConfiguradas(env);
-  if (!pendentes && !outorgantes.length) return { configurado: false };
+  const { pendentesTodas, outorgantes } = pastasConfiguradas(env);
+  if (!pendentesTodas.length && !outorgantes.length) return { configurado: false };
 
   const tarefas = await db.query(SQL_TAREFAS_ABERTAS);
   const comTarefa = porCliente(tarefas);
   const todos = await db.query(`SELECT id, nome, drive_pasta_id FROM clientes WHERE ativo IS NOT FALSE`);
-  const pastasPendentes = pendentes ? await drive.listarSubpastas(pendentes) : [];
+  const pastasPendentes = [];
+  for (const pai of pendentesTodas) pastasPendentes.push(...await drive.listarSubpastas(pai));
   const idsPendentes = new Set(pastasPendentes.map(p => p.id));
 
   const vincular = [], semCliente = [], ok = [];
@@ -190,9 +192,9 @@ export async function relatorioConciliacao(deps) {
 // Liga uma pasta da equipe (em Pendentes ou Outorgantes) ao cliente.
 export async function vincularPasta(clienteId, pastaId, { usuarioId = null, ...deps } = {}) {
   const { db, drive, auditar, env } = dependencias(deps);
-  const { pendentes, outorgantes } = pastasConfiguradas(env);
+  const { pendentesTodas, outorgantes } = pastasConfiguradas(env);
   const pasta = await drive.dadosDaPasta(pastaId);
-  const permitidas = [pendentes, ...outorgantes].filter(Boolean);
+  const permitidas = [...pendentesTodas, ...outorgantes];
   if (pasta.apagada || !pasta.pais.some(p => permitidas.includes(p))) {
     const e = new Error('A pasta precisa estar em Pendentes a protocolar ou em Outorgantes.'); e.status = 400; throw e;
   }
