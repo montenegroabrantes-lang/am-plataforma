@@ -4,6 +4,7 @@ import { apenasMaster } from '../middleware/auth.js';
 import { uuidValido, urlHttpsOuNulo } from '../utils/validacao.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { registrarErroInterno, mensagemErroInterno } from '../middleware/erros.js';
+import { salvarDocumentoHtml } from '../services/drive/documentos.js';
 
 export const acervoRouter = Router();
 
@@ -96,3 +97,23 @@ for (const [tipo,tabela] of [['pecas','acervo_pecas'],['precedentes','acervo_pre
   acervoRouter.post(`/${tipo}/:id/arquivar`, apenasMaster, async(req,res)=>{if(!uuidValido(req.params.id))return res.status(400).json({ok:false,erro:'ID inválido.'});const [r]=await db.query(`UPDATE ${tabela} SET arquivada_em=NOW(),arquivada_por=$1 WHERE id=$2${escopoVisibilidade(req,tabela)} AND arquivada_em IS NULL RETURNING id`,[req.user.id,req.params.id]);if(!r)return res.status(404).json({ok:false,erro:'Registro não encontrado.'});await registrarAuditoria({usuarioId:req.user.id,acao:'arquivar',entidade:tabela,entidadeId:r.id,ip:req._ip});res.json({ok:true});});
   acervoRouter.post(`/${tipo}/:id/restaurar`, apenasMaster, async(req,res)=>{if(!uuidValido(req.params.id))return res.status(400).json({ok:false,erro:'ID inválido.'});const [r]=await db.query(`UPDATE ${tabela} SET arquivada_em=NULL,arquivada_por=NULL WHERE id=$1${escopoVisibilidade(req,tabela)} AND arquivada_em IS NOT NULL RETURNING id`,[req.params.id]);if(!r)return res.status(404).json({ok:false,erro:'Registro não encontrado.'});await registrarAuditoria({usuarioId:req.user.id,acao:'restaurar',entidade:tabela,entidadeId:r.id,ip:req._ip});res.json({ok:true});});
 }
+
+// Grava uma peça/planilha (HTML) como PDF e/ou Word na pasta do cliente no Drive (Master).
+// Usado pelo conector do Claude: o PJe exige PDF e o conector do Google Drive só grava texto.
+acervoRouter.post('/drive/documentos', apenasMaster, async (req, res) => {
+  const b = req.body || {};
+  try {
+    const r = await salvarDocumentoHtml({
+      pastaId: b.pasta_id, nome: b.nome, html: b.html,
+      formatos: Array.isArray(b.formatos) && b.formatos.length ? b.formatos : ['pdf'],
+      orientacao: b.orientacao === 'paisagem' ? 'paisagem' : 'retrato',
+    });
+    await registrarAuditoria({ usuarioId: req.user.id, acao: 'gravar_documento_drive', entidade: 'drive_documento',
+      entidadeId: r.arquivos[0]?.id || b.pasta_id, valorDepois: { pasta: r.pasta.nome, arquivos: r.arquivos.map(a => a.nome) }, ip: req._ip });
+    res.status(201).json({ ok: true, ...r });
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ ok: false, erro: 'validacao', mensagem: e.message });
+    console.error('[Acervo/Drive] Gravação falhou:', e.message);
+    res.status(502).json({ ok: false, erro: 'drive', mensagem: 'Não foi possível gravar no Google Drive agora. Confira a autorização do Google.' });
+  }
+});
