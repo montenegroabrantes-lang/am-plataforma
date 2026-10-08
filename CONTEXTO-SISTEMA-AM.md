@@ -3263,3 +3263,21 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   Cecília ficou de fora porque já tinha recebido uma retomada automática no dia.
 - **Total reabordado:** 68 clientes em 07 e 08/10. Lição: tarefa agendada que roda `railway run` pode
   parar esperando aprovação. Na próxima, aprovar o comando antes ou rodar dentro da sessão.
+
+### 07-08/10/2026 — Médico Veterinário / MAPA (tese única FGTS)
+
+- **Frontend (commit `67706c9`, deploy `0f1a0f90` SUCCESS, JS publicado conferido):** novas opções nas
+  listas padrão de `src/app/(dashboard)/clientes/page.js` — cargo **"Médico Veterinário"** e órgão
+  **"Federal — Ministério da Agricultura (MAPA)"** (usadas no cadastro do cliente, em Processos e nos
+  cargos/órgãos elegíveis das teses em Configurações → Produtos Jurídicos).
+- **Banco de produção (08/10, transação única + linha em `logs_auditoria` com o estado anterior):** a
+  tese **FGTS** (`produtos` id `48630099-…`) passou de sem critérios para
+  `cargos_elegiveis = ['Médico Veterinário']` e `orgaos_elegiveis = ['Federal — Ministério da Agricultura (MAPA)']`,
+  a pedido do usuário, para o FGTS ser **sugerido** a esse perfil (`services/elegibilidade.js`: tese sem
+  critério nunca é sugerida; a comparação é por texto inteiro, sem acento/caixa).
+- **Sem efeito colateral verificado:** o re-protocolo (`services/ciclosRecorrentes.js`) usa
+  `cliente_produtos`, não os critérios; nenhuma outra tese sugere esse perfil ("Férias 30 dias" exige o
+  órgão "Federal" exato). Na base havia 0 clientes veterinários/MAPA na data.
+- **Limite:** sugestão não vincula sozinha; o cargo e o órgão precisam ser escolhidos na lista (texto
+  digitado diferente não casa). Se no futuro o FGTS ganhar outros perfis sugeridos, acrescentar aos
+  critérios em vez de substituir.
