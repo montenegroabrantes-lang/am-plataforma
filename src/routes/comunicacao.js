@@ -25,7 +25,7 @@ export const ACAO_ENVIO = 'enviar_whatsapp_cliente';
 
 export const SQL_PROCESSO_POR_NUMERO = (user) => `
   SELECT p.id AS processo_id, p.numero, p.status, p.situacao_atual, p.vara, p.visibilidade,
-         c.id AS cliente_id, c.nome AS cliente_nome, c.whatsapp
+         c.id AS cliente_id, c.nome AS cliente_nome, c.whatsapp, c.digisac_contact_id
     FROM processos p
     LEFT JOIN clientes c ON c.id = p.cliente_id
    WHERE REGEXP_REPLACE(p.numero, '\\D', '', 'g') = $1 ${filtroVisibilidade(user)}
@@ -33,13 +33,19 @@ export const SQL_PROCESSO_POR_NUMERO = (user) => `
    LIMIT 10`;
 
 export const SQL_CLIENTES_POR_NOME = `
-  SELECT c.id AS cliente_id, c.nome AS cliente_nome, c.whatsapp
+  SELECT c.id AS cliente_id, c.nome AS cliente_nome, c.whatsapp, c.digisac_contact_id
     FROM clientes c
    WHERE c.ativo = true AND c.nome ILIKE $1
    ORDER BY c.nome
    LIMIT 10`;
 
-export const SQL_CLIENTE = 'SELECT id, nome, whatsapp FROM clientes WHERE id = $1';
+export const SQL_CLIENTE = 'SELECT id, nome, whatsapp, digisac_contact_id FROM clientes WHERE id = $1';
+
+// Vincula o contato do Digisac ao cliente depois de um envio que SAIU por esse contato. Só preenche
+// vínculo vazio — nunca troca um vínculo existente por aqui.
+export const SQL_VINCULAR_CONTATO = `
+  UPDATE clientes SET digisac_contact_id = $1
+   WHERE id = $2 AND (digisac_contact_id IS NULL OR digisac_contact_id = '')`;
 
 export const SQL_ENVIO_RECENTE = `
   SELECT 1 AS existe FROM logs_auditoria
@@ -89,12 +95,15 @@ export function criarComunicacaoRouter({
 
   async function descreverCliente(linha) {
     const temWhatsapp = Boolean(linha.whatsapp && digitos(linha.whatsapp).length >= 10);
+    const vinculado = contatoIdValido(linha.digisac_contact_id) ? linha.digisac_contact_id : null;
     const saida = {
       cliente_id: linha.cliente_id ?? null,
       cliente_nome: linha.cliente_nome ?? null,
       whatsapp_cadastro: temWhatsapp ? mascararTelefone(linha.whatsapp) : null,
+      contato_digisac_vinculado: vinculado,
     };
-    if (!temWhatsapp && linha.cliente_nome) {
+    // Sem número e sem vínculo: candidatos por nome (o vínculo nasce no primeiro envio confirmado).
+    if (!temWhatsapp && !vinculado && linha.cliente_nome) {
       const { candidatos, erro } = await contatosDigisac(linha.cliente_nome);
       saida.contatos_digisac = candidatos;
       if (erro) saida.erro_digisac = erro;
@@ -145,7 +154,8 @@ export function criarComunicacaoRouter({
   });
 
   // POST /api/comunicacao/enviar  { cliente_id?, contato_digisac_id?, processo_id?, texto, reenviar? }
-  // Destino: o WhatsApp do cadastro do cliente; sem ele, o contato do Digisac indicado.
+  // Destino: o WhatsApp do cadastro do cliente; sem ele, o contato do Digisac vinculado ao cliente
+  // (clientes.digisac_contact_id) ou o indicado. O indicado é vinculado ao cliente após envio confirmado.
   router.post('/enviar', limitador, async (req, res) => {
     const { cliente_id: clienteId, contato_digisac_id: contatoId, processo_id: processoId, reenviar } = req.body ?? {};
     const texto = typeof req.body?.texto === 'string' ? req.body.texto.trim() : '';
@@ -170,31 +180,52 @@ export function criarComunicacaoRouter({
       if (!cliente) return res.status(404).json({ ok: false, erro: 'Cliente não encontrado.' });
     }
     const numero = cliente?.whatsapp && digitos(cliente.whatsapp).length >= 10 ? cliente.whatsapp : null;
-    if (!numero && !contatoId) {
+    const vinculado = contatoIdValido(cliente?.digisac_contact_id) ? cliente.digisac_contact_id : null;
+    if (!numero && vinculado && contatoId && contatoId !== vinculado) {
+      return res.status(422).json({
+        ok: false, erro: 'O cliente já está vinculado a outro contato do Digisac. Confira o contato; o vínculo só se troca pelo cadastro do cliente.',
+      });
+    }
+    const contato = numero ? null : (contatoId || vinculado);
+    if (!numero && !contato) {
       return res.status(422).json({
         ok: false, erro: 'O cliente não tem WhatsApp no cadastro do AM. Use localizar_cliente para achar o contato no Digisac e informe contato_digisac_id.',
       });
     }
 
-    const destinoRef = numero ? `n:${digitos(numero).slice(-11)}` : `c:${contatoId}`;
+    const destinoRef = numero ? `n:${digitos(numero).slice(-11)}` : `c:${contato}`;
     const chave = createHash('sha256').update(`${destinoRef}|${texto}`).digest('hex');
     if (!reenviar && await banco.queryOne(SQL_ENVIO_RECENTE, [chave])) {
       return res.status(409).json({ ok: false, erro: 'Esta mesma mensagem já foi enviada a este destino nas últimas 24h. Para mandar de novo, use reenviar: true.' });
     }
 
-    const r = await enviar({ numero, contatoId: numero ? null : contatoId, texto, usuarioId: req.user.id });
+    const r = await enviar({ numero, contatoId: contato, texto, usuarioId: req.user.id });
     const status = r.ok ? 'enviado' : (r.antesEnvio ? 'falhou' : 'incerto');
+
+    // Envio confirmado por um contato escolhido agora → fica vinculado ao cliente.
+    let vinculouContato = false;
+    if (r.ok && cliente && contato && !vinculado) {
+      try {
+        await banco.execute(SQL_VINCULAR_CONTATO, [contato, cliente.id]);
+        vinculouContato = true;
+      } catch (err) {
+        console.error('[comunicacao] Falha ao vincular o contato do Digisac ao cliente:', err.message);
+      }
+    }
+
     await auditar({
       usuarioId: req.user.id, acao: ACAO_ENVIO, entidade: 'cliente', entidadeId: cliente?.id ?? null,
       valorDepois: {
         status, chave, destino: r.destino ?? null, message_id: r.messageId ?? null, processo_id: processoId ?? null,
-        contato_digisac_id: numero ? null : contatoId, caracteres: texto.length, erro: r.erro ?? null, ...viaConector(req),
+        contato_digisac_id: contato, contato_vinculado_ao_cliente: vinculouContato,
+        caracteres: texto.length, erro: r.erro ?? null, ...viaConector(req),
       },
       ip: req._ip,
     });
 
     const corpo = {
       ok: r.ok, status, destino: r.destino ?? null, cliente_nome: cliente?.nome ?? null, message_id: r.messageId ?? null,
+      contato_digisac_vinculado: vinculouContato || (contato && contato === vinculado) ? contato : null,
     };
     if (!r.ok) {
       corpo.erro = r.erro;

@@ -3366,3 +3366,16 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   pode cair na fila da Camila (VENDAS) — conferir no primeiro envio.
 - **Para usar:** publicar (merge em `main` → deploy Railway), reconectar o conector do AM no Claude
   marcando "Contato com clientes (WhatsApp)".
+- **Publicado (09/10/2026):** PR #3 mergeado em `main` (`248ee8f`); o usuário informou deploy feito e
+  conector reconectado. As ferramentas novas só aparecem em conversa NOVA do Claude (a lista é fixada
+  no início da conversa). Cobranças das 3 clientes ainda não enviadas.
+
+### 09/10/2026 — Vínculo do contato do Digisac ao cliente no envio pelo conector
+
+- **Pedido do usuário:** o contato do Digisac usado no envio deve ficar vinculado ao cliente.
+- **Backend (`routes/comunicacao.js`):** usa a coluna existente `clientes.digisac_contact_id`.
+  `localizar` devolve `contato_digisac_vinculado` e só busca candidatos por nome quando não há número
+  nem vínculo. `enviar` sem WhatsApp no cadastro usa o contato vinculado; com `contato_digisac_id`
+  escolhido e cliente sem vínculo, grava o vínculo **só após envio confirmado** (`status enviado`) e
+  nunca troca um vínculo existente (outro contato → 422). Auditoria ganha
+  `contato_vinculado_ao_cliente`. Suíte 1030/1030.

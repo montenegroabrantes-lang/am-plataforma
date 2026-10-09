@@ -13,7 +13,7 @@ for (const metodo of ['query', 'queryOne', 'execute']) {
 const { autenticar } = await import('../middleware/auth.js');
 const { definirCarregador, carregadorEcoDoToken } = await import('../middleware/sessao.js');
 definirCarregador(carregadorEcoDoToken);
-const { criarComunicacaoRouter, SQL_CLIENTES_POR_NOME, SQL_CLIENTE, SQL_ENVIO_RECENTE, ACAO_ENVIO } = await import('./comunicacao.js');
+const { criarComunicacaoRouter, SQL_CLIENTES_POR_NOME, SQL_CLIENTE, SQL_ENVIO_RECENTE, SQL_VINCULAR_CONTATO, ACAO_ENVIO } = await import('./comunicacao.js');
 const { CONTA_SERVICO_EMAIL } = await import('../oauth/escopos.js');
 const { buscarContatosPorNome, enviarMensagemCliente } = await import('../services/digisac/index.js');
 
@@ -21,11 +21,18 @@ const CLIENTE = '11111111-1111-4111-8111-111111111111';
 const SEM_ZAP = '22222222-2222-4222-8222-222222222222';
 const PROCESSO = '33333333-3333-4333-8333-333333333333';
 const CONTATO = '44444444-4444-4444-8444-444444444444';
+const VINCULADO = '55555555-5555-4555-8555-555555555555';
+const OUTRO_CONTATO = '66666666-6666-4666-8666-666666666666';
 
 let envioRecente = false;
 let processoVisibilidade = 'normal';
 const consultas = [];
+const execucoes = [];
 const bancoFalso = {
+  async execute(sql, params) {
+    if (sql !== SQL_VINCULAR_CONTATO) throw new Error(`inesperado: ${sql}`);
+    execucoes.push(params);
+  },
   async query(sql, params) {
     consultas.push({ sql, params });
     if (sql.includes('FROM processos p')) {
@@ -33,14 +40,16 @@ const bancoFalso = {
       return [{ processo_id: PROCESSO, numero: '0809017-10.2024.8.15.2001', status: 'ativo', cliente_id: CLIENTE, cliente_nome: 'JOSEANE DIAS SANTOS', whatsapp: '83999991234' }];
     }
     if (sql === SQL_CLIENTES_POR_NOME) {
-      return params[0] === '%Severina%Luiz%' ? [{ cliente_id: SEM_ZAP, cliente_nome: 'SEVERINA DO RAMO DAMASCENA LUIZ', whatsapp: null }] : [];
+      if (params[0] === '%Maria%Gicele%') return [{ cliente_id: VINCULADO, cliente_nome: 'MARIA GICELE', whatsapp: null, digisac_contact_id: CONTATO }];
+      return params[0] === '%Severina%Luiz%' ? [{ cliente_id: SEM_ZAP, cliente_nome: 'SEVERINA DO RAMO DAMASCENA LUIZ', whatsapp: null, digisac_contact_id: null }] : [];
     }
     throw new Error(`inesperado: ${sql}`);
   },
   async queryOne(sql, params) {
     if (sql === SQL_CLIENTE) {
       if (params[0] === CLIENTE) return { id: CLIENTE, nome: 'JOSEANE DIAS SANTOS', whatsapp: '(83) 99999-1234' };
-      if (params[0] === SEM_ZAP) return { id: SEM_ZAP, nome: 'SEVERINA', whatsapp: null };
+      if (params[0] === SEM_ZAP) return { id: SEM_ZAP, nome: 'SEVERINA', whatsapp: null, digisac_contact_id: null };
+      if (params[0] === VINCULADO) return { id: VINCULADO, nome: 'MARIA GICELE', whatsapp: null, digisac_contact_id: CONTATO };
       return null;
     }
     if (sql === SQL_ENVIO_RECENTE) return envioRecente ? { existe: 1 } : null;
@@ -87,7 +96,7 @@ const post = async (corpo, token = TOKENS.conector) => {
 };
 
 beforeEach(() => {
-  auditoria.length = 0; envios.length = 0; consultas.length = 0;
+  auditoria.length = 0; envios.length = 0; consultas.length = 0; execucoes.length = 0;
   envioRecente = false; processoVisibilidade = 'normal';
   respostaEnvio = { ok: true, messageId: 'msg-1', destino: '+55 83 9****-1234' };
 });
@@ -143,13 +152,40 @@ test('enviar: usa o WhatsApp do cadastro e audita sem guardar o texto', async ()
   assert.ok(!JSON.stringify(a).includes('Joseane'), 'texto não vai para a auditoria');
 });
 
-test('enviar: cliente sem WhatsApp exige contato do Digisac; com ele, envia pelo contato', async () => {
+test('enviar: cliente sem WhatsApp exige contato do Digisac; com ele, envia pelo contato e o vincula ao cliente', async () => {
   const sem = await post({ cliente_id: SEM_ZAP, texto: 'oi' });
   assert.equal(sem.status, 422);
   assert.equal(envios.length, 0);
   const com = await post({ cliente_id: SEM_ZAP, contato_digisac_id: CONTATO, texto: 'oi' });
   assert.equal(com.status, 200);
   assert.deepEqual([envios[0].numero, envios[0].contatoId], [null, CONTATO]);
+  assert.deepEqual(execucoes, [[CONTATO, SEM_ZAP]]);
+  assert.equal(com.corpo.contato_digisac_vinculado, CONTATO);
+  assert.equal(auditoria[0].valorDepois.contato_vinculado_ao_cliente, true);
+});
+
+test('enviar: envio que não saiu não vincula o contato', async () => {
+  respostaEnvio = { ok: false, messageId: null, erro: 'HTTP 400', antesEnvio: true, destino: 'x' };
+  const r = await post({ cliente_id: SEM_ZAP, contato_digisac_id: CONTATO, texto: 'oi' });
+  assert.equal(r.status, 502);
+  assert.equal(execucoes.length, 0);
+});
+
+test('enviar: cliente já vinculado usa o contato do cadastro e recusa outro contato', async () => {
+  const r = await post({ cliente_id: VINCULADO, texto: 'oi' });
+  assert.equal(r.status, 200);
+  assert.equal(envios[0].contatoId, CONTATO);
+  assert.equal(execucoes.length, 0, 'vínculo existente não é regravado');
+  assert.equal(r.corpo.contato_digisac_vinculado, CONTATO);
+  const outro = await post({ cliente_id: VINCULADO, contato_digisac_id: OUTRO_CONTATO, texto: 'oi' });
+  assert.equal(outro.status, 422);
+  assert.equal(envios.length, 1);
+});
+
+test('localizar: cliente já vinculado mostra o contato e não busca por nome no Digisac', async () => {
+  const { corpo } = await get(`/api/comunicacao/localizar?nome=${encodeURIComponent('Maria Gicele')}`, TOKENS.conector);
+  assert.equal(corpo.clientes[0].contato_digisac_vinculado, CONTATO);
+  assert.equal(corpo.clientes[0].contatos_digisac, undefined);
 });
 
 test('enviar: mesma mensagem nas últimas 24h → 409, salvo reenviar:true', async () => {

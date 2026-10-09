@@ -245,8 +245,9 @@ function construirServidor(token) {
   s.registerTool('localizar_cliente', {
     title: 'Localizar cliente (processo ou nome)',
     description: 'Acha o cliente pelo número CNJ do processo (com ou sem pontuação) e/ou pelo nome. Devolve '
-      + 'cliente_id, nome, processo e o WhatsApp do cadastro MASCARADO; quando o AM não tem o número, lista os '
-      + 'contatos do Digisac com nome compatível (contato_id + número mascarado) — confira o nome antes de usar. '
+      + 'cliente_id, nome, processo, o WhatsApp do cadastro MASCARADO e o contato do Digisac já vinculado ao cliente; '
+      + 'sem número nem vínculo, lista os contatos do Digisac com nome compatível (contato_id + número mascarado) — '
+      + 'confira o nome com o usuário antes de usar. '
       + 'Se o processo não estiver no AM, tente pelo nome. Use antes de enviar_whatsapp_cliente. Não altera nada.',
     inputSchema: {
       processo: z.string().max(40).optional().describe('Número CNJ, ex.: 0809017-10.2024.8.15.2001'),
@@ -258,8 +259,9 @@ function construirServidor(token) {
   s.registerTool('enviar_whatsapp_cliente', {
     title: 'Enviar WhatsApp ao cliente (Digisac)',
     description: 'Envia UMA mensagem de texto ao cliente pelo WhatsApp do escritório (Digisac). Destino: o WhatsApp '
-      + 'do cadastro do cliente (cliente_id); sem ele, o contato do Digisac (contato_digisac_id) achado por '
-      + 'localizar_cliente. Só envie texto que o usuário aprovou, com nome e valores já preenchidos, um cliente '
+      + 'do cadastro do cliente (cliente_id); sem ele, o contato do Digisac já vinculado ao cliente ou o '
+      + 'contato_digisac_id achado por localizar_cliente — que, com cliente_id, fica VINCULADO ao cadastro do '
+      + 'cliente depois do envio confirmado. Só envie texto que o usuário aprovou, com nome e valores já preenchidos, um cliente '
       + 'por chamada. A mesma mensagem ao mesmo destino nas últimas 24h é recusada (reenviar: true força). '
       + 'Status "incerto" = a mensagem pode ter saído: NÃO reenvie sem conferir no Digisac. Fica na auditoria.',
     inputSchema: {
