@@ -294,6 +294,93 @@ export async function enviarAlerta(numero, texto, {
   }
 }
 
+// Contatos do Digisac cujo nome contém todas as palavras de `nome` (sem acento/caixa). Usado
+// quando o cadastro do AM não tem o WhatsApp do cliente (09/10/2026: só ~22 de 404 têm). A busca
+// na API vai pelo primeiro e pelo último nome (`$iLike`, campos name e internalName) e a
+// conferência das palavras é refeita aqui. Número sai só mascarado. Lança em erro de API.
+const ID_CONTATO_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const contatoIdValido = id => ID_CONTATO_RE.test(String(id ?? ''));
+
+const semAcento = s => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+const PARTICULAS = new Set(['da', 'de', 'do', 'das', 'dos', 'e']);
+
+export async function buscarContatosPorNome(nome, { api = client(), limite = 10 } = {}) {
+  if (!api) throw Object.assign(new Error('Digisac não configurado.'), { status: 503 });
+  const palavras = semAcento(nome).split(/\s+/).filter(p => p.length > 1 && !PARTICULAS.has(p));
+  if (!palavras.length) return [];
+  const termo = palavras.length > 1 ? `%${palavras[0]}%${palavras.at(-1)}%` : `%${palavras[0]}%`;
+  const serviceId = process.env.DIGISAC_SERVICE_ID;
+
+  const vistos = new Map();
+  for (const campo of ['name', 'internalName']) {
+    const params = { [`where[${campo}][$iLike]`]: termo, limit: 50 };
+    if (serviceId) params['where[serviceId]'] = serviceId;
+    const resp = await api.get('/contacts', { params });
+    for (const c of resp.data?.data || resp.data || []) {
+      if (!c?.id || vistos.has(c.id)) continue;
+      const nomes = semAcento(`${c.name ?? ''} ${c.internalName ?? ''}`);
+      if (!palavras.every(p => nomes.includes(p))) continue;
+      vistos.set(c.id, {
+        contato_id: c.id,
+        nome: c.internalName || c.name || null,
+        nome_whatsapp: c.name || null,
+        numero_mascarado: mascararTelefone(c?.data?.number),
+      });
+    }
+  }
+  return [...vistos.values()].slice(0, limite);
+}
+
+// Mensagem a CLIENTE (cobrança, aviso), pedida por um Master. Diferente de enviarAlerta: aceita
+// o contato do Digisac (contactId) quando o AM não tem o número, e não usa dontOpenTicket — a
+// resposta do cliente precisa aparecer num chamado. Nunca lança; devolve o mesmo formato de
+// enviarAlerta e registra a tentativa em notificacoes_whatsapp (sem o texto).
+export async function enviarMensagemCliente({ numero = null, contatoId = null, texto, usuarioId = null, origem = 'conector_claude' }, {
+  api = client(), registrar = registrarEnvioWhatsapp,
+} = {}) {
+  const destino = contatoId && !numero ? `contato ${String(contatoId).slice(0, 8)}…` : mascararTelefone(numero);
+  const concluir = async (resultado, status) => {
+    try {
+      await registrar({ tipo: 'mensagem_cliente', origem, usuarioId, destino, status, messageId: resultado.messageId, erro: resultado.erro });
+    } catch (err) {
+      console.warn('[Digisac] Falha ao registrar o envio:', err.message);
+    }
+    return { ...resultado, destino };
+  };
+  const falha = (erro, antesEnvio) => ({ ok: false, messageId: null, erro, antesEnvio });
+
+  try {
+    const serviceId = process.env.DIGISAC_SERVICE_ID;
+    if (!api || !serviceId) return await concluir(falha('Digisac não configurado.', true), 'falhou');
+
+    const corpo = { type: 'text', text: texto, origin: 'bot' };
+    if (numero) {
+      const completo = normalizarNumeroWhatsapp(numero);
+      if (!completo) return await concluir(falha('Número de WhatsApp inválido.', true), 'sem_numero');
+      Object.assign(corpo, { serviceId, number: completo });
+    } else if (contatoIdValido(contatoId)) {
+      corpo.contactId = contatoId;
+    } else {
+      return await concluir(falha('Sem número nem contato do Digisac.', true), 'sem_numero');
+    }
+
+    try {
+      const resp = await api.post('/messages', corpo);
+      const messageId = resp?.data?.id ?? resp?.data?.data?.id ?? null;
+      console.log(`[Digisac] Mensagem a cliente enviada para ${destino} (messageId ${messageId ?? 'n/d'})`);
+      return await concluir({ ok: true, messageId, erro: null, antesEnvio: false }, 'enviado');
+    } catch (err) {
+      const { antesEnvio } = classificarFalhaEnvio(err);
+      const erro = textoErroSeguro(err);
+      console.error(`[Digisac] Falha ao enviar mensagem a ${destino} (${antesEnvio ? 'não enviada' : 'resultado incerto'}): ${erro}`);
+      return await concluir(falha(erro, antesEnvio), antesEnvio ? 'falhou' : 'incerto');
+    }
+  } catch (err) {
+    console.error(`[Digisac] enviarMensagemCliente: erro inesperado para ${destino}:`, err.message);
+    return { ...falha(`Erro inesperado: ${err.message}`.slice(0, 300), false), destino };
+  }
+}
+
 function classificarTipo(ticket) {
   const status = ticket.status?.toLowerCase() || '';
   const tags   = (ticket.tags || []).map(t => t.toLowerCase());

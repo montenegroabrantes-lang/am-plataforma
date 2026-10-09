@@ -3340,3 +3340,29 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   e às subpastas diretas delas. Ferramenta MCP `salvar_documento_drive` (servidor 1.2.0).
 - **Pendências:** confirmar em produção que a Docs API está habilitada no projeto Google (margens);
   se não estiver, os PDFs saem com a margem padrão do Google Docs.
+
+### 09/10/2026 — Conector do AM: localizar cliente e enviar WhatsApp (escopo `comunicacao`) — NÃO publicado
+
+- **Motivo:** cobrar o contador judicial depois do pagamento da RPV pelo chat. Casos de origem: Joseane
+  Dias Santos (`0809017-10.2024.8.15.2001`, R$ 750), Severina do Ramo Damascena Luiz
+  (`0842112-65.2023.8.15.2001`, R$ 1.320) e Maria Gicele Duarte da Silva (`0800281-32.2026.8.15.2001`,
+  R$ 520). Identificadas pelo Drive (cálculos e petições), não pelo AM; nenhuma com celular no Drive.
+  As mensagens não foram enviadas: o chat não tinha como enviar.
+- **Backend (branch `claude/great-rubin-x3mam7`, PR em rascunho):**
+  - Escopo OAuth novo `comunicacao` ("Contato com clientes (WhatsApp)"), prefixo `/api/comunicacao`,
+    fora do padrão (precisa ser marcado ao autorizar).
+  - `routes/comunicacao.js` (Master + escopo): `GET /localizar?processo=|nome=` (CNJ comparado só pelos
+    dígitos; processo restrito só para o Master 01; WhatsApp do cadastro mascarado; sem número no AM,
+    lista contatos do Digisac de nome compatível, também mascarados) e `POST /enviar` (destino = WhatsApp
+    do cadastro; sem ele, `contato_digisac_id`; texto até 4000; mesmo texto ao mesmo destino em 24h → 409
+    salvo `reenviar`; 30 envios/15 min; auditoria `enviar_whatsapp_cliente` com status, hash e tamanho,
+    sem o texto).
+  - `services/digisac`: `buscarContatosPorNome` (`where[name|internalName][$iLike]`) e
+    `enviarMensagemCliente` (`number`+`serviceId` ou `contactId`; sem `dontOpenTicket`, para a
+    resposta abrir chamado; registro em `notificacoes_whatsapp` como `mensagem_cliente`).
+  - Ferramentas MCP `localizar_cliente` e `enviar_whatsapp_cliente` (servidor 1.3.0).
+- **Não verificado ao vivo:** a busca de contato por nome e o envio por `contactId` seguem a
+  documentação da API do Digisac, mas não foram testados contra o Digisac real. A resposta do cliente
+  pode cair na fila da Camila (VENDAS) — conferir no primeiro envio.
+- **Para usar:** publicar (merge em `main` → deploy Railway), reconectar o conector do AM no Claude
+  marcando "Contato com clientes (WhatsApp)".
