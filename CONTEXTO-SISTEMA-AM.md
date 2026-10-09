@@ -3432,3 +3432,27 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Pendência:** habilitar a Google Docs API no projeto Google do AM (Console → APIs e serviços →
   Google Docs API → Ativar) e regravar os 3 PDFs (o arquivo de mesmo nome vai para a lixeira
   automaticamente).
+
+### 09/10/2026 — Padrão de layout das peças no AM: ferramenta `salvar_peca_drive` — NÃO publicado
+
+- **Pedido do usuário:** salvar no sistema o novo layout das peças, aprovado sobre a amostra da
+  inicial EMLUR. Decisões: endereçamento padrão ("AO JUÍZO COMPETENTE PARA OS FEITOS DA FAZENDA
+  PÚBLICA", caixa alta, sem negrito, espaço grande abaixo); sem quadro-síntese; qualificação sem
+  "(procuração anexa)" e sem remissão ao rodapé; valor da causa sem negrito; fecho e assinaturas à
+  esquerda com recuo de 4 cm; rodapé centralizado com Av. Cabo Branco, 1780 – Cabo Branco, João
+  Pessoa – PB, 58045-010 · (83) 3142-9844 · atendimento@abrantesemontenegro.com.br · "Página X de Y";
+  cabeçalho "ABRANTES & MONTENEGRO ADVOGADOS"; seções numeradas em azul-marinho com filete; citação
+  4 cm/11 pt; Arial 12; espaçamento 1,5; A4 com margens ABNT.
+- **Backend:** `services/drive/layoutPeca.js` (constantes `PADRAO` + `montarDocxPeca(blocos)`, lib
+  `docx`); `salvarPecaNoPadrao` em `services/drive/documentos.js` (blocos → .docx → Google Doc por
+  conversão do Drive → PDF; o .docx gerado é gravado como está). Rota `POST /api/acervo/drive/pecas`
+  (Master, escopo `acervo`, auditoria `gravar_peca_drive`). Ferramenta MCP `salvar_peca_drive`
+  (servidor 1.4.0; suíte 1048/1048); a descrição orienta o Claude a usá-la para petições no lugar de
+  `salvar_documento_drive`.
+- **Por que .docx:** a conversão de .docx pelo Drive preserva A4, margens, cabeçalho, rodapé e numeração
+  de páginas **sem a Google Docs API** (desabilitada). Verificado contra o Drive real (pasta do Franklin,
+  arquivo temporário apagado): PDF A4 (596×842 pt), cabeçalho, rodapé centralizado, "Página 1 de 2".
+- **Em aberto (constantes em `PADRAO`):** logo no cabeçalho (hoje nome em texto), azul-marinho x preto,
+  fórmula do fecho (hoje "Pede deferimento."). A skill `peticao-elite-am` (claude.ai) não foi alterada.
+- **Para usar:** merge em `main` → deploy Railway → conversa NOVA no Claude (lista de ferramentas é
+  fixada no início da conversa).

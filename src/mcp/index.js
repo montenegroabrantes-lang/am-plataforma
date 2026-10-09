@@ -71,7 +71,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.3.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.4.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -183,6 +183,35 @@ function construirServidor(token) {
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async a => saida(await chamar('POST', '/acervo/drive/documentos', token, a)));
+
+  s.registerTool('salvar_peca_drive', {
+    title: 'Salvar peça no padrão do escritório (PDF/Word)',
+    description: 'Grava uma peça processual na pasta do cliente no Drive JÁ NO LAYOUT PADRÃO do escritório: A4, margens ABNT, '
+      + 'Arial 12, espaçamento 1,5, cabeçalho "ABRANTES & MONTENEGRO ADVOGADOS", rodapé centralizado com endereço, telefone, '
+      + 'e-mail e "Página X de Y", seções numeradas em azul-marinho, citações recuadas 4 cm em 11 pt, fecho e assinaturas '
+      + '(Ramon e Luciano) à esquerda. Prefira esta ferramenta a salvar_documento_drive para petições. '
+      + 'Envie a peça em blocos, na ordem: enderecamento (sem texto = "AO JUÍZO COMPETENTE PARA OS FEITOS DA FAZENDA PÚBLICA"), '
+      + 'paragrafo (qualificação, "em face da...", corpo; recuo:false para tirar o recuo de 2 cm), titulo_acao, secao (numero + texto), '
+      + 'subsecao, citacao (texto + fonte), alinea ("a) ..."), tabela (cabecalho + linhas) e fecho (gera "Pede deferimento.", '
+      + 'local/data e as assinaturas — não repita isso em parágrafos). Negrito: **assim**. Não escreva "(procuração anexa)" '
+      + 'na qualificação nem negrite o valor da causa. Arquivo de mesmo nome na pasta é substituído (vai para a lixeira).',
+    inputSchema: {
+      pasta_id: z.string().regex(/^[A-Za-z0-9_-]{10,100}$/).describe('ID da pasta do cliente no Drive'),
+      nome: z.string().min(1).max(200).describe('Nome do arquivo, sem extensão: "TIPO - CLIENTE - ASSUNTO X ENTE"'),
+      blocos: z.array(z.object({
+        tipo: z.enum(['enderecamento', 'paragrafo', 'titulo_acao', 'secao', 'subsecao', 'citacao', 'alinea', 'tabela', 'fecho']),
+        texto: z.string().max(20000).optional(),
+        numero: z.string().max(20).optional().describe('secao/subsecao: "1", "3.1"'),
+        fonte: z.string().max(500).optional().describe('citacao: referência, ex. "(STF, RE 765.320/MG, Tema 916)"'),
+        recuo: z.boolean().optional(),
+        cabecalho: z.array(z.string().max(200)).max(12).optional(),
+        linhas: z.array(z.array(z.string().max(500)).max(12)).max(500).optional(),
+        local_data: z.string().max(200).optional().describe('fecho: padrão "João Pessoa (PB), data do protocolo eletrônico."'),
+      })).min(1).max(2000),
+      formatos: z.array(z.enum(['pdf', 'docx', 'gdoc'])).min(1).max(3).optional().describe('Padrão ["pdf"]'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async a => saida(await chamar('POST', '/acervo/drive/pecas', token, a)));
 
   // ── Re-protocolo (somente leitura). Exige Master + escopo "reprotocolo" no conector. ──
 

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { salvarDocumentoHtml, nomeSeguro, estiloDaPagina, pastasRaizPermitidas } from './documentos.js';
+import { salvarDocumentoHtml, salvarPecaNoPadrao, nomeSeguro, estiloDaPagina, pastasRaizPermitidas } from './documentos.js';
 
 const ENV = { GOOGLE_DRIVE_PASTA_PENDENTES: 'PENDENTES_AM_0001,PENDENTES_002', GOOGLE_DRIVE_PASTA_OUTORGANTES: 'OUTORGANTES_26', GOOGLE_DRIVE_PASTA_RAIZ: 'RAIZ_CLIENTES_1' };
 const PASTA = 'PASTA_FRANKLIN_01';
@@ -90,4 +90,22 @@ test('a própria pasta raiz configurada é destino válido', async () => {
   const g = googleFalso({ pastas: { OUTORGANTES_26: { parents: ['ALGUM_PAI_123'] } } });
   const r = await salvarDocumentoHtml({ pastaId: 'OUTORGANTES_26', nome: 'X', html: '<p>a</p>' }, { ...g, env: ENV });
   assert.equal(r.arquivos.length, 1);
+});
+
+test('salvarPecaNoPadrao: sobe o .docx convertendo em Google Doc, exporta PDF, grava o docx gerado e apaga o temporário', async () => {
+  const { drive, chamadas } = googleFalso();
+  const docx = Buffer.from('DOCX');
+  const r = await salvarPecaNoPadrao({ pastaId: PASTA, nome: 'INICIAL - FULANO', blocos: [{ tipo: 'fecho' }], formatos: ['pdf', 'docx'] },
+    { drive, env: ENV, montar: async () => docx });
+  assert.deepEqual(chamadas[0], ['create', 'INICIAL - FULANO', 'application/vnd.google-apps.document', PASTA]);
+  assert.deepEqual(chamadas.filter(c => c[0] === 'export').map(c => c[1]), ['application/pdf'], 'o docx não é reexportado do Google');
+  assert.deepEqual(r.arquivos.map(a => a.nome), ['INICIAL - FULANO.pdf', 'INICIAL - FULANO.docx']);
+  assert.ok(chamadas.some(c => c[0] === 'delete' && c[1] === 'id-INICIAL - FULANO'));
+  assert.deepEqual(r.avisos, []);
+});
+
+test('salvarPecaNoPadrao: bloco inválido barra antes de tocar no Drive', async () => {
+  const { drive, chamadas } = googleFalso();
+  await assert.rejects(salvarPecaNoPadrao({ pastaId: PASTA, nome: 'X', blocos: [{ tipo: 'nada' }] }, { drive, env: ENV }), { status: 422 });
+  assert.equal(chamadas.length, 0);
 });

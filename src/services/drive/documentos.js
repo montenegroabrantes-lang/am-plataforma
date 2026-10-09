@@ -11,9 +11,11 @@
 import { Readable } from 'node:stream';
 import { google } from 'googleapis';
 import { pastasConfiguradas } from './pastasEquipe.js';
+import { montarDocxPeca } from './layoutPeca.js';
 
 const MIME_DOC = 'application/vnd.google-apps.document';
 const MIME_PASTA = 'application/vnd.google-apps.folder';
+const MIME_DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const EXPORTACOES = {
   pdf: { mime: 'application/pdf', ext: 'pdf' },
   docx: { mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', ext: 'docx' },
@@ -99,8 +101,7 @@ export async function salvarDocumentoHtml({ pastaId, nome, html, formatos = ['pd
   });
 
   const avisos = [];
-  const arquivos = [];
-  try {
+  const arquivos = await exportarEGravar({ drive, pasta, docId: doc.id, docUrl: doc.webViewLink, base, pedidos, antes: async () => {
     // 2) Página A4, margens ABNT/orientação. Falha aqui não impede a gravação.
     try {
       await docs.documents.batchUpdate({
@@ -110,12 +111,22 @@ export async function salvarDocumentoHtml({ pastaId, nome, html, formatos = ['pd
     } catch (e) {
       avisos.push(`Margens/orientação não aplicadas (${e.message}); usado o padrão do Google Docs.`);
     }
+  } });
+  return { pasta, arquivos, avisos };
+}
 
-    // 3) Exporta e grava cada formato, substituindo o arquivo de mesmo nome.
+// 3) Exporta e grava cada formato, substituindo o arquivo de mesmo nome; apaga o Doc temporário
+// salvo se "gdoc" foi pedido. `docxPronto` (peça no padrão) é gravado como está, sem reexportar.
+async function exportarEGravar({ drive, pasta, docId, docUrl, base, pedidos, antes, docxPronto }) {
+  const arquivos = [];
+  try {
+    if (antes) await antes();
     for (const formato of pedidos.filter(f => f !== 'gdoc')) {
       const { mime, ext } = EXPORTACOES[formato];
       const nomeArquivo = `${base}.${ext}`;
-      const { data: conteudo } = await drive.files.export({ fileId: doc.id, mimeType: mime }, { responseType: 'arraybuffer' });
+      let conteudo;
+      if (formato === 'docx' && docxPronto) conteudo = docxPronto;
+      else ({ data: conteudo } = await drive.files.export({ fileId: docId, mimeType: mime }, { responseType: 'arraybuffer' }));
       const anteriores = (await drive.files.list({
         q: `'${pasta.id}' in parents and name = '${aspas(nomeArquivo)}' and trashed = false`,
         fields: 'files(id)', pageSize: 20,
@@ -129,9 +140,27 @@ export async function salvarDocumentoHtml({ pastaId, nome, html, formatos = ['pd
       arquivos.push({ formato, id: novo.id, nome: novo.name, url: novo.webViewLink, bytes: Number(novo.size) || null, substituiu: anteriores.length });
     }
   } finally {
-    if (!pedidos.includes('gdoc')) await drive.files.delete({ fileId: doc.id }).catch(() => {});
+    if (!pedidos.includes('gdoc')) await drive.files.delete({ fileId: docId }).catch(() => {});
   }
-  if (pedidos.includes('gdoc')) arquivos.push({ formato: 'gdoc', id: doc.id, nome: base, url: doc.webViewLink });
+  if (pedidos.includes('gdoc')) arquivos.push({ formato: 'gdoc', id: docId, nome: base, url: docUrl });
+  return arquivos;
+}
 
-  return { pasta, arquivos, avisos };
+// Peça no padrão de layout do escritório (layoutPeca.js): blocos → .docx (A4, ABNT, cabeçalho,
+// rodapé, "Página X de Y") → Google Doc por conversão do próprio Drive → PDF. Não usa a Docs API.
+export async function salvarPecaNoPadrao({ pastaId, nome, blocos, formatos = ['pdf'] }, deps = {}) {
+  const { drive } = deps.drive ? deps : clientesGoogle();
+  const env = deps.env || process.env;
+  const base = nomeSeguro(nome);
+  const pedidos = [...new Set(formatos)];
+  if (!pedidos.length || pedidos.some(f => !FORMATOS.includes(f))) throw erroValidacao(`Formatos aceitos: ${FORMATOS.join(', ')}.`);
+  const docx = await (deps.montar || montarDocxPeca)(blocos);
+  const pasta = await conferirPastaDestino(drive, pastaId, env);
+  const { data: doc } = await drive.files.create({
+    requestBody: { name: base, mimeType: MIME_DOC, parents: [pasta.id] },
+    media: { mimeType: MIME_DOCX, body: corpo(docx) },
+    fields: 'id, webViewLink',
+  });
+  const arquivos = await exportarEGravar({ drive, pasta, docId: doc.id, docUrl: doc.webViewLink, base, pedidos, docxPronto: docx });
+  return { pasta, arquivos, avisos: [] };
 }
