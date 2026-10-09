@@ -3453,9 +3453,12 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   foram aplicadas e o HTML não reproduz o layout do escritório (espaço 1,5, recuos, 24/12 pt).
 - **Correção:** `services/drive/pecas.js` monta a peça em **Word no padrão ABNT do escritório** (biblioteca `docx`:
   A4, margens 3/3/2/2 cm, Arial 12, espaço 1,5, recuo 2 cm, títulos centralizados 24/12 pt, citação 4 cm/11 pt
-  espaço simples, tabela com cabeçalho, assinaturas Ramon/Luciano) a partir de blocos tipados; grava .docx direto e
-  o PDF via conversão nativa do Drive (Word → Google Doc temporário → PDF), sem Docs API. Rota
+  espaço simples, tabela com cabeçalho, assinaturas Ramon/Luciano) a partir de blocos tipados; o PDF é gerado no
+  próprio servidor pelo **LibreOffice** (instalado no Dockerfile, fontes Liberation = métricas de Arial), um por vez,
+  e **conferido antes de gravar** (A4/orientação, páginas, texto de abertura na 1ª página); reprovado → nada gravado
+  e erro devolvido (lote não falha em silêncio). Teste com conversão real confere margem esquerda 3 cm e recuo 2 cm
+  no PDF. Planilhas usam a mesma ferramenta (tabela + paisagem). Rota
   `POST /api/acervo/drive/pecas` (Master, escopo `acervo`, auditada `gravar_peca_drive`); ferramenta MCP
-  `salvar_peca_drive` (servidor 1.3.0). Suíte 1049/1049.
+  `salvar_peca_drive` (servidor 1.3.0). Suíte 1050/1050.
 - **Pendências:** após o deploy, reconectar o conector e regravar as iniciais do Franklin com `salvar_peca_drive`;
   opcionalmente ativar a Google Docs API no projeto Google para `salvar_documento_drive` (planilhas em paisagem).

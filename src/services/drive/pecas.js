@@ -3,11 +3,20 @@
 //
 // O conteúdo chega em blocos tipados (endereçamento, parágrafo, título, citação, pedido, tabela,
 // fecho...) e o estilo é fixo aqui: Arial 12, espaço 1,5, recuo de 2 cm, citação recuada 4 cm em
-// 11 pt com espaço simples, títulos com 24/12 pt, margens 3/3/2/2 cm em A4. O PDF sai da conversão
-// nativa do Drive (Word → Google Doc → PDF), que preserva margens e espaçamentos — não depende da
-// API do Google Docs.
+// 11 pt com espaço simples, títulos com 24/12 pt, margens 3/3/2/2 cm em A4.
+//
+// O PDF é gerado no próprio servidor pelo LibreOffice (instalado no Dockerfile), a partir do Word:
+// resultado determinístico, sem depender do Google Docs. Antes de gravar, o PDF é conferido
+// (tamanho de página A4, número de páginas e presença do texto de abertura); se a conferência
+// falhar, nada é gravado e o erro volta para quem chamou — em lote, nenhuma peça sai fora do padrão
+// em silêncio.
 
 import { Readable } from 'node:stream';
+import { execFile } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { google } from 'googleapis';
 import {
   AlignmentType, BorderStyle, Document, LineRuleType, Packer, PageOrientation, Paragraph,
@@ -16,7 +25,6 @@ import {
 import { conferirPastaDestino, nomeSeguro } from './documentos.js';
 
 export const TIPOS_BLOCO = ['enderecamento', 'paragrafo', 'acao', 'titulo', 'subtitulo', 'citacao', 'pedido', 'tabela', 'fecho', 'assinaturas'];
-const MIME_DOC = 'application/vnd.google-apps.document';
 const MIME_DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const CM = 567; // twips por centímetro
 const PT = 20;  // twips por ponto
@@ -135,6 +143,62 @@ async function gravarSubstituindo(drive, pastaId, nomeArquivo, mime, buffer) {
   return { id: novo.id, nome: novo.name, url: novo.webViewLink, bytes: Number(novo.size) || null, substituiu: anteriores.length };
 }
 
+// Texto do primeiro bloco com texto, sem marcação de negrito — usado para conferir o PDF.
+export function primeiroTexto(blocos) {
+  const b = blocos.find(x => String(x.texto ?? '').trim());
+  return b ? String(b.texto).replace(/\*\*/g, '').trim() : '';
+}
+
+// Uma conversão por vez: o LibreOffice não gosta de instâncias simultâneas, e em lote a fila
+// garante que nenhuma conversão atropele a outra.
+let fila = Promise.resolve();
+
+// Word → PDF pelo LibreOffice do servidor (perfil descartável por conversão).
+export function converterParaPdf(docx, { binario = process.env.SOFFICE_BIN || 'soffice', limiteMs = 90000 } = {}) {
+  const tarefa = fila.then(async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'am-peca-'));
+    try {
+      const entrada = join(dir, 'peca.docx');
+      await writeFile(entrada, docx);
+      await new Promise((resolve, reject) => {
+        execFile(binario, [
+          `-env:UserInstallation=${pathToFileURL(join(dir, 'perfil')).href}`,
+          '--headless', '--norestore', '--convert-to', 'pdf', '--outdir', dir, entrada,
+        ], { timeout: limiteMs, env: { ...process.env, HOME: dir, SAL_USE_VCLPLUGIN: 'svp' } }, (err, _out, stderr) => {
+          if (err) reject(new Error(`Conversão para PDF falhou: ${err.message}${stderr ? ` — ${String(stderr).slice(0, 300)}` : ''}`));
+          else resolve();
+        });
+      });
+      return await readFile(join(dir, 'peca.pdf'));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+  fila = tarefa.catch(() => {});
+  return tarefa;
+}
+
+const semAcento = t => String(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').toUpperCase();
+
+// Confere o PDF antes de gravar: A4 na orientação pedida, ao menos uma página e o texto de
+// abertura presente na primeira página. Falha → erro 500, nada gravado.
+export async function conferirPdf(pdf, { orientacao = 'retrato', textoInicial = '' } = {}) {
+  const { getDocumentProxy, extractText } = await import('unpdf');
+  let doc;
+  try { doc = await getDocumentProxy(new Uint8Array(pdf)); } catch { throw new Error('PDF gerado inválido.'); }
+  if (!doc.numPages) throw new Error('PDF gerado sem páginas.');
+  const pagina = await doc.getPage(1);
+  const [, , largura, altura] = pagina.view;
+  const [w, h] = orientacao === 'paisagem' ? [841.89, 595.28] : [595.28, 841.89];
+  if (Math.abs(largura - w) > 2 || Math.abs(altura - h) > 2) throw new Error(`PDF fora do tamanho A4 (${Math.round(largura)}x${Math.round(altura)} pt).`);
+  if (textoInicial) {
+    const { text } = await extractText(doc, { mergePages: false });
+    const trecho = semAcento(textoInicial).slice(0, 40);
+    if (!semAcento(text[0] || '').includes(trecho)) throw new Error('PDF gerado sem o texto de abertura esperado.');
+  }
+  return { paginas: doc.numPages };
+}
+
 export async function salvarPecaPadrao({ pastaId, nome, blocos, formatos = ['pdf'], orientacao = 'retrato' }, deps = {}) {
   const drive = deps.drive || driveCliente();
   const env = deps.env || process.env;
@@ -143,23 +207,16 @@ export async function salvarPecaPadrao({ pastaId, nome, blocos, formatos = ['pdf
   if (!pedidos.length || pedidos.some(f => !['pdf', 'docx'].includes(f))) throw erroValidacao('Formatos aceitos: pdf, docx.');
   const docx = await montarDocx(blocos, { orientacao });
   const pasta = await conferirPastaDestino(drive, pastaId, env);
-  const arquivos = [];
 
-  if (pedidos.includes('docx')) arquivos.push({ formato: 'docx', ...(await gravarSubstituindo(drive, pasta.id, `${base}.docx`, MIME_DOCX, docx)) });
-
+  // Gera e confere tudo antes de gravar qualquer arquivo: falhou, nada vai para o Drive.
+  let pdf = null; let paginas = null;
   if (pedidos.includes('pdf')) {
-    // Word → Google Doc temporário (conversão do Drive, mantém margens e espaçamentos) → PDF.
-    const { data: doc } = await drive.files.create({
-      requestBody: { name: `${base} (temporário)`, mimeType: MIME_DOC, parents: [pasta.id] },
-      media: { mimeType: MIME_DOCX, body: corpo(docx) },
-      fields: 'id',
-    });
-    try {
-      const { data: pdf } = await drive.files.export({ fileId: doc.id, mimeType: 'application/pdf' }, { responseType: 'arraybuffer' });
-      arquivos.push({ formato: 'pdf', ...(await gravarSubstituindo(drive, pasta.id, `${base}.pdf`, 'application/pdf', Buffer.from(pdf))) });
-    } finally {
-      await drive.files.delete({ fileId: doc.id }).catch(() => {});
-    }
+    pdf = await (deps.converter || converterParaPdf)(docx);
+    ({ paginas } = await (deps.conferir || conferirPdf)(pdf, { orientacao, textoInicial: primeiroTexto(blocos) }));
   }
+
+  const arquivos = [];
+  if (pdf) arquivos.push({ formato: 'pdf', paginas, ...(await gravarSubstituindo(drive, pasta.id, `${base}.pdf`, 'application/pdf', pdf)) });
+  if (pedidos.includes('docx')) arquivos.push({ formato: 'docx', ...(await gravarSubstituindo(drive, pasta.id, `${base}.docx`, MIME_DOCX, docx)) });
   return { pasta, arquivos };
 }

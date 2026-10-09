@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import JSZip from 'jszip';
-import { montarDocx, salvarPecaPadrao, validarBlocos } from './pecas.js';
+import { execFileSync } from 'node:child_process';
+import { montarDocx, salvarPecaPadrao, validarBlocos, converterParaPdf, conferirPdf, primeiroTexto } from './pecas.js';
 
 const ENV = { GOOGLE_DRIVE_PASTA_PENDENTES: 'PENDENTES_AM_0001', GOOGLE_DRIVE_PASTA_OUTORGANTES: 'OUTORGANTES_26' };
 const PASTA = 'PASTA_FRANKLIN_01';
@@ -68,19 +69,50 @@ function driveFalso({ existentes = [] } = {}) {
   };
 }
 
-test('salvarPecaPadrao: Word → Google Doc temporário → PDF, substitui o anterior e apaga o temporário', async () => {
+const PDF_FALSO = Buffer.from('%PDF');
+const deps = (drive, extra = {}) => ({ drive, env: ENV, converter: async () => PDF_FALSO, conferir: async () => ({ paginas: 2 }), ...extra });
+
+test('salvarPecaPadrao: converte e confere antes de gravar; substitui o PDF anterior', async () => {
   const drive = driveFalso({ existentes: [{ id: 'velho' }] });
-  const r = await salvarPecaPadrao({ pastaId: PASTA, nome: 'INICIAL - FULANO', blocos: BLOCOS }, { drive, env: ENV });
-  assert.deepEqual(r.arquivos.map(a => [a.formato, a.nome, a.substituiu]), [['pdf', 'INICIAL - FULANO.pdf', 1]]);
-  assert.deepEqual(drive.chamadas.map(c => c[0]), ['create', 'export', 'create', 'lixeira', 'delete']);
-  assert.equal(drive.chamadas[0][2], 'application/vnd.google-apps.document');
+  const r = await salvarPecaPadrao({ pastaId: PASTA, nome: 'INICIAL - FULANO', blocos: BLOCOS }, deps(drive));
+  assert.deepEqual(r.arquivos.map(a => [a.formato, a.nome, a.substituiu, a.paginas]), [['pdf', 'INICIAL - FULANO.pdf', 1, 2]]);
+  assert.deepEqual(drive.chamadas.map(c => c[0]), ['create', 'lixeira']);
+  assert.equal(drive.chamadas[0][2], 'application/pdf');
+});
+
+test('salvarPecaPadrao: conferência reprovada não grava nada no Drive', async () => {
+  const drive = driveFalso();
+  await assert.rejects(salvarPecaPadrao({ pastaId: PASTA, nome: 'X', blocos: BLOCOS, formatos: ['pdf', 'docx'] },
+    deps(drive, { conferir: async () => { throw new Error('PDF fora do tamanho A4'); } })), /A4/);
+  assert.equal(drive.chamadas.length, 0);
 });
 
 test('salvarPecaPadrao: docx grava o Word direto; destino fora das pastas da equipe é recusado', async () => {
   const drive = driveFalso();
-  const r = await salvarPecaPadrao({ pastaId: PASTA, nome: 'X', blocos: BLOCOS, formatos: ['docx'] }, { drive, env: ENV });
+  const r = await salvarPecaPadrao({ pastaId: PASTA, nome: 'X', blocos: BLOCOS, formatos: ['docx'] }, deps(drive));
   assert.equal(r.arquivos[0].nome, 'X.docx');
-  assert.ok(!drive.chamadas.some(c => c[0] === 'export'));
-  await assert.rejects(salvarPecaPadrao({ pastaId: PASTA, nome: 'X', blocos: BLOCOS }, { drive: driveFalso(), env: { GOOGLE_DRIVE_PASTA_PENDENTES: 'OUTRA_PASTA_123' } }), e => e.status === 403);
-  await assert.rejects(salvarPecaPadrao({ pastaId: PASTA, nome: 'X', blocos: BLOCOS, formatos: ['exe'] }, { drive: driveFalso(), env: ENV }), e => e.status === 422);
+  await assert.rejects(salvarPecaPadrao({ pastaId: PASTA, nome: 'X', blocos: BLOCOS }, { ...deps(driveFalso()), env: { GOOGLE_DRIVE_PASTA_PENDENTES: 'OUTRA_PASTA_123' } }), e => e.status === 403);
+  await assert.rejects(salvarPecaPadrao({ pastaId: PASTA, nome: 'X', blocos: BLOCOS, formatos: ['exe'] }, deps(driveFalso())), e => e.status === 422);
+});
+
+test('primeiroTexto: primeiro bloco com texto, sem asteriscos', () => {
+  assert.equal(primeiroTexto([{ tipo: 'assinaturas' }, { tipo: 'paragrafo', texto: '**A** b' }]), 'A b');
+});
+
+// Conversão real (LibreOffice). Roda onde o soffice existe (servidor e máquina de desenvolvimento).
+let temSoffice = true;
+try { execFileSync(process.env.SOFFICE_BIN || 'soffice', ['--version'], { stdio: 'ignore', timeout: 30000 }); } catch { temSoffice = false; }
+
+test('converterParaPdf + conferirPdf: A4 com margem esquerda de 3 cm e recuo de 2 cm no PDF real', { skip: !temSoffice && 'soffice ausente' }, async () => {
+  const pdf = await converterParaPdf(await montarDocx(BLOCOS));
+  const { paginas } = await conferirPdf(pdf, { textoInicial: primeiroTexto(BLOCOS) });
+  assert.ok(paginas >= 1);
+  const { getDocumentProxy } = await import('unpdf');
+  const doc = await getDocumentProxy(new Uint8Array(pdf));
+  const itens = (await (await doc.getPage(1)).getTextContent()).items.filter(i => i.str.trim());
+  const x = t => Math.round(itens.find(i => i.str.includes(t)).transform[4]);
+  assert.ok(Math.abs(x('AO JUÍZO') - 85) <= 2, `margem esquerda ${x('AO JUÍZO')}`);
+  assert.ok(Math.abs(x('FULANO') - 142) <= 2, `recuo de 1ª linha ${x('FULANO')}`);
+  await assert.rejects(conferirPdf(pdf, { orientacao: 'paisagem' }), /A4/);
+  await assert.rejects(conferirPdf(pdf, { textoInicial: 'TEXTO QUE NÃO ESTÁ NA PEÇA' }), /abertura/);
 });

@@ -194,7 +194,9 @@ function construirServidor(token) {
       + 'na ordem: enderecamento, paragrafo (qualificação/corpo, com recuo), acao (nome da ação, centralizado), titulo '
       + '("I — DOS FATOS"), subtitulo ("A) ..."), citacao (transcrição longa), pedido (alíneas "a) ..."), tabela '
       + '(linhas: primeira é o cabeçalho), fecho ("João Pessoa (PB), data do protocolo eletrônico.") e assinaturas (sem texto). '
-      + 'Negrito dentro do texto com **asteriscos duplos**. Para planilhas largas, prefira salvar_documento_drive com orientação paisagem.',
+      + 'Negrito dentro do texto com **asteriscos duplos**. Planilhas/memórias de cálculo: blocos acao/paragrafo + tabela com orientacao "paisagem". '
+      + 'O PDF é gerado no servidor e conferido (A4, páginas, texto de abertura) antes de gravar; se falhar, nada é gravado e a ferramenta devolve erro — '
+      + 'em lote, trate cada erro e não siga como se a peça estivesse salva. Use esta ferramenta, e não salvar_documento_drive, para tudo que vai ao PJe.',
     inputSchema: {
       pasta_id: z.string().regex(/^[A-Za-z0-9_-]{10,100}$/).describe('ID da pasta do cliente no Drive'),
       nome: z.string().min(1).max(200).describe('Nome do arquivo, sem extensão: "TIPO - CLIENTE - PROCESSO"'),
