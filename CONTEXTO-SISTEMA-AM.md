@@ -3462,3 +3462,24 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   `salvar_peca_drive` (servidor 1.3.0). Suíte 1050/1050.
 - **Pendências:** após o deploy, reconectar o conector e regravar as iniciais do Franklin com `salvar_peca_drive`;
   opcionalmente ativar a Google Docs API no projeto Google para `salvar_documento_drive` (planilhas em paisagem).
+
+### 09/10/2026 (noite) — `salvar_peca_drive` verificada em produção (PR #5, merge `014f8b8`)
+
+- **Publicado:** PR #5 mergeado em `main`; o Railway publicou a imagem com LibreOffice (PDF gravado traz
+  "LibreOffice 7.4" como produtor). Depois de reconectar o conector, uma **sessão nova** enxergou a ferramenta
+  (servidor "acervo-am-advogados"); sessões abertas antes da reconexão não a carregam.
+- **Verificado em produção:** as duas iniciais do Franklin (FGTS + férias + 13º e Piso magistério) foram gravadas pela
+  ferramenta na pasta do cliente (6 páginas cada, sem avisos). Os PDFs baixados do Drive foram medidos: A4
+  595 x 842 pt, margem esquerda 3,00 cm, direita 2,00 cm, topo ~3 cm, base ~2 cm, recuo de 1ª linha 2 cm
+  (x = 5,01 cm), citações a 4 cm da margem (x = 7,02 cm), corpo 12 pt, citação 11 pt, tabela 10 pt, assinaturas
+  centralizadas; o texto de todos os blocos confere com o texto aprovado. A planilha do Piso foi regravada pela mesma
+  ferramenta em A4 paisagem (3 páginas; as 40 competências e os totais conferidos com a versão anterior, que estava em
+  tamanho Carta, gerada pelo Google Docs, e foi para a lixeira). Pasta final: as duas iniciais, a planilha, a procuração,
+  o comprovante de vínculo e o CNH/CPF/residência.
+- **Causa do "não gravou com o layout":** os PDFs gravados às 19:54 saíram pela ferramenta antiga
+  `salvar_documento_drive` (HTML → Google Docs), que não aplica o layout; não use essa ferramenta para nada que vai
+  ao PJe.
+- **Limitações conhecidas:** a fonte embutida no PDF é Liberation Sans (mesmas métricas da Arial; o servidor não tem
+  a Arial da Microsoft); termos com hífen (ex.: número de processo, "IPCA-E") podem quebrar no hífen no fim da linha.
+  Uma sessão que recebe a ordem de outra sessão (e não do usuário) recusa substituir arquivo existente; nesse caso,
+  gravar com nome novo e fazer a troca na sessão principal.
