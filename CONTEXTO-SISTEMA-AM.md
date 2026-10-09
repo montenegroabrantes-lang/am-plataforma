@@ -3432,3 +3432,16 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   Tereza Cristina pela do Piso Magistério (a de Férias 45 dias fica movida à mão — 1 pasta por cliente).
   `GOOGLE_DRIVE_PASTA_PENDENTES` agora lista as duas pastas de pendentes (a 1ª recebe as pastas novas).
   Sobra a pasta antiga do Franklin ("…MATO LOURENCO", na "- AM") sem vínculo; nada apagado.
+
+### 09/10/2026 (tarde) — Quadro de leads cabe na tela sem barra horizontal
+
+- **Pedido:** ajustar o Quadro (Estimativas → Leads) para caber na tela sem rolar na horizontal.
+- **Frontend `b33cb81` + `c47c08e` (deploys `79c8b765` e `10672467` SUCCESS):** `QuadroLeads` em
+  `estimativas/page.js` passou de flex com colunas de 254 px para `grid` cujas colunas dividem a largura
+  (`minmax(148px,1fr)`; Fechado/Perdido recolhidos `minmax(112px,0.55fr)`); cards com `overflowWrap:'anywhere'`,
+  padding menor e rodapé que quebra linha; o selo "N sem cadastro" da coluna recolhida passou para o corpo
+  (no cabeçalho estreito escondia o título FECHADO). A rolagem horizontal ficou só como reserva.
+- **Verificado no Chrome logado (viewport 1582 px):** 7 colunas (206 px × 5 + 114 px × 2), sem rolagem
+  horizontal (`scrollWidth == clientWidth`), cabeçalhos legíveis.
+- **Limite:** em tela de ~1280 px com a coluna "Assinado" visível (aparece quando há lead nela) a soma dos
+  mínimos pode passar da largura útil e a barra volta; o mínimo da coluna (148 px) é o botão de ajuste.
