@@ -40,6 +40,14 @@ app.get('/api/acervo/teses', (req, res) => {
   recebidas.push({ caminho: req.path, auth: req.headers.authorization });
   res.json({ ok: true, teses: [] });
 });
+app.get('/api/comunicacao/localizar', (req, res) => {
+  recebidas.push({ caminho: req.path, query: req.query, auth: req.headers.authorization });
+  res.json({ ok: true, processos: [], clientes: [], contatos_digisac: [] });
+});
+app.post('/api/comunicacao/enviar', (req, res) => {
+  recebidas.push({ caminho: req.path, corpo: req.body, auth: req.headers.authorization });
+  res.json({ ok: true, status: 'enviado' });
+});
 app.use('/mcp', mcpRouter);
 
 const token = jwt.sign({ id: 'svc', perfil: 'master', escopos: ['acervo', 'reprotocolo'] }, process.env.JWT_SECRET, { expiresIn: '1h' });
@@ -135,6 +143,27 @@ test('ferramentas do acervo continuam chamando /api/acervo', async () => {
   recebidas.length = 0;
   await chamarFerramenta('listar_teses', {});
   assert.equal(recebidas[0].caminho, '/api/acervo/teses');
+});
+
+test('localizar_cliente (leitura) e enviar_whatsapp_cliente (escrita) chamam /api/comunicacao com o mesmo token', async () => {
+  const { dados } = await rpc('tools/list');
+  const ferramentas = Object.fromEntries(dados.result.tools.map(t => [t.name, t]));
+  assert.equal(ferramentas.localizar_cliente.annotations.readOnlyHint, true);
+  assert.equal(ferramentas.enviar_whatsapp_cliente.annotations.readOnlyHint, false);
+  assert.deepEqual(ferramentas.enviar_whatsapp_cliente.inputSchema.required, ['texto']);
+
+  recebidas.length = 0;
+  await chamarFerramenta('localizar_cliente', { processo: '0809017-10.2024.8.15.2001' });
+  assert.equal(recebidas[0].caminho, '/api/comunicacao/localizar');
+  assert.deepEqual(recebidas[0].query, { processo: '0809017-10.2024.8.15.2001' });
+  assert.equal(recebidas[0].auth, `Bearer ${token}`);
+
+  recebidas.length = 0;
+  const cliente = '33333333-3333-4333-8333-333333333333';
+  const r = await chamarFerramenta('enviar_whatsapp_cliente', { cliente_id: cliente, texto: 'Olá' });
+  assert.equal(r.dados.result.isError, false);
+  assert.equal(recebidas[0].caminho, '/api/comunicacao/enviar');
+  assert.deepEqual(recebidas[0].corpo, { cliente_id: cliente, texto: 'Olá' });
 });
 
 test('enxugar: remove null e listas vazias, mas mantém false e 0 (carregam informação)', () => {

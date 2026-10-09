@@ -22,6 +22,12 @@ export const ESCOPOS = {
       + 'e conferir o vínculo na fonte oficial da Paraíba/Pernambuco. Não altera nada.',
     prefixos: ['/api/reprotocolo'],
   },
+  comunicacao: {
+    rotulo: 'Contato com clientes (WhatsApp)',
+    descricao: 'Localizar o cliente pelo número do processo ou pelo nome (WhatsApp mascarado) e enviar a ele '
+      + 'mensagem de WhatsApp pelo Digisac, em nome do escritório. Cada envio fica na auditoria.',
+    prefixos: ['/api/comunicacao'],
+  },
 };
 
 export const ESCOPOS_VALIDOS = Object.keys(ESCOPOS);

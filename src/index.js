@@ -46,6 +46,7 @@ import { chavesApiRouter } from './routes/chavesApi.js';
 import { integracoesExternasRouter } from './routes/integracoesExternas.js';
 import { acervoRouter } from './routes/acervo.js';
 import { reprotocoloRouter } from './routes/reprotocolo.js';
+import { comunicacaoRouter } from './routes/comunicacao.js';
 import { mcpRouter } from './mcp/index.js';
 import { oauthRouter } from './oauth/index.js';
 
@@ -171,6 +172,7 @@ app.use('/api/acervo',        autenticar, acervoRouter);
 app.use('/api/auditoria',     autenticar, auditoriaRouter);
 // Levantamento de re-protocolo (somente leitura): Master + escopo OAuth "reprotocolo" no conector.
 app.use('/api/reprotocolo',   autenticar, reprotocoloRouter);
+app.use('/api/comunicacao',   autenticar, comunicacaoRouter);
 app.use('/mcp',               limiteMcp, mcpRouter); // S-20: 60/min por Master que autorizou o conector
 montarUrlencodedOauth(app);
 // S-20: /oauth/token e /oauth/register por IP (o /oauth/authorize tem o limitador do S-02)

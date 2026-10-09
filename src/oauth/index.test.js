@@ -578,7 +578,7 @@ test('fluxo do conector: refresh_token nunca é aceito; grant desconhecido → 4
   assert.deepEqual(meta.grant_types_supported, ['authorization_code']);
   assert.deepEqual(meta.code_challenge_methods_supported, ['S256']);
   const recurso = await (await fetch(`${s.base}/.well-known/oauth-protected-resource`)).json();
-  assert.deepEqual(recurso.scopes_supported, ['acervo', 'reprotocolo']);
+  assert.deepEqual(recurso.scopes_supported, ['acervo', 'reprotocolo', 'comunicacao']);
 });
 
 test('sem "marcar ao menos uma permissão" nenhum código é emitido, e o pedido sem PKCE S256 é recusado', async () => {

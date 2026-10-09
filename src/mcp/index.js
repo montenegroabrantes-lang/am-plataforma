@@ -1,5 +1,6 @@
 // Servidor MCP do AM — expõe como ferramentas as rotas de /api/acervo e, desde 28/09/2026, o
-// levantamento de re-protocolo (/api/reprotocolo, somente leitura).
+// levantamento de re-protocolo (/api/reprotocolo, somente leitura) e, desde 09/10/2026, o contato
+// com clientes por WhatsApp (/api/comunicacao).
 // Stateless: uma instância de servidor e transporte por requisição.
 // As ferramentas chamam a própria API por HTTP local com o MESMO token, reaproveitando
 // validação, perfil (apenasMaster), escopo OAuth (exigirEscopo), visibilidade e auditoria já
@@ -70,7 +71,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.2.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.3.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -238,6 +239,38 @@ function construirServidor(token) {
       isError: resultados.every(r => r.http >= 400),
     };
   });
+
+  // ── Contato com clientes (WhatsApp pelo Digisac). Master + escopo "comunicacao". ──
+
+  s.registerTool('localizar_cliente', {
+    title: 'Localizar cliente (processo ou nome)',
+    description: 'Acha o cliente pelo número CNJ do processo (com ou sem pontuação) e/ou pelo nome. Devolve '
+      + 'cliente_id, nome, processo e o WhatsApp do cadastro MASCARADO; quando o AM não tem o número, lista os '
+      + 'contatos do Digisac com nome compatível (contato_id + número mascarado) — confira o nome antes de usar. '
+      + 'Se o processo não estiver no AM, tente pelo nome. Use antes de enviar_whatsapp_cliente. Não altera nada.',
+    inputSchema: {
+      processo: z.string().max(40).optional().describe('Número CNJ, ex.: 0809017-10.2024.8.15.2001'),
+      nome: z.string().max(120).optional().describe('Nome do cliente (completo ou primeiro e último)'),
+    },
+    annotations: { readOnlyHint: true, openWorldHint: true },
+  }, async ({ processo, nome }) => saidaCompacta(await chamar('GET', `/comunicacao/localizar${qs({ processo, nome })}`, token)));
+
+  s.registerTool('enviar_whatsapp_cliente', {
+    title: 'Enviar WhatsApp ao cliente (Digisac)',
+    description: 'Envia UMA mensagem de texto ao cliente pelo WhatsApp do escritório (Digisac). Destino: o WhatsApp '
+      + 'do cadastro do cliente (cliente_id); sem ele, o contato do Digisac (contato_digisac_id) achado por '
+      + 'localizar_cliente. Só envie texto que o usuário aprovou, com nome e valores já preenchidos, um cliente '
+      + 'por chamada. A mesma mensagem ao mesmo destino nas últimas 24h é recusada (reenviar: true força). '
+      + 'Status "incerto" = a mensagem pode ter saído: NÃO reenvie sem conferir no Digisac. Fica na auditoria.',
+    inputSchema: {
+      texto: z.string().min(1).max(4000).describe('Texto final da mensagem'),
+      cliente_id: z.string().uuid().optional().describe('cliente_id devolvido por localizar_cliente'),
+      contato_digisac_id: z.string().uuid().optional().describe('Contato do Digisac, quando o cliente não tem WhatsApp no AM'),
+      processo_id: z.string().uuid().optional().describe('Processo a que a mensagem se refere (auditoria)'),
+      reenviar: z.boolean().optional().describe('true manda de novo um texto idêntico já enviado nas últimas 24h'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  }, async a => saida(await chamar('POST', '/comunicacao/enviar', token, a)));
 
   return s;
 }
