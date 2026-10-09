@@ -48,7 +48,13 @@ test('Dockerfile: mantém o cliente PostgreSQL do PGDG (o pg_dump do backup vive
 test('Dockerfile: sem Chromium nem bibliotecas de navegador', () => {
   assert.doesNotMatch(instrucoes, /chromium/i);
   assert.doesNotMatch(instrucoes, /PUPPETEER|CHROMIUM_PATH/);
-  assert.doesNotMatch(instrucoes, /libnss3|libatk|libcups|fonts-liberation/);
+  assert.doesNotMatch(instrucoes, /libnss3|libatk|libcups/);
+});
+
+test('Dockerfile: LibreOffice Writer sem interface + fontes Liberation para gerar os PDFs das peças', () => {
+  assert.match(instrucoes, /libreoffice-writer-nogui/);
+  assert.match(instrucoes, /fonts-liberation/);
+  assert.doesNotMatch(instrucoes, /libreoffice(?!-writer-nogui)[\w-]*\s/, 'só o Writer sem interface, não a suíte inteira');
 });
 
 test('Dockerfile: instala pelo lockfile (npm ci --omit=dev), não por npm install', () => {
@@ -86,14 +92,18 @@ test('railway.json: build por Dockerfile e pré-deploy do migrate.js continuam (
 
 // ── Usuário "node" e disco ────────────────────────────────────────────────────
 
-test('sem root: o único código que grava em disco é o backup, e grava em /tmp (gravável por qualquer usuário)', () => {
+test('sem root: só o backup e a conversão de peças gravam em disco, e ambos em /tmp (gravável por qualquer usuário)', () => {
   const gravadores = fontes.filter((f) => /\b(writeFile|writeFileSync|appendFile|appendFileSync|createWriteStream|mkdirSync|mkdir)\s*\(/.test(readFileSync(f, 'utf8')));
   assert.deepEqual(
-    gravadores.map((f) => path.relative(RAIZ, f)),
-    ['src/workers/backup.worker.js'],
+    gravadores.map((f) => path.relative(RAIZ, f)).sort(),
+    ['src/services/drive/pecas.js', 'src/workers/backup.worker.js'],
     'código novo que grava em disco precisa apontar para /tmp (o processo é o usuário node, /app não é dele)',
   );
   assert.match(readFileSync(path.join(RAIZ, 'src/workers/backup.worker.js'), 'utf8'), /BACKUP_DIR\s*=\s*process\.env\.BACKUP_DIR \|\| '\/tmp\/am-backups'/);
+  // A conversão de peças grava só num diretório temporário do sistema (mkdtemp em tmpdir()) e o apaga.
+  const pecas = readFileSync(path.join(RAIZ, 'src/services/drive/pecas.js'), 'utf8');
+  assert.match(pecas, /mkdtemp\(join\(tmpdir\(\), 'am-peca-'\)\)/);
+  assert.match(pecas, /rm\(dir, \{ recursive: true, force: true \}\)/);
 });
 
 // ── package.json ──────────────────────────────────────────────────────────────

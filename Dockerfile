@@ -11,13 +11,18 @@ FROM node:22-bookworm-slim
 # a versão mais nova do PGDG em vez da 15 do bookworm (sem precisar fixar número aqui,
 # então builds futuros acompanham upgrades de major version do Postgres em produção).
 #
-# ATENÇÃO: este é o ÚNICO motivo de o Dockerfile ter apt-get. O Chromium/Puppeteer que
-# dividia este passo foi removido (nenhum código em src/ usa navegador, desde o Lote S/S-16),
-# mas o postgresql-client NÃO pode sair daqui: é o pg_dump do backup diário (23h).
+# ATENÇÃO: o Chromium/Puppeteer que dividia este passo foi removido (nenhum código em src/ usa
+# navegador, desde o Lote S/S-16), mas o postgresql-client NÃO pode sair daqui: é o pg_dump do
+# backup diário (23h).
+#
+# LibreOffice Writer (sem interface) + fontes Liberation (métricas idênticas a Arial/Times):
+# converte em PDF as peças montadas em Word no padrão do escritório (services/drive/pecas.js,
+# ferramenta salvar_peca_drive) — o PJe só aceita PDF e o layout precisa sair igual em todas.
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-common ca-certificates \
  && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
  && apt-get update \
  && apt-get install -y --no-install-recommends postgresql-client \
+      libreoffice-writer-nogui fonts-liberation fontconfig \
  && rm -rf /var/lib/apt/lists/*
 
 # /app é do usuário "node": o processo não roda como root (o backup grava em /tmp/am-backups,

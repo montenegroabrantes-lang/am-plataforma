@@ -5,6 +5,7 @@ import { uuidValido, urlHttpsOuNulo } from '../utils/validacao.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { registrarErroInterno, mensagemErroInterno } from '../middleware/erros.js';
 import { salvarDocumentoHtml } from '../services/drive/documentos.js';
+import { salvarPecaPadrao } from '../services/drive/pecas.js';
 
 export const acervoRouter = Router();
 
@@ -114,6 +115,25 @@ acervoRouter.post('/drive/documentos', apenasMaster, async (req, res) => {
   } catch (e) {
     if (e.status) return res.status(e.status).json({ ok: false, erro: 'validacao', mensagem: e.message });
     console.error('[Acervo/Drive] Gravação falhou:', e.message);
+    res.status(502).json({ ok: false, erro: 'drive', mensagem: 'Não foi possível gravar no Google Drive agora. Confira a autorização do Google.' });
+  }
+});
+
+// Grava uma peça no padrão de formatação do escritório (blocos → Word ABNT → PDF/.docx) na pasta do cliente (Master).
+acervoRouter.post('/drive/pecas', apenasMaster, async (req, res) => {
+  const b = req.body || {};
+  try {
+    const r = await salvarPecaPadrao({
+      pastaId: b.pasta_id, nome: b.nome, blocos: b.blocos,
+      formatos: Array.isArray(b.formatos) && b.formatos.length ? b.formatos : ['pdf'],
+      orientacao: b.orientacao === 'paisagem' ? 'paisagem' : 'retrato',
+    });
+    await registrarAuditoria({ usuarioId: req.user.id, acao: 'gravar_peca_drive', entidade: 'drive_documento',
+      entidadeId: r.arquivos[0]?.id || b.pasta_id, valorDepois: { pasta: r.pasta.nome, arquivos: r.arquivos.map(a => a.nome) }, ip: req._ip });
+    res.status(201).json({ ok: true, ...r });
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ ok: false, erro: 'validacao', mensagem: e.message });
+    console.error('[Acervo/Drive] Gravação de peça falhou:', e.message);
     res.status(502).json({ ok: false, erro: 'drive', mensagem: 'Não foi possível gravar no Google Drive agora. Confira a autorização do Google.' });
   }
 });
