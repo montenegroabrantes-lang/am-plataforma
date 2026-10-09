@@ -100,6 +100,7 @@ test('lista as ferramentas novas como somente leitura, sem perder as do acervo',
   assert.equal(ferramentas.conferir_vinculo_oficial.annotations.readOnlyHint, true);
   assert.equal(ferramentas.conferir_vinculo_oficial.inputSchema.properties.tarefa_ids.maxItems, 5);
   assert.equal(ferramentas.salvar_documento_drive.annotations.readOnlyHint, false);
+  assert.deepEqual(ferramentas.salvar_peca_drive.inputSchema.required.sort(), ['blocos', 'nome', 'pasta_id']);
   assert.deepEqual(ferramentas.salvar_documento_drive.inputSchema.required.sort(), ['html', 'nome', 'pasta_id']);
 });
 
