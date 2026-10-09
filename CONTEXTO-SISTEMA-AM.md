@@ -3408,3 +3408,27 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Limites:** nada é preenchido nos processos antigos (valor_estimativa/valor_proposta vazios; a coluna
   mostra "—"); a cobrança não é criada sozinha quando a RPV é paga (o Master registra); contrato com
   várias teses tem um só valor total.
+
+### 09/10/2026 (tarde) — Quadro de leads: registrar e cadastrar lead fechado só na Camila; vínculos de pasta do Drive
+
+- **Problema (relato do usuário):** cards na coluna Fechado sem cadastro (ex.: Franck Murani, Barbara
+  Elizabete) não tinham como ser finalizados: o botão "Ativar contrato" só existe para a etapa
+  `assinado`, e arrastar para Fechado não age num card que já está nessa coluna (`soltarNaColuna` ignora
+  quando o grupo é o mesmo). São leads com etapa `fechado` na Camila e SEM onboarding no AM (o mesmo
+  caso dos 9 de 21/09).
+- **Frontend `0a721db` + `7aa9118` (deploy `75d3785d` SUCCESS + o seguinte):** `SeloCadastro` em
+  `estimativas/page.js` mostra, para `etapa === 'fechado'` sem onboarding (Master), "Fechado na Camila ·
+  sem cadastro no AM" com o botão "Registrar fechamento e cadastrar →" (chama `onDropCard(lead,'fechado')`:
+  mesmo `FormularioFechamento`, depois a janela de cadastro). O backend `POST /leads/:contactId/desfecho`
+  cria o onboarding e reconfirma `fechado` na Camila (idempotente). O contador da coluna Fechado passou
+  a incluir esses cards ("15 sem cadastro" na verificação, antes 6). **Não** aparece quando há onboarding
+  cancelado de propósito (ex.: Luã Henrique, que não assinou) — só o selo "Sem cadastro". Título do
+  modal: "Fechado na Camila · registrar no AM". Verificado no Chrome logado (botões em Franck, Barbara,
+  Geane; o de Luã foi removido no 2º commit).
+- **Cuidado de uso:** a etapa `fechado` vem da Camila e há cards nela ainda em negociação (Barbara:
+  "contrato: aguardando confirmação"); confirmar a assinatura antes de preencher o formulário.
+- **Drive (mesmo dia):** vinculadas à mão (auditoria, autor "Integração Claude") 4 + 8 + 2 pastas da
+  equipe aos clientes; Franklin pela pasta nova (`…MATOS LOURENCO x PB`, na outra pasta de pendentes),
+  Tereza Cristina pela do Piso Magistério (a de Férias 45 dias fica movida à mão — 1 pasta por cliente).
+  `GOOGLE_DRIVE_PASTA_PENDENTES` agora lista as duas pastas de pendentes (a 1ª recebe as pastas novas).
+  Sobra a pasta antiga do Franklin ("…MATO LOURENCO", na "- AM") sem vínculo; nada apagado.
