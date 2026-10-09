@@ -521,9 +521,11 @@ processosRouter.delete('/:id/cessao/:cessaoId', apenasMaster, async (req, res) =
 processosRouter.post('/', async (req, res) => {
   const { numero, tribunal, sistema, grau = '1', cliente_id, produto_id, master_responsavel_id,
           vara, acao, polo_ativo, polo_passivo, periodo_inicio, periodo_fim } = req.body;
+  // Só o Master grava estes valores (como valor da causa/RPV); do júnior são ignorados no cadastro.
+  const podeValores = req.user?.perfil === 'master';
   const valoresIniciais = {
-    valor_estimativa: valorOpcional(req.body.valor_estimativa),
-    valor_proposta: valorOpcional(req.body.valor_proposta),
+    valor_estimativa: podeValores ? valorOpcional(req.body.valor_estimativa) : null,
+    valor_proposta: podeValores ? valorOpcional(req.body.valor_proposta) : null,
   };
   if (valoresIniciais.valor_estimativa === false || valoresIniciais.valor_proposta === false) {
     return res.status(400).json({ ok: false, erro: 'Valor da estimativa ou da proposta inválido.' });
