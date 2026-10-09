@@ -3327,3 +3327,16 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   esta sessão (sem acesso ao Railway).
 - **Pendências:** rodar "📁 Conciliar com o Drive" e confirmar que as 12 tarefas sem pasta caíram;
   vincular as pastas restantes pelo painel.
+
+### 08/10/2026 (noite) — Ferramenta `salvar_documento_drive` (conector do AM)
+
+- **Motivo:** o conector do Google Drive do Claude só grava texto; PDF/Word gerados pelo Claude
+  chegavam corrompidos. O PJe exige PDF. Caso de teste: iniciais do Franklin (FGTS e piso).
+- **Backend:** `services/drive/documentos.js` (HTML → Google Doc temporário na pasta → exporta PDF
+  e/ou .docx; A4 com margens ABNT 3/3/2/2 cm ou paisagem via Docs API — se a Docs API falhar, grava
+  assim mesmo e devolve aviso; arquivo de mesmo nome vai para a lixeira; Doc temporário apagado,
+  salvo formato `gdoc`). Rota `POST /api/acervo/drive/documentos` (Master, escopo `acervo`, auditada
+  como `gravar_documento_drive`). Destino restrito às pastas Pendentes/Outorgantes/`GOOGLE_DRIVE_PASTA_RAIZ`
+  e às subpastas diretas delas. Ferramenta MCP `salvar_documento_drive` (servidor 1.2.0).
+- **Pendências:** confirmar em produção que a Docs API está habilitada no projeto Google (margens);
+  se não estiver, os PDFs saem com a margem padrão do Google Docs.
