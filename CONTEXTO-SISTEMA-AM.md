@@ -3379,3 +3379,32 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   escolhido e cliente sem vínculo, grava o vínculo **só após envio confirmado** (`status enviado`) e
   nunca troca um vínculo existente (outro contato → 422). Auditoria ganha
   `contato_vinculado_ao_cliente`. Suíte 1030/1030.
+
+### 09/10/2026 — Cobrança do contador por processo e três valores lado a lado
+
+- **Pedido do usuário:** (1) cada processo deve indicar o valor do contador judicial a cobrar do cliente
+  (R$ 750 / 1.320 / 520 nos casos de hoje, via Pix para a contadora); (2) ao cadastrar o processo,
+  mostrar lado a lado o honorário real (estimado), o valor da estimativa e o valor passado ao cliente.
+  Decisões: cobrança genérica (contador/perito/outro), valor fixo por processo, cadastro de favorecido
+  com chave Pix, processos antigos NÃO preenchidos em massa.
+- **Backend `15fbacf` (deploy `fcf2f5ee`; migração `2026_10_09_cobrancas_e_valores_do_processo`
+  aplicada):** tabelas `beneficiarios_cobranca` e `cobrancas_cliente` (a_cobrar → cobrado → pago/cancelado;
+  uma aberta por processo+tipo); rotas `/api/cobrancas` (Master; fora do escopo do conector Claude):
+  lista com `pronta` (RPV paga ou precatório disponibilizado), cria/edita, transições, `GET /:id/mensagem`
+  (texto pronto com valor, favorecido e Pix; o envio sai por `/api/comunicacao/enviar` e só depois
+  marca "cobrado"). `processos.valor_estimativa` e `valor_proposta` (o 3º valor, real, é o
+  `valor_homologado` que já existia); `onboardings_contrato.valor_estimado` guarda o valor da
+  calculadora no fechamento. `concluir-com-numero` e `POST /api/processos` aceitam os dois valores (só
+  Master; júnior é ignorado/403); `GET /api/tarefas/:id/valores-sugeridos` pré-preenche do contrato
+  (contrato com 2+ teses = valor único, não sugere). Suíte 1040/1040.
+- **Frontend `7655857` (deploy `feddf1aa`):** na aba Classificação do processo, seções "5 · Valores e
+  honorários" (3 colunas, honorário de cada uma pelo % da tese, diferença em %) e "6 · Cobranças ao
+  cliente" (registrar, cobrar pelo WhatsApp com texto editável, marcar pago/cancelar, novo favorecido);
+  Financeiro: "Contador a cobrar" (só as já prontas); "Concluir com número" e cadastro manual pedem os
+  dois valores. Verificado no Chrome logado: as duas seções renderizam.
+- **Por que o envio de hoje deu 403:** o conector do Claude foi autorizado só com a permissão "Acervo";
+  localizar cliente e enviar WhatsApp exigem "Contato com clientes (WhatsApp)" — desconectar e reconectar
+  marcando a caixa.
+- **Limites:** nada é preenchido nos processos antigos (valor_estimativa/valor_proposta vazios; a coluna
+  mostra "—"); a cobrança não é criada sozinha quando a RPV é paga (o Master registra); contrato com
+  várias teses tem um só valor total.
