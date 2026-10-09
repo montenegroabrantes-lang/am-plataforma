@@ -11,6 +11,7 @@ import { resolverTribunalCnj } from '../utils/cnj.js';
 import { resolverPeriodoProtocolo } from '../utils/periodoProtocolo.js';
 import { confirmacaoExigida, semConfirmacaoValida } from '../services/reprotocolo/verificacao.js';
 import { daTabela } from '../utils/tabelaSegura.js';
+import { valorOpcional } from '../utils/valorOpcional.js';
 
 export const tarefasRouter = Router();
 
@@ -729,6 +730,25 @@ tarefasRouter.post('/lote/restaurar', apenasMaster, async (req, res) => {
 // S-27 (D6): Master registra qualquer protocolo; o júnior só o da tarefa atribuída a ele (a
 // conferência de responsável mais abaixo). A rota era apenasMaster desde 28/09, o que travava
 // a tarefa de um júnior responsável.
+// GET /api/tarefas/:id/valores-sugeridos — preenche, na tela "Concluir com número", o valor da estimativa
+// (calculadora) e o valor passado ao cliente (fechado no contrato). Contrato com mais de uma tese tem UM
+// valor para todas: nesse caso não sugere nada (o Master informa por processo) e avisa.
+tarefasRouter.get('/:id/valores-sugeridos', apenasMaster, async (req, res) => {
+  if (!uuidValido(req.params.id)) return res.status(400).json({ ok: false, erro: 'Id inválido.' });
+  const t = await db.queryOne(
+    `SELECT t.onboarding_id, cp.honorarios_pct FROM tarefas t
+       LEFT JOIN cliente_produtos cp ON cp.id = t.cliente_produto_id WHERE t.id = $1`, [req.params.id]);
+  if (!t) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
+  const base = { ok: true, valor_estimativa: null, valor_proposta: null, varias_teses: false, honorarios_pct: t.honorarios_pct ?? null };
+  if (!t.onboarding_id) return res.json(base);
+  const ob = await db.queryOne(
+    `SELECT o.valor_fechado, o.valor_estimado, (SELECT COUNT(*) FROM onboarding_produtos op WHERE op.onboarding_id = o.id) AS teses
+       FROM onboardings_contrato o WHERE o.id = $1`, [t.onboarding_id]);
+  if (!ob) return res.json(base);
+  if (Number(ob.teses) > 1) return res.json({ ...base, varias_teses: true });
+  res.json({ ...base, valor_estimativa: ob.valor_estimado ?? null, valor_proposta: ob.valor_fechado ?? null });
+});
+
 tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
   const { numero_processo, periodo_inicio, periodo_fim, vinculo_id } = req.body;
 
@@ -750,6 +770,15 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
   );
 
   if (!tarefa) return res.status(404).json({ ok: false, erro: 'Tarefa não encontrada.' });
+
+  // Valores lado a lado (estimativa da calculadora × passado ao cliente), conferidos na tela. Opcionais.
+  // Só o Master grava estes valores (mesma regra do valor da causa/RPV); do júnior eles são ignorados.
+  const ehMasterReq = req.user?.perfil === 'master';
+  const valorEstimativa = ehMasterReq ? valorOpcional(req.body?.valor_estimativa) : null;
+  const valorProposta = ehMasterReq ? valorOpcional(req.body?.valor_proposta) : null;
+  if (valorEstimativa === false || valorProposta === false) {
+    return res.status(400).json({ ok: false, erro: 'Valor da estimativa ou da proposta inválido.' });
+  }
   // S-27: a conferência do responsável vem antes das demais, para o júnior não descobrir o estado
   // de tarefa alheia pelas mensagens de erro.
   if (req.user.perfil !== 'master' && tarefa.atribuido_a !== req.user.id) {
@@ -858,11 +887,12 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
     } else {
       const r = await pgClient.query(
         `INSERT INTO processos (numero, tribunal, sistema, grau, cliente_id, produto_id,
-                                master_responsavel_id, polo_passivo, periodo_inicio, periodo_fim, sync_status)
-         VALUES ($1,$2,$3,'1',$4,$5,$6,$7,$8,$9,'aguardando_primeira_captura')
+                                master_responsavel_id, polo_passivo, periodo_inicio, periodo_fim, sync_status,
+                                valor_estimativa, valor_proposta)
+         VALUES ($1,$2,$3,'1',$4,$5,$6,$7,$8,$9,'aguardando_primeira_captura',$10,$11)
          RETURNING id`,
         [numeroLimpo, tribunal, sistema, tarefa.cliente_id, tarefa.produto_id,
-         masterId, poloFinal, periodo.inicio, periodo.fim]
+         masterId, poloFinal, periodo.inicio, periodo.fim, valorEstimativa, valorProposta]
       );
       processoId = r.rows[0].id;
     }

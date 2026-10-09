@@ -47,6 +47,7 @@ import { integracoesExternasRouter } from './routes/integracoesExternas.js';
 import { acervoRouter } from './routes/acervo.js';
 import { reprotocoloRouter } from './routes/reprotocolo.js';
 import { comunicacaoRouter } from './routes/comunicacao.js';
+import { cobrancasRouter } from './routes/cobrancas.js';
 import { mcpRouter } from './mcp/index.js';
 import { oauthRouter } from './oauth/index.js';
 
@@ -173,6 +174,7 @@ app.use('/api/auditoria',     autenticar, auditoriaRouter);
 // Levantamento de re-protocolo (somente leitura): Master + escopo OAuth "reprotocolo" no conector.
 app.use('/api/reprotocolo',   autenticar, reprotocoloRouter);
 app.use('/api/comunicacao',   autenticar, comunicacaoRouter);
+app.use('/api/cobrancas',     autenticar, cobrancasRouter);
 app.use('/mcp',               limiteMcp, mcpRouter); // S-20: 60/min por Master que autorizou o conector
 montarUrlencodedOauth(app);
 // S-20: /oauth/token e /oauth/register por IP (o /oauth/authorize tem o limitador do S-02)
@@ -975,6 +977,35 @@ async function iniciar() {
 
     // S-03 (sessão revogável): usuarios.sessao_versao + sessoes_refresh. SEM .catch: se falhar, o boot falha e o
     // /health segue em 503 -- o Railway não promove o deploy e a versão anterior continua no ar.
+    // Cobranças ao cliente (09/10/2026): despesa do processo que o cliente paga a um terceiro depois de
+    // receber (contador judicial, perito...). beneficiarios_cobranca guarda favorecido e chave Pix.
+    // Também: 3 valores do processo lado a lado — estimativa da calculadora e valor passado ao cliente
+    // (o 3º, o real, é o valor_homologado que já existe) e o valor estimado guardado no contrato.
+    await migrar('2026_10_09_cobrancas_e_valores_do_processo', async () => {
+      await db.execute(`CREATE TABLE IF NOT EXISTS beneficiarios_cobranca (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        nome TEXT NOT NULL, funcao TEXT NOT NULL DEFAULT 'contador' CHECK (funcao IN ('contador','perito','outro')),
+        chave_pix TEXT NOT NULL, ativo BOOLEAN NOT NULL DEFAULT true,
+        criado_por UUID REFERENCES usuarios(id), criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+      await db.execute(`CREATE TABLE IF NOT EXISTS cobrancas_cliente (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        processo_id UUID NOT NULL REFERENCES processos(id) ON DELETE CASCADE,
+        cliente_id UUID REFERENCES clientes(id) ON DELETE SET NULL,
+        tipo TEXT NOT NULL DEFAULT 'contador' CHECK (tipo IN ('contador','perito','outro')),
+        valor NUMERIC(14,2) NOT NULL CHECK (valor > 0),
+        beneficiario_id UUID REFERENCES beneficiarios_cobranca(id) ON DELETE SET NULL,
+        status TEXT NOT NULL DEFAULT 'a_cobrar' CHECK (status IN ('a_cobrar','cobrado','pago','cancelado')),
+        observacao TEXT, cobrado_em TIMESTAMPTZ, pago_em TIMESTAMPTZ, valor_pago NUMERIC(14,2),
+        criado_por UUID REFERENCES usuarios(id), criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_cobrancas_processo ON cobrancas_cliente (processo_id)`);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_cobrancas_status ON cobrancas_cliente (status, criado_em DESC)`);
+      await db.execute(`CREATE UNIQUE INDEX IF NOT EXISTS uq_cobranca_aberta ON cobrancas_cliente (processo_id, tipo) WHERE status IN ('a_cobrar','cobrado')`);
+      await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS valor_estimativa NUMERIC(14,2)`);
+      await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS valor_proposta NUMERIC(14,2)`);
+      await db.execute(`ALTER TABLE onboardings_contrato ADD COLUMN IF NOT EXISTS valor_estimado NUMERIC(14,2)`);
+    });
     // Conciliação Drive × protocolo (08/10/2026): marca de "protocolado no Drive" detectada pelo worker.
     await migrar('2026_10_08_drive_protocolo_detectado', async () => {
       await db.execute(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS drive_protocolo_detectado_em TIMESTAMPTZ`);

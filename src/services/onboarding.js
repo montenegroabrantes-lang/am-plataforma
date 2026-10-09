@@ -8,6 +8,7 @@ import { registrarAuditoria } from '../middleware/auditoria.js';
 import { vinculoUnicoAtivo } from '../utils/vinculos.js';
 import { resolverDemanda } from '../utils/demandas.js';
 import { criarOuBuscarContato } from './digisac/index.js';
+import { valorOpcional } from '../utils/valorOpcional.js';
 
 function numeroPercentual(valor, padrao = 20) {
   const n = Number(valor);
@@ -259,6 +260,13 @@ export async function criarOnboardingContrato({ contactId, lead = {}, onboarding
       ]
     );
     registro = onboardingResult.rows[0];
+    // Valor da estimativa (calculadora) no momento do fechamento, para a tela do processo comparar
+    // estimativa × passado ao cliente × real. Só grava quando o formulário o enviou.
+    const valorEstimado = valorOpcional(onboarding.valor_referencia);
+    if (valorEstimado) {
+      await pg.query(`UPDATE onboardings_contrato SET valor_estimado = $1 WHERE id = $2`, [valorEstimado, registro.id]);
+      registro.valor_estimado = valorEstimado;
+    }
 
     const selecionados = new Set(idsProdutos);
     const antigosResult = await pg.query(

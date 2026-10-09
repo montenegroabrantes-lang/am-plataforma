@@ -16,6 +16,7 @@ export const ehMaster = (req) => req.user?.perfil === 'master';
 
 export const MSG_SO_RESPONSAVEL = 'Você só pode alterar processos em que tem tarefa atribuída.';
 export const MSG_CAMPOS_DO_PROCESSO = 'Apenas Masters alteram o valor da causa, o valor da RPV e o status do processo.';
+export const MSG_VALORES_DO_PROCESSO = 'Apenas Masters alteram o valor da estimativa e o valor passado ao cliente.';
 export const MSG_VALOR_HOMOLOGADO = 'Apenas Masters alteram o valor homologado da RPV/precatório.';
 export const MSG_CAMPOS_DO_CLIENTE = 'Apenas Masters alteram as anotações e a situação (ativo) do cliente.';
 
@@ -139,6 +140,11 @@ export async function liberarEdicaoDoJunior(req, res, processoId, conexao = db) 
   if (ehMaster(req)) return true;
   if (!(await temTarefaNoProcesso(req.user?.id, processoId, conexao))) {
     res.status(403).json({ ok: false, erro: MSG_SO_RESPONSAVEL });
+    return false;
+  }
+  // Valor da estimativa e valor passado ao cliente: só o Master, sem comparar com o gravado.
+  if (['valor_estimativa', 'valor_proposta'].some(c => req.body?.[c] !== undefined)) {
+    res.status(403).json({ ok: false, erro: MSG_VALORES_DO_PROCESSO });
     return false;
   }
   const erro = await conferirCamposSoMaster(req, processoId, ['status', 'valor_causa', 'valor_rpv'], MSG_CAMPOS_DO_PROCESSO, conexao);

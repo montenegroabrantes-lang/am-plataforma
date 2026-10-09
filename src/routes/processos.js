@@ -12,6 +12,7 @@ import { uuidValido, paginacaoSegura } from '../utils/validacao.js';
 import { extrairIdProcessoPje, obterAcessoTribunal } from '../services/acessoTribunal.js';
 import { preservarRequisicaoManual } from '../services/ai/tasks/classificacao.js';
 import { daTabela } from '../utils/tabelaSegura.js';
+import { valorOpcional } from '../utils/valorOpcional.js';
 import { erroInterno } from '../middleware/erros.js';
 import { celulaCsv } from '../utils/csv.js';
 import { diferenca } from '../utils/auditoriaCampos.js';
@@ -520,6 +521,13 @@ processosRouter.delete('/:id/cessao/:cessaoId', apenasMaster, async (req, res) =
 processosRouter.post('/', async (req, res) => {
   const { numero, tribunal, sistema, grau = '1', cliente_id, produto_id, master_responsavel_id,
           vara, acao, polo_ativo, polo_passivo, periodo_inicio, periodo_fim } = req.body;
+  const valoresIniciais = {
+    valor_estimativa: valorOpcional(req.body.valor_estimativa),
+    valor_proposta: valorOpcional(req.body.valor_proposta),
+  };
+  if (valoresIniciais.valor_estimativa === false || valoresIniciais.valor_proposta === false) {
+    return res.status(400).json({ ok: false, erro: 'Valor da estimativa ou da proposta inválido.' });
+  }
 
   if (!numero || !tribunal) {
     return res.status(400).json({ ok: false, erro: 'numero e tribunal são obrigatórios.' });
@@ -546,13 +554,15 @@ processosRouter.post('/', async (req, res) => {
   try {
     const [novo] = await db.query(
       `INSERT INTO processos (numero, tribunal, sistema, grau, vara, acao, polo_ativo, polo_passivo,
-                              cliente_id, produto_id, master_responsavel_id, periodo_inicio, periodo_fim)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                              cliente_id, produto_id, master_responsavel_id, periodo_inicio, periodo_fim,
+                              valor_estimativa, valor_proposta)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
        RETURNING id, numero, tribunal, sistema, grau`,
       [numero.trim(), tribunal, sistemaFinal, grau, vara ?? null, acao ?? null,
        polo_ativo ?? null, polo_passivo ?? null,
        cliente_id ?? null, produto_id ?? null, masterId,
-       periodo_inicio || null, periodo_fim || null]
+       periodo_inicio || null, periodo_fim || null,
+       valoresIniciais.valor_estimativa ?? null, valoresIniciais.valor_proposta ?? null]
     );
 
     await registrarAuditoria({
@@ -597,8 +607,15 @@ processosRouter.patch('/:id', async (req, res) => {
   // S-27 (IDOR de 11/07): júnior só edita processo em que tem tarefa, e sem valor da causa/RPV/status.
   if (!(await liberarEdicaoDoJunior(req, res, req.params.id))) return;
 
-  const campos      = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas', 'periodo_inicio', 'periodo_fim', 'classificacao'];
+  const campos      = ['status', 'vara', 'juiz', 'valor_causa', 'valor_rpv', 'valor_estimativa', 'valor_proposta', 'tipo_execucao', 'polo_passivo', 'polo_ativo', 'acao', 'notas', 'periodo_inicio', 'periodo_fim', 'classificacao'];
   const camposData  = new Set(['periodo_inicio', 'periodo_fim']);
+  // Valores da estimativa e da proposta: aceita "9.565,98"; vazio limpa; lixo é recusado.
+  for (const campo of ['valor_estimativa', 'valor_proposta']) {
+    if (req.body[campo] === undefined) continue;
+    const v = valorOpcional(req.body[campo]);
+    if (v === false) return res.status(400).json({ ok: false, erro: 'Valor inválido. Use um número maior que zero (ex.: 9.565,98).' });
+    req.body[campo] = v;
+  }
   const updates = [];
   const params  = [];
 

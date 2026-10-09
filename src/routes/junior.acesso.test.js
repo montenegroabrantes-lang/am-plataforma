@@ -569,3 +569,12 @@ test('tarefas: o júnior recebe `cliente_cpf` mascarado; o Master, completo', as
   const m = await chamar('GET', '/api/tarefas', { token: MASTER });
   assert.equal(m.corpo.tarefas[0].cliente_cpf, CPF);
 });
+
+test('processos: júnior com tarefa não altera valor da estimativa nem o valor passado ao cliente', async () => {
+  prepararPatchProcesso({ tarefa: true });
+  for (const corpo of [{ valor_estimativa: '9565,98' }, { valor_proposta: 1000 }, { vara: 'X', valor_proposta: '5' }]) {
+    const r = await chamar('PATCH', `/api/processos/${PROC}`, { token: JUNIOR, corpo });
+    assert.equal(r.status, 403, JSON.stringify(corpo));
+    assert.match(r.corpo.erro, /estimativa.*passado ao cliente/);
+  }
+});
