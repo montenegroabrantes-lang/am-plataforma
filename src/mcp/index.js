@@ -71,7 +71,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.3.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.4.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -186,17 +186,23 @@ function construirServidor(token) {
 
   s.registerTool('salvar_peca_drive', {
     title: 'Salvar peça no padrão do escritório (PDF/Word) no Drive',
-    description: 'Use para PEÇAS PROCESSUAIS (iniciais, petições, recursos): monta a peça no layout padrão do escritório '
-      + '(Arial 12, espaço 1,5, recuo de 2 cm, títulos centralizados em negrito com 24/12 pt, citações recuadas 4 cm em '
-      + '11 pt com espaço simples, margens ABNT 3/3/2/2 cm em A4, assinaturas de Ramon e Luciano) e grava em PDF '
-      + '(padrão — o PJe só aceita PDF) e/ou .docx na pasta do cliente. Arquivo de mesmo nome é substituído. Destino só '
-      + 'nas pastas da equipe (Pendentes, Outorgantes, pasta de clientes) e subpastas diretas. O conteúdo vai em blocos, '
-      + 'na ordem: enderecamento, paragrafo (qualificação/corpo, com recuo), acao (nome da ação, centralizado), titulo '
-      + '("I — DOS FATOS"), subtitulo ("A) ..."), citacao (transcrição longa), pedido (alíneas "a) ..."), tabela '
-      + '(linhas: primeira é o cabeçalho), fecho ("João Pessoa (PB), data do protocolo eletrônico.") e assinaturas (sem texto). '
-      + 'Negrito dentro do texto com **asteriscos duplos**. Planilhas/memórias de cálculo: blocos acao/paragrafo + tabela com orientacao "paisagem". '
-      + 'O PDF é gerado no servidor e conferido (A4, páginas, texto de abertura) antes de gravar; se falhar, nada é gravado e a ferramenta devolve erro — '
-      + 'em lote, trate cada erro e não siga como se a peça estivesse salva. Use esta ferramenta, e não salvar_documento_drive, para tudo que vai ao PJe.',
+    description: 'Use para PEÇAS PROCESSUAIS (iniciais, petições, recursos): monta a peça no padrão de layout do escritório '
+      + '(modelo "PADRAO - NOVO LAYOUT": A4, margens 3/3/2/2 cm, Arial 12, espaço 1,5, recuo de 2 cm, cabeçalho ABRANTES & '
+      + 'MONTENEGRO ADVOGADOS, rodapé com endereço/telefone/e-mail e "Página X de Y") e grava em PDF (padrão — o PJe só '
+      + 'aceita PDF) e/ou .docx na pasta do cliente. Arquivo de mesmo nome é substituído. Destino só nas pastas da equipe '
+      + '(Pendentes, Outorgantes, pasta de clientes) e subpastas diretas. O conteúdo vai em blocos, na ordem: '
+      + 'enderecamento (sai sem negrito, com espaço grande abaixo), paragrafo (qualificação/corpo, com recuo; a qualificação '
+      + 'termina em "por seus advogados, vem propor", sem "(procuração anexa)"), acao (nome da ação; sai em caixa alta, '
+      + 'azul-marinho, entre filetes), paragrafo "em face d..." logo após a ação (sai sem recuo), titulo (seção; numerada '
+      + 'automaticamente 1, 2, 3 — "I — DOS FATOS" vira "1  DOS FATOS"; remissões no texto usam a numeração arábica), '
+      + 'subtitulo (numerado automaticamente 1.1, 1.2; escreva só com a inicial maiúscula, sem letra: "Do piso salarial"), '
+      + 'citacao (transcrição longa; a referência final entre parênteses depois das aspas sai em cinza), pedido (alíneas '
+      + '"a) ..."), tabela (linhas: primeira é o cabeçalho), paragrafo "Dá-se à causa...", paragrafo "Pede deferimento.", '
+      + 'fecho ("João Pessoa (PB), data do protocolo eletrônico.") e assinaturas (sem texto; Ramon e Luciano, à esquerda). '
+      + 'Negrito dentro do texto com **asteriscos duplos**. Planilhas/memórias de cálculo: blocos acao/paragrafo + tabela '
+      + 'com orientacao "paisagem". O PDF é gerado no servidor e conferido (A4, páginas, texto de abertura) antes de gravar; '
+      + 'se falhar, nada é gravado e a ferramenta devolve erro — em lote, trate cada erro e não siga como se a peça estivesse '
+      + 'salva. Use esta ferramenta, e não salvar_documento_drive, para tudo que vai ao PJe.',
     inputSchema: {
       pasta_id: z.string().regex(/^[A-Za-z0-9_-]{10,100}$/).describe('ID da pasta do cliente no Drive'),
       nome: z.string().min(1).max(200).describe('Nome do arquivo, sem extensão: "TIPO - CLIENTE - PROCESSO"'),

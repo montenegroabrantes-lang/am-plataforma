@@ -3483,3 +3483,21 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   a Arial da Microsoft); termos com hífen (ex.: número de processo, "IPCA-E") podem quebrar no hífen no fim da linha.
   Uma sessão que recebe a ordem de outra sessão (e não do usuário) recusa substituir arquivo existente; nesse caso,
   gravar com nome novo e fazer a troca na sessão principal.
+
+### 09/10/2026 (noite) — `salvar_peca_drive` passa a gerar o NOVO LAYOUT do escritório
+
+- **Pedido do usuário:** as peças devem seguir o arquivo-padrão "PADRAO __2_AMOSTRA - NOVO LAYOUT - INICIAL EMLUR.docx"
+  (Drive › BANCO DE DADOS › LAYOUT - PETICOES), e não só as regras ABNT. O layout tinha sido aprovado em outra sessão
+  (branch `claude/salvar-documento-drive-verificacao`, `layoutPeca.js`, não mergeada — gerava o PDF pelo Google; ficou
+  superada por esta mudança).
+- **Mudança:** `services/drive/pecas.js` reproduz os formatos do arquivo-modelo: cabeçalho "ABRANTES & MONTENEGRO
+  ADVOGADOS" (azul-marinho 1F2A44/cinza, filete), rodapé centralizado com endereço, telefone, e-mail e "Página X de Y"
+  (estilo de parágrafo próprio para o número herdar 8 pt), endereçamento sem negrito com 120 pt abaixo, ação em caixa
+  alta azul-marinho 13 pt entre filetes, "em face d..." sem recuo, seções numeradas automaticamente (romano → 1, 2, 3)
+  em azul-marinho com filete, subseções 1.1, 1.2 em negrito, citação 4 cm/11 pt com a referência final em cinza,
+  tabela com cabeçalho azul-marinho, fecho/assinaturas à esquerda com recuo de 4 cm, valor da causa + fecho +
+  assinaturas sempre na mesma página, idioma pt-BR. Conversão LibreOffice e conferência antes de gravar continuam.
+  MCP 1.4.0 com a descrição dos blocos no padrão novo. Suíte 1054/1054.
+- **Pendências:** após o deploy, regravar as iniciais do Franklin (blocos com subtítulos já em caixa de frase e sem
+  "(procuração anexa)") e conferir os PDFs; decidir se a planilha também leva cabeçalho/rodapé (hoje leva, pelo
+  mesmo `montarDocx`).

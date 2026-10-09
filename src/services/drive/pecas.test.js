@@ -35,6 +35,41 @@ test('montarDocx: A4 com margens ABNT, Arial 12, espaço 1,5, recuo 2 cm, citaç
   assert.match(xml, /<w:b\/>[\s\S]*FULANO/);
 });
 
+test('montarDocx: padrão novo do escritório — cabeçalho, rodapé, seções numeradas, citação com fonte em cinza, fecho à esquerda', async () => {
+  const buf = await montarDocx([
+    { tipo: 'enderecamento', texto: '**AO JUÍZO COMPETENTE PARA OS FEITOS DA FAZENDA PÚBLICA**' },
+    { tipo: 'paragrafo', texto: '**FULANO**, brasileiro, vem propor' },
+    { tipo: 'acao', texto: 'Ação de cobrança' },
+    { tipo: 'paragrafo', texto: 'em face do **ESTADO**, pelas razões a seguir.' },
+    { tipo: 'titulo', texto: 'I — DOS FATOS' },
+    { tipo: 'titulo', texto: 'IV — DO DIREITO' },
+    { tipo: 'subtitulo', texto: 'A) Do piso' },
+    { tipo: 'citacao', texto: '“Tese.” (STF, RE 1, Tema 1)' },
+    { tipo: 'paragrafo', texto: 'Dá-se à causa o valor de R$ 1,00.' },
+    { tipo: 'paragrafo', texto: 'Pede deferimento.' },
+    { tipo: 'fecho', texto: 'João Pessoa (PB), data do protocolo eletrônico.' },
+    { tipo: 'assinaturas' },
+  ]);
+  const zip = await JSZip.loadAsync(buf);
+  const xml = await zip.file('word/document.xml').async('string');
+  const cab = await zip.file('word/header1.xml').async('string');
+  const rod = await zip.file('word/footer1.xml').async('string');
+  assert.match(cab, /ABRANTES &amp; MONTENEGRO/);
+  assert.match(rod, /Av\. Cabo Branco, 1780/);
+  assert.match(rod, /atendimento@abrantesemontenegro\.com\.br/);
+  assert.match(rod, /PAGE/); assert.match(rod, /NUMPAGES/);
+  assert.match(xml, /w:after="2400"/);                                   // espaço grande após o endereçamento
+  assert.doesNotMatch(xml.split('AO JUÍZO')[0].slice(-400), /<w:b\/>/);  // endereçamento sem negrito
+  assert.match(xml, /1F2A44/);                                           // azul-marinho
+  assert.match(xml, />1  DOS FATOS</);
+  assert.match(xml, />4  DO DIREITO</);
+  assert.match(xml, />4\.1  Do piso</);
+  assert.match(xml, /6B7280[\s\S]*\(STF, RE 1, Tema 1\)/);               // fonte da citação em cinza
+  assert.match(xml, /<w:ind w:left="2268"\/>[\s\S]*Pede deferimento/);  // fecho à esquerda, recuo 4 cm
+  const emFace = xml.slice(xml.indexOf('em face do') - 600, xml.indexOf('em face do'));
+  assert.doesNotMatch(emFace.slice(emFace.lastIndexOf('<w:p>')), /firstLine/); // "em face" sem recuo
+});
+
 test('montarDocx: paisagem inverte a página', async () => {
   const xml = await xmlDo(await montarDocx(BLOCOS, { orientacao: 'paisagem' }));
   assert.match(xml, /w:orient="landscape"/);
