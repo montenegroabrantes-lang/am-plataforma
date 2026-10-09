@@ -1,9 +1,13 @@
-// Peças no padrão de formatação do escritório (ABNT), montadas em Word no próprio AM e gravadas
-// na pasta do cliente em PDF (exigência do PJe) e/ou .docx.
+// Peças no padrão de layout do escritório, montadas em Word no próprio AM e gravadas na pasta do
+// cliente em PDF (exigência do PJe) e/ou .docx.
 //
-// O conteúdo chega em blocos tipados (endereçamento, parágrafo, título, citação, pedido, tabela,
-// fecho...) e o estilo é fixo aqui: Arial 12, espaço 1,5, recuo de 2 cm, citação recuada 4 cm em
-// 11 pt com espaço simples, títulos com 24/12 pt, margens 3/3/2/2 cm em A4.
+// Padrão = arquivo "PADRAO __2_AMOSTRA - NOVO LAYOUT - INICIAL EMLUR.docx" (Drive › BANCO DE DADOS ›
+// LAYOUT - PETICOES), aprovado pelo usuário em 09/10/2026: A4, margens 3/3/2/2 cm, Arial 12,
+// espaçamento 1,5, recuo de 2 cm; cabeçalho "ABRANTES & MONTENEGRO ADVOGADOS"; rodapé centralizado com
+// endereço, telefone, e-mail e "Página X de Y"; endereçamento sem negrito com espaço grande abaixo;
+// nome da ação em azul-marinho entre filetes; seções numeradas (1, 2, 3...) em azul-marinho com filete;
+// subseções (3.1...) em negrito; citação recuada 4 cm em 11 pt com a fonte em cinza; fecho e
+// assinaturas à esquerda com recuo de 4 cm. Os valores abaixo são os do arquivo-modelo.
 //
 // O PDF é gerado no próprio servidor pelo LibreOffice (instalado no Dockerfile), a partir do Word:
 // resultado determinístico, sem depender do Google Docs. Antes de gravar, o PDF é conferido
@@ -19,75 +23,169 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { google } from 'googleapis';
 import {
-  AlignmentType, BorderStyle, Document, LineRuleType, Packer, PageOrientation, Paragraph,
-  Table, TableCell, TableRow, TextRun, WidthType,
+  AlignmentType, BorderStyle, Document, Footer, Header, LineRuleType, Packer, PageNumber, PageOrientation,
+  Paragraph, ShadingType, Table, TableCell, TableLayoutType, TableRow, TextRun, VerticalAlign, WidthType,
 } from 'docx';
 import { conferirPastaDestino, nomeSeguro } from './documentos.js';
 
 export const TIPOS_BLOCO = ['enderecamento', 'paragrafo', 'acao', 'titulo', 'subtitulo', 'citacao', 'pedido', 'tabela', 'fecho', 'assinaturas'];
 const MIME_DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const CM = 567; // twips por centímetro
-const PT = 20;  // twips por ponto
 const FONTE = 'Arial';
+const AZUL = '1F2A44';   // títulos, filetes e cabeçalho
+const CINZA = '6B7280';  // rodapé, fonte das citações
+const FILETE_CLARO = 'C9CFDA';
 const ADVOGADOS = [['RAMON OLIVEIRA ABRANTES', 'OAB/PB 23.395'], ['LUCIANO MONTENEGRO L. R. CARVALHO', 'OAB/PB 23.176']];
+const RODAPE = ['Av. Cabo Branco, 1780 – Cabo Branco, João Pessoa – PB, 58045-010', '(83) 3142-9844 · atendimento@abrantesemontenegro.com.br'];
+const ROMANOS = { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6, VII: 7, VIII: 8, IX: 9, X: 10, XI: 11, XII: 12, XIII: 13, XIV: 14, XV: 15 };
 
 function erroValidacao(mensagem, status = 422) { const e = new Error(mensagem); e.status = status; return e; }
 
-// "texto com **negrito**" → runs.
-export function trechos(texto, { tamanho = 24, negrito = false } = {}) {
-  return String(texto ?? '').split('**').map((t, i) => new TextRun({ text: t, bold: negrito || i % 2 === 1, font: FONTE, size: tamanho }));
+// "texto com **negrito**" → runs (tamanho em meio-pontos).
+export function trechos(texto, { tamanho = 24, negrito = false, cor } = {}) {
+  return String(texto ?? '').split('**')
+    .map((t, i) => new TextRun({ text: t, bold: negrito || i % 2 === 1, font: FONTE, size: tamanho, ...(cor ? { color: cor } : {}) }))
+    .filter((r, i, a) => a.length === 1 || String(texto).split('**')[i]);
 }
 
 const linha15 = { line: 360, lineRule: LineRuleType.AUTO };
-const linha10 = { line: 240, lineRule: LineRuleType.AUTO };
+const filete = (cor, tamanho, espaco) => ({ style: BorderStyle.SINGLE, size: tamanho, color: cor, space: espaco });
+const semNegrito = t => String(t ?? '').replace(/\*\*/g, '');
+const paragrafoCorpo = (children, extra = {}) => new Paragraph({ children, alignment: AlignmentType.JUSTIFIED, spacing: { ...linha15, after: 200 }, ...extra });
+const aEsquerda4cm = (children, spacing, juntoAoSeguinte = true) => new Paragraph({
+  children, alignment: AlignmentType.LEFT, indent: { left: 4 * CM }, spacing, keepNext: juntoAoSeguinte, keepLines: true,
+});
 
-function paragrafo(bloco) {
-  const t = bloco.texto;
-  switch (bloco.tipo) {
-    case 'enderecamento':
-      return [new Paragraph({ children: trechos(t, { negrito: true }), alignment: AlignmentType.JUSTIFIED, spacing: { ...linha15, after: 24 * PT } })];
-    case 'acao':
-      return [new Paragraph({ children: trechos(t, { negrito: true }), alignment: AlignmentType.CENTER, spacing: { ...linha15, before: 6 * PT, after: 6 * PT } })];
-    case 'titulo':
-      return [new Paragraph({ children: trechos(t, { negrito: true }), alignment: AlignmentType.CENTER, keepNext: true, spacing: { ...linha15, before: 24 * PT, after: 12 * PT } })];
-    case 'subtitulo':
-      return [new Paragraph({ children: trechos(t, { negrito: true }), alignment: AlignmentType.JUSTIFIED, keepNext: true, spacing: { ...linha15, before: 12 * PT, after: 6 * PT } })];
-    case 'citacao':
-      return [new Paragraph({ children: trechos(t, { tamanho: 22 }), alignment: AlignmentType.JUSTIFIED, indent: { left: 4 * CM }, spacing: { ...linha10, before: 6 * PT, after: 6 * PT } })];
-    case 'paragrafo':
-    case 'pedido':
-      return [new Paragraph({ children: trechos(t), alignment: AlignmentType.JUSTIFIED, indent: { firstLine: 2 * CM }, spacing: { ...linha15, after: 6 * PT } })];
-    case 'fecho':
-      return [new Paragraph({ children: trechos(t), alignment: AlignmentType.CENTER, spacing: { ...linha15, before: 12 * PT, after: 6 * PT } })];
-    case 'assinaturas':
-      return ADVOGADOS.flatMap(([nome, oab]) => [
-        new Paragraph({ children: trechos(nome, { negrito: true }), alignment: AlignmentType.CENTER, spacing: { before: 24 * PT, after: 0 } }),
-        new Paragraph({ children: trechos(oab), alignment: AlignmentType.CENTER, spacing: { after: 0 } }),
-      ]);
-    default:
-      throw erroValidacao(`Tipo de bloco inválido: ${bloco.tipo}`);
-  }
+// "IV — DO DIREITO" → número 4 e "DO DIREITO"; "4  DO DIREITO" ou "4 DO DIREITO" também valem.
+function numeroDaSecao(texto) {
+  const romano = String(texto).match(/^([IVX]+)\s*[—–.-]\s*(.+)$/);
+  if (romano && ROMANOS[romano[1]]) return [ROMANOS[romano[1]], romano[2]];
+  const arabe = String(texto).match(/^(\d+)[.)]?\s+(.+)$/);
+  return arabe ? [Number(arabe[1]), arabe[2]] : [null, texto];
 }
 
-function tabela(bloco) {
+// Monta os parágrafos na ordem, com o contexto de numeração das seções.
+function paragrafos(blocos) {
+  const out = [];
+  let secao = 0; let sub = 0; let anterior = null;
+  for (const bloco of blocos) {
+    const t = bloco.tipo === 'tabela' ? '' : String(bloco.texto ?? '').trim();
+    switch (bloco.tipo) {
+      case 'enderecamento':
+        out.push(new Paragraph({ children: trechos(semNegrito(t)), alignment: AlignmentType.JUSTIFIED, spacing: { after: 2400 } }));
+        break;
+      case 'acao':
+        out.push(new Paragraph({
+          children: trechos(semNegrito(t).toUpperCase(), { negrito: true, tamanho: 26, cor: AZUL }), alignment: AlignmentType.CENTER,
+          border: { top: filete(AZUL, 6, 6), bottom: filete(AZUL, 6, 6) }, spacing: { before: 240, after: 240 },
+        }));
+        break;
+      case 'titulo': {
+        const [n, nome] = numeroDaSecao(semNegrito(t));
+        secao = n ?? secao + 1; sub = 0;
+        out.push(new Paragraph({
+          children: trechos(`${secao}  ${nome.toUpperCase()}`, { negrito: true, cor: AZUL }), keepNext: true,
+          border: { bottom: filete(AZUL, 6, 4) }, spacing: { before: 360, after: 200 },
+        }));
+        break;
+      }
+      case 'subtitulo': {
+        sub += 1;
+        const nome = semNegrito(t).replace(/^([A-Z]|\d+(\.\d+)*)[.)]\s+/, '');
+        out.push(new Paragraph({ children: trechos(`${secao ? `${secao}.${sub}  ` : ''}${nome}`, { negrito: true }), keepNext: true, spacing: { before: 240, after: 160 } }));
+        break;
+      }
+      case 'citacao': {
+        // A referência final entre parênteses, depois das aspas, sai em cinza, como no modelo.
+        const m = t.match(/^([\s\S]*[”"])\s+(\([^()]*(?:\([^()]*\)[^()]*)*\))$/);
+        const children = m
+          ? [...trechos(m[1], { tamanho: 22 }), ...trechos(` ${semNegrito(m[2])}`, { tamanho: 22, cor: CINZA })]
+          : trechos(t, { tamanho: 22 });
+        out.push(new Paragraph({ children, alignment: AlignmentType.JUSTIFIED, indent: { left: 4 * CM }, spacing: { after: 240 } }));
+        break;
+      }
+      case 'paragrafo':
+      case 'pedido':
+        if (bloco.tipo === 'paragrafo' && /^pede deferimento\.?$/i.test(semNegrito(t))) {
+          out.push(aEsquerda4cm(trechos(t), { before: 480, after: 120 }));
+        } else if (anterior === 'acao' && /^em face d/i.test(semNegrito(t))) {
+          out.push(paragrafoCorpo(trechos(t)));
+        } else {
+          // O valor da causa acompanha o fecho: assinatura nunca fica sozinha na página.
+          const fim = /^dá-se à causa/i.test(semNegrito(t)) ? { keepNext: true, keepLines: true } : {};
+          out.push(paragrafoCorpo(trechos(t), { indent: { firstLine: 2 * CM }, ...fim }));
+        }
+        break;
+      case 'fecho':
+        out.push(aEsquerda4cm(trechos(t), { after: 720 }));
+        break;
+      case 'assinaturas':
+        ADVOGADOS.forEach(([nome, oab], i) => {
+          const ultimo = i === ADVOGADOS.length - 1;
+          out.push(aEsquerda4cm(trechos(nome, { negrito: true }), { after: 0 }));
+          out.push(aEsquerda4cm(trechos(oab, { negrito: true, tamanho: 20 }), { after: ultimo ? 0 : 480 }, !ultimo));
+        });
+        break;
+      case 'tabela':
+        out.push(...tabela(bloco));
+        break;
+      default:
+        throw erroValidacao(`Tipo de bloco inválido: ${bloco.tipo}`);
+    }
+    anterior = bloco.tipo;
+  }
+  return out;
+}
+
+function tabela(bloco, larguraUtil) {
   const linhas = bloco.linhas || [];
   if (!linhas.length || !Array.isArray(linhas[0])) throw erroValidacao('Tabela sem linhas.');
-  const borda = { style: BorderStyle.SINGLE, size: 4, color: '808080' };
+  const n = Math.max(...linhas.map(l => l.length));
+  const util = larguraUtil ?? tabela.larguraUtil;
+  const larg = Math.floor(util / n);
+  const colunas = Array.from({ length: n }, (_, i) => (i === n - 1 ? util - larg * (n - 1) : larg));
+  const borda = filete('9AA3B5', 4, 0);
   const bordas = { top: borda, bottom: borda, left: borda, right: borda };
   return [
     new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
+      width: { size: util, type: WidthType.DXA }, columnWidths: colunas, layout: TableLayoutType.FIXED,
       rows: linhas.map((cels, i) => new TableRow({
-        tableHeader: i === 0,
-        children: cels.map(c => new TableCell({
-          borders: bordas,
-          shading: i === 0 ? { fill: 'D9E1F2' } : undefined,
-          children: [new Paragraph({ children: trechos(c, { tamanho: 20, negrito: i === 0 }), alignment: AlignmentType.CENTER, spacing: linha10 })],
+        tableHeader: i === 0, cantSplit: true,
+        children: colunas.map((largura, j) => new TableCell({
+          width: { size: largura, type: WidthType.DXA }, borders: bordas, verticalAlign: VerticalAlign.CENTER,
+          margins: { top: 60, bottom: 60, left: 100, right: 100 },
+          ...(i === 0 ? { shading: { type: ShadingType.CLEAR, fill: AZUL, color: 'auto' } } : {}),
+          children: [new Paragraph({ alignment: AlignmentType.CENTER, children: trechos(cels[j] ?? '', { tamanho: 20, ...(i === 0 ? { negrito: true, cor: 'FFFFFF' } : {}) }) })],
         })),
       })),
     }),
-    new Paragraph({ children: [], spacing: { after: 6 * PT } }),
+    new Paragraph({ children: [], spacing: { after: 120 } }),
   ];
+}
+
+function cabecalho() {
+  return new Header({ children: [new Paragraph({
+    alignment: AlignmentType.RIGHT, border: { bottom: filete(FILETE_CLARO, 4, 6) },
+    children: [
+      new TextRun({ text: 'ABRANTES & MONTENEGRO', font: FONTE, size: 18, bold: true, color: AZUL, characterSpacing: 40 }),
+      new TextRun({ text: ' ADVOGADOS', font: FONTE, size: 18, color: CINZA, characterSpacing: 40 }),
+    ],
+  })] });
+}
+
+function rodape() {
+  const base = { font: FONTE, size: 16, color: CINZA };
+  return new Footer({ children: [new Paragraph({
+    style: 'RodapeAM', alignment: AlignmentType.CENTER, border: { top: filete(FILETE_CLARO, 4, 6) },
+    children: [
+      new TextRun({ text: RODAPE[0], ...base }),
+      new TextRun({ text: RODAPE[1], ...base, break: 1 }),
+      new TextRun({ text: 'Página ', ...base, break: 1 }),
+      new TextRun({ children: [PageNumber.CURRENT], ...base }),
+      new TextRun({ text: ' de ', ...base }),
+      new TextRun({ children: [PageNumber.TOTAL_PAGES], ...base }),
+    ],
+  })] });
 }
 
 export function validarBlocos(blocos) {
@@ -103,19 +201,26 @@ export function validarBlocos(blocos) {
 export async function montarDocx(blocos, { orientacao = 'retrato' } = {}) {
   validarBlocos(blocos);
   const paisagem = orientacao === 'paisagem';
-  const filhos = blocos.flatMap(b => (b.tipo === 'tabela' ? tabela(b) : paragrafo(b)));
+  const margem = paisagem
+    ? { top: 1.5 * CM, bottom: 1.5 * CM, left: 1.5 * CM, right: 1.5 * CM }
+    : { top: 3 * CM, left: 3 * CM, bottom: 2 * CM, right: 2 * CM };
+  tabela.larguraUtil = (paisagem ? 16838 : 11906) - margem.left - margem.right;
   const doc = new Document({
-    styles: { default: { document: { run: { font: FONTE, size: 24 } } } },
+    styles: {
+      default: { document: { run: { font: FONTE, size: 24, language: { value: 'pt-BR' } } } },
+      // Estilo do rodapé: o número da página ("Página X de Y") herda daqui o tamanho e a cor.
+      paragraphStyles: [{ id: 'RodapeAM', name: 'Rodapé AM', run: { font: FONTE, size: 16, color: CINZA } }],
+    },
     sections: [{
       properties: {
         page: {
           size: { width: 11906, height: 16838, orientation: paisagem ? PageOrientation.LANDSCAPE : PageOrientation.PORTRAIT },
-          margin: paisagem
-            ? { top: 1.5 * CM, bottom: 1.5 * CM, left: 1.5 * CM, right: 1.5 * CM }
-            : { top: 3 * CM, left: 3 * CM, bottom: 2 * CM, right: 2 * CM },
+          margin: { ...margem, header: 680, footer: 567 },
         },
       },
-      children: filhos,
+      headers: { default: cabecalho() },
+      footers: { default: rodape() },
+      children: paragrafos(blocos),
     }],
   });
   return Packer.toBuffer(doc);
