@@ -3408,3 +3408,27 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Limites:** nada é preenchido nos processos antigos (valor_estimativa/valor_proposta vazios; a coluna
   mostra "—"); a cobrança não é criada sozinha quando a RPV é paga (o Master registra); contrato com
   várias teses tem um só valor total.
+
+### 09/10/2026 — `salvar_documento_drive`: primeiro uso real em produção (Franklin) e aviso de margens
+
+- **Caso:** 3 PDFs gravados na pasta do cliente FRANKLIN HERIK SOARES DE MATOS LOURENCO x PB
+  (`_PENDENTE A PROTOCOLAR — 2026`): inicial FGTS + férias + 13º, inicial piso do magistério (com a
+  tabela piso × parcela-base) e planilha do piso (40 competências, out/2021–jan/2025, total
+  R$ 122.638,60, conferido contra a planilha de origem). Os Google Docs/Sheet de origem foram para a
+  lixeira depois da conferência.
+- **Como foi gravado:** a sessão do Claude Code estava com a lista antiga do conector (8 ferramentas,
+  sem `salvar_documento_drive`; a lista só renova em conversa nova). Para não travar, a mesma função
+  `salvarDocumentoHtml` (`services/drive/documentos.js`) foi chamada via `railway run` com o ambiente de
+  produção — mesmo código da rota/ferramenta, sem passar pela rota (logo, sem registro de auditoria
+  `gravar_documento_drive` desta gravação).
+- **Estado verificado em produção:** HTML → Doc → PDF funciona (3 PDFs gravados, listados na pasta,
+  conteúdo conferido página a página no início). **Aviso de margens em todas as 3 gravações:** a Google
+  Docs API não está habilitada no projeto Google do AM (`SERVICE_DISABLED`). Efeito: PDFs saem em
+  **Carta (US Letter), retrato, margens de 2,54 cm** — nem A4/ABNT nem paisagem (a planilha saiu em
+  retrato, legível, sem corte de colunas).
+- **Testado e descartado:** o importador HTML do Drive ignora `@page`; `width`/`padding` do `<body>`
+  mudam só a largura da página, a altura fica sempre 792 pt — não há como fazer A4/paisagem sem a Docs
+  API.
+- **Pendência:** habilitar a Google Docs API no projeto Google do AM (Console → APIs e serviços →
+  Google Docs API → Ativar) e regravar os 3 PDFs (o arquivo de mesmo nome vai para a lixeira
+  automaticamente).
