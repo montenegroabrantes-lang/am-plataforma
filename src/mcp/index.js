@@ -71,7 +71,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.4.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.5.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -183,6 +183,18 @@ function construirServidor(token) {
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async a => saida(await chamar('POST', '/acervo/drive/documentos', token, a)));
+
+  s.registerTool('preparar_protocolo', {
+    title: 'Conferir pasta e montar ficha de protocolo (PJe)',
+    description: 'SÓ LEITURA. Confere a pasta do cliente antes do protocolo no PJe e devolve, para cada inicial em PDF '
+      + '("INICIAL - ..."), a ficha do processo: foro (João Pessoa), juízo pela regra dos 60 salários mínimos (Juizado '
+      + 'Especial da Fazenda Pública ou Vara da Fazenda Pública), classe, autor, réu, ação, valor da causa, gratuidade e os '
+      + 'anexos na ordem (inicial, planilha da mesma tese, procuração, documento pessoal, vínculo, outros PDFs). Processo '
+      + 'com documento obrigatório faltando vem "bloqueado" com o motivo — não protocole. Arquivos que não são PDF '
+      + 'aparecem em avisos e não devem ser anexados. Use antes de cadastrar no PJe e repasse a ficha a quem for cadastrar.',
+    inputSchema: { pasta_id: z.string().regex(/^[A-Za-z0-9_-]{10,100}$/).describe('ID da pasta do cliente no Drive') },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async a => saida(await chamar('GET', `/acervo/drive/protocolo/${a.pasta_id}`, token)));
 
   s.registerTool('salvar_peca_drive', {
     title: 'Salvar peça no padrão do escritório (PDF/Word) no Drive',

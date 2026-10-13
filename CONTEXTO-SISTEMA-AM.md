@@ -3538,3 +3538,19 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   - `camila/prompt-vendas.js`: segunda pessoa, tom formal, sem "me manda" e sem travessão;
   - snapshot do prompt atualizado; testes ok.
 - Pendente: acompanhar as próximas perguntas sobre a origem do valor para confirmar o padrão.
+
+### 13/10/2026 — `preparar_protocolo`: conferência da pasta e ficha de protocolo do PJe — NÃO publicado
+
+- **Pedido do usuário:** automatizar o protocolo em massa no PJe. Decisão: o AM confere a pasta e monta a ficha de
+  cada processo; o cadastro no PJe é feito pelo Claude no Chrome com o advogado logado (certificado dele) e para
+  antes da assinatura. O protocolo é sempre do advogado. Esta sessão na nuvem não acessa o PJe (sem navegador; rede
+  bloqueia sites externos). Senha e chave do autenticador do advogado não devem ser passadas ao Claude.
+- **Backend:** `services/drive/protocolo.js` (`prepararProtocolo`), rota `GET /api/acervo/drive/protocolo/:pastaId`
+  (Master, só leitura), ferramenta MCP `preparar_protocolo` (servidor 1.5.0). Cada PDF "INICIAL - ..." é um
+  processo. Da inicial saem autor, ação, réu, valor da causa e gratuidade. Anexos em ordem: inicial, planilha da
+  mesma tese, procuração, documento pessoal, vínculo, outros PDFs. Juízo: até 60 salários mínimos, Juizado
+  Especial da Fazenda Pública; acima, Vara da Fazenda Pública. Foro padrão: João Pessoa. Falta de procuração,
+  documento pessoal, vínculo ou valor da causa bloqueia o processo. Arquivos que não são PDF saem como aviso.
+  Roteiro do Chrome em `docs/protocolo-pje-claude-chrome.md`. Suíte 1059/1059.
+- **Pendência:** configurar `SALARIO_MINIMO` (valor vigente) nas variáveis do Railway. Sem ela, o juízo sai
+  "a confirmar" e o processo fica bloqueado.

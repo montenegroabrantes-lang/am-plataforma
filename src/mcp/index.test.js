@@ -102,6 +102,8 @@ test('lista as ferramentas novas como somente leitura, sem perder as do acervo',
   assert.equal(ferramentas.salvar_documento_drive.annotations.readOnlyHint, false);
   assert.deepEqual(ferramentas.salvar_peca_drive.inputSchema.required.sort(), ['blocos', 'nome', 'pasta_id']);
   assert.deepEqual(ferramentas.salvar_documento_drive.inputSchema.required.sort(), ['html', 'nome', 'pasta_id']);
+  assert.deepEqual(ferramentas.preparar_protocolo.inputSchema.required, ['pasta_id']);
+  assert.equal(ferramentas.preparar_protocolo.annotations.readOnlyHint, true);
 });
 
 test('levantamento_reprotocolo: padrão = resumo; repassa o mesmo token', async () => {
