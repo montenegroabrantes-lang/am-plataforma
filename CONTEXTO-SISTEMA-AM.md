@@ -3554,3 +3554,14 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   Roteiro do Chrome em `docs/protocolo-pje-claude-chrome.md`. Suíte 1059/1059.
 - **Pendência:** configurar `SALARIO_MINIMO` (valor vigente) nas variáveis do Railway. Sem ela, o juízo sai
   "a confirmar" e o processo fica bloqueado.
+
+## 13/10/2026: Camila com fechamento por tipo de resistência
+
+- Pedido do usuário: Camila mais convincente, identificando o ponto de resistência para fechar.
+- Camila `2bea38b` (deploy `540671c8` SUCCESS):
+  - nova seção no prompt de vendas ("Fechamento: identificar e quebrar a resistência"), com um argumento por tipo (desconfiança, origem do valor, medo pelo vínculo, custo, demora, adiamento) e sempre um passo concreto ("pode começar só pela foto do documento de identidade");
+  - dado de credibilidade informado pelo usuário: "mais de 10 mil processos ativos em todo o Brasil", e "centenas de profissionais da Prefeitura de João Pessoa e da rede estadual da Paraíba" (o AM tem 406 clientes e 816 processos, nem todos os processos estão no sistema); a IA é proibida de criar outros números, casos ou nomes;
+  - o dado entrou na explicação da origem do valor e na retomada de confiança (nível 1).
+- Decisão: não usar números nem casos fictícios.
+- Aviso de ligação (Camila `e3bbeef`, deploy `1225bdb1` SUCCESS): proposta a partir de R$ 15 mil (`CAMILA_LIGACAO_VALOR_MINIMO`, valor definido pelo usuário), enviada há mais de 48h, sem documento e sem desfecho, gera um aviso para a equipe ligar; uma vez por proposta, só no expediente. Na publicação, 1 lead se enquadrava.
+- Pendentes, a cargo do usuário: áudio de um advogado (arquivo) e casos reais de RPV paga (o AM não registra nenhum).
