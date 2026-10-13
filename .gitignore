@@ -3,7 +3,8 @@ node_modules/
 *.sql.gz
 /tmp/
 .DS_Store
-.claude/
+.claude/*
+!.claude/skills/
 .token-integracao-claude.txt
 _to_delete/
 
