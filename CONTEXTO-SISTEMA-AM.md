@@ -3501,3 +3501,23 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Pendências:** após o deploy, regravar as iniciais do Franklin (blocos com subtítulos já em caixa de frase e sem
   "(procuração anexa)") e conferir os PDFs; decidir se a planilha também leva cabeçalho/rodapé (hoje leva, pelo
   mesmo `montarDocx`).
+
+### 13/10/2026 — Créditos da Anthropic esgotados, WhatsApp desconectado e divisão Claude × GPT
+
+- **Créditos:** a API da Anthropic da Camila respondeu "credit balance is too low" a partir de 13/10
+  às 12h30. A Camila já caía para o GPT-4.1 de reserva nas conversas. O usuário precisa recarregar
+  e ligar a recarga automática no console da Anthropic.
+- **WhatsApp:** o serviço do Digisac está desligado desde 10/10 às 06h28 (`lastShutdownAt`) e não
+  houve nenhuma mensagem de 10 a 13/10. Precisa reconectar pelo QR Code.
+- **Gasto dos últimos 30 dias:** cerca de US$ 29 (aprendizado automático US$ 16,24; retomadas US$ 5,71;
+  vendas US$ 4,94; monitoramento US$ 1,86; processual US$ 0,34). Preços do GPT conferidos na página
+  oficial da OpenAI.
+- **Divisão aprovada (Camila `4ec4503`, deploys `86cb48d8` e `755cbb1d` SUCCESS):**
+  - vendas (atendimento e retomadas) no Claude Sonnet, com o GPT-4.1 de reserva;
+  - consulta processual no GPT-4.1 (`AI_CAMILA_PROCESSO=openai`);
+  - análise e crítica do aprendizado no GPT-4.1-mini (`CAMILA_APRENDIZADO_PROVEDOR/MODELO`);
+  - monitoramento das 8h no GPT-4.1-mini (`MONITORAMENTO_PROVEDOR/MODELO`).
+  Os testes de técnica do aprendizado continuam no modelo que vai usá-la. Estimativa: cerca de US$ 13
+  por mês. Teste real do monitoramento no GPT com conversa fictícia: saída no formato esperado.
+- **Conferir:** as respostas processuais no GPT e uma semana de achados do aprendizado no mini.
+  `OPENAI_MODEL=gpt-5` no Railway não é usado pelo código.
