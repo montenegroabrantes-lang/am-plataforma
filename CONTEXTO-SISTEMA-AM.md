@@ -3521,3 +3521,13 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   por mês. Teste real do monitoramento no GPT com conversa fictícia: saída no formato esperado.
 - **Conferir:** as respostas processuais no GPT e uma semana de achados do aprendizado no mini.
   `OPENAI_MODEL=gpt-5` no Railway não é usado pelo código.
+
+## 13/10/2026: Camila alinhada ao padrão aprovado de origem do valor (caso Maria Cleidiana)
+
+- Problema: à pergunta "Esses valores são provenientes de onde?" a IA respondeu com camadas antigas do prompt ("lei local", "lei federal especial", "Estado da Paraíba" como pagador), terminou com "me manda o primeiro documento", usou travessão e falou da cliente em terceira pessoa. O padrão automático de 3 mensagens não disparou porque o detector não reconhecia "provenientes de onde".
+- Correção (Camila `c285ebc`, deploy `927b1e40` SUCCESS):
+  - `camila/explicacao-valor.js`: o detector agora reconhece "provenientes de onde", "origem desse valor" e variações;
+  - `camila/oferta-comercial.js`: a explicação aprovada (tribunais superiores e STF, quem paga é a Fazenda Pública, RPV ou precatório em nome da pessoa, honorários de 30% só no êxito) substitui as camadas com lei e ente pagador; se a pessoa insistir no artigo, vai para o Jurídico;
+  - `camila/prompt-vendas.js`: segunda pessoa, tom formal, sem "me manda" e sem travessão;
+  - snapshot do prompt atualizado; testes ok.
+- Pendente: acompanhar as próximas perguntas sobre a origem do valor para confirmar o padrão.
