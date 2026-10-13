@@ -6,6 +6,7 @@ import { registrarAuditoria } from '../middleware/auditoria.js';
 import { registrarErroInterno, mensagemErroInterno } from '../middleware/erros.js';
 import { salvarDocumentoHtml } from '../services/drive/documentos.js';
 import { salvarPecaPadrao } from '../services/drive/pecas.js';
+import { prepararProtocolo } from '../services/drive/protocolo.js';
 
 export const acervoRouter = Router();
 
@@ -116,6 +117,17 @@ acervoRouter.post('/drive/documentos', apenasMaster, async (req, res) => {
     if (e.status) return res.status(e.status).json({ ok: false, erro: 'validacao', mensagem: e.message });
     console.error('[Acervo/Drive] Gravação falhou:', e.message);
     res.status(502).json({ ok: false, erro: 'drive', mensagem: 'Não foi possível gravar no Google Drive agora. Confira a autorização do Google.' });
+  }
+});
+
+// Confere a pasta do cliente e monta a ficha de protocolo de cada processo (só leitura; Master).
+acervoRouter.get('/drive/protocolo/:pastaId', apenasMaster, async (req, res) => {
+  try {
+    res.json({ ok: true, ...(await prepararProtocolo({ pastaId: req.params.pastaId })) });
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ ok: false, erro: 'validacao', mensagem: e.message });
+    console.error('[Acervo/Drive] Ficha de protocolo falhou:', e.message);
+    res.status(502).json({ ok: false, erro: 'drive', mensagem: 'Não foi possível ler a pasta no Google Drive agora.' });
   }
 });
 

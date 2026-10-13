@@ -3498,9 +3498,16 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   tabela com cabeçalho azul-marinho, fecho/assinaturas à esquerda com recuo de 4 cm, valor da causa + fecho +
   assinaturas sempre na mesma página, idioma pt-BR. Conversão LibreOffice e conferência antes de gravar continuam.
   MCP 1.4.0 com a descrição dos blocos no padrão novo. Suíte 1054/1054.
-- **Pendências:** após o deploy, regravar as iniciais do Franklin (blocos com subtítulos já em caixa de frase e sem
-  "(procuração anexa)") e conferir os PDFs; decidir se a planilha também leva cabeçalho/rodapé (hoje leva, pelo
-  mesmo `montarDocx`).
+- **Deploy (PR #7, merge `b5992b9`):** o primeiro build falhou no Railway por incidente do próprio Railway (falha ao
+  baixar imagens do Docker Hub; o build parou em "Build image" em 4 s). Enquanto isso o serviço seguiu na versão do
+  PR #6. O usuário refez o deploy do PR #7 em 13/10/2026. Lição: depois de merge, testar a ferramenta antes de
+  regravar peças, porque o PDF pode sair na versão antiga sem erro nenhum.
+- **Verificado em produção (13/10/2026):** a pasta do Franklin tem as duas iniciais (FGTS, 6 páginas; Piso, 7 páginas)
+  e a planilha (A4 paisagem, 4 páginas) gravadas pela ferramenta no layout novo, com cabeçalho e rodapé. Os PDFs foram
+  baixados do Drive e conferidos: texto igual ao aprovado (só mudam as quebras de linha) e as 40 competências da
+  planilha completas. Na pasta também estão os .docx das iniciais, colocados pelo usuário.
+- **Pendências:** no bloco `acao` o texto sai todo em caixa alta (na planilha, "(40h)" vira "(40H)"); a linha
+  "Autor: ..." da planilha usa o bloco `fecho` (recuo de 4 cm).
 
 ### 13/10/2026 — Créditos da Anthropic esgotados, WhatsApp desconectado e divisão Claude × GPT
 
@@ -3531,6 +3538,22 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   - `camila/prompt-vendas.js`: segunda pessoa, tom formal, sem "me manda" e sem travessão;
   - snapshot do prompt atualizado; testes ok.
 - Pendente: acompanhar as próximas perguntas sobre a origem do valor para confirmar o padrão.
+
+### 13/10/2026 — `preparar_protocolo`: conferência da pasta e ficha de protocolo do PJe — NÃO publicado
+
+- **Pedido do usuário:** automatizar o protocolo em massa no PJe. Decisão: o AM confere a pasta e monta a ficha de
+  cada processo; o cadastro no PJe é feito pelo Claude no Chrome com o advogado logado (certificado dele) e para
+  antes da assinatura. O protocolo é sempre do advogado. Esta sessão na nuvem não acessa o PJe (sem navegador; rede
+  bloqueia sites externos). Senha e chave do autenticador do advogado não devem ser passadas ao Claude.
+- **Backend:** `services/drive/protocolo.js` (`prepararProtocolo`), rota `GET /api/acervo/drive/protocolo/:pastaId`
+  (Master, só leitura), ferramenta MCP `preparar_protocolo` (servidor 1.5.0). Cada PDF "INICIAL - ..." é um
+  processo. Da inicial saem autor, ação, réu, valor da causa e gratuidade. Anexos em ordem: inicial, planilha da
+  mesma tese, procuração, documento pessoal, vínculo, outros PDFs. Juízo: até 60 salários mínimos, Juizado
+  Especial da Fazenda Pública; acima, Vara da Fazenda Pública. Foro padrão: João Pessoa. Falta de procuração,
+  documento pessoal, vínculo ou valor da causa bloqueia o processo. Arquivos que não são PDF saem como aviso.
+  Roteiro do Chrome em `docs/protocolo-pje-claude-chrome.md`. Suíte 1059/1059.
+- **Pendência:** configurar `SALARIO_MINIMO` (valor vigente) nas variáveis do Railway. Sem ela, o juízo sai
+  "a confirmar" e o processo fica bloqueado.
 
 ## 13/10/2026: Camila com fechamento por tipo de resistência
 
