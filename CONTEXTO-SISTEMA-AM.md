@@ -3531,3 +3531,13 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   - `camila/prompt-vendas.js`: segunda pessoa, tom formal, sem "me manda" e sem travessão;
   - snapshot do prompt atualizado; testes ok.
 - Pendente: acompanhar as próximas perguntas sobre a origem do valor para confirmar o padrão.
+
+## 13/10/2026: Camila com fechamento por tipo de resistência
+
+- Pedido do usuário: Camila mais convincente, identificando o ponto de resistência para fechar.
+- Camila `2bea38b` (deploy `540671c8` SUCCESS):
+  - nova seção no prompt de vendas ("Fechamento: identificar e quebrar a resistência"), com um argumento por tipo (desconfiança, origem do valor, medo pelo vínculo, custo, demora, adiamento) e sempre um passo concreto ("pode começar só pela foto do documento de identidade");
+  - dado de credibilidade informado pelo usuário: "mais de 10 mil processos ativos em todo o Brasil", e "centenas de profissionais da Prefeitura de João Pessoa e da rede estadual da Paraíba" (o AM tem 406 clientes e 816 processos, nem todos os processos estão no sistema); a IA é proibida de criar outros números, casos ou nomes;
+  - o dado entrou na explicação da origem do valor e na retomada de confiança (nível 1).
+- Decisão: não usar números nem casos fictícios.
+- Pendentes, a cargo do usuário: áudio de um advogado (arquivo), casos reais de RPV paga (o AM não registra nenhum), valor mínimo para o aviso de ligação em leads de valor alto.
