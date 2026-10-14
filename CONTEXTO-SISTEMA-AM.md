@@ -3580,3 +3580,13 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Pendente: medir as respostas "1" ao cartão. Fica uma trava incerta antiga (06/10, fluxo de entrada, contato 9ebf6e24), sem relação com isto.
 - 14/10/2026, tarde: o usuário aprovou mais 24 leads parados, fora do ciclo de retomada, todos com chamado aberto na CAMILA - VENDAS. Grupo A (12 leads, cerca de R$ 170 mil) recebeu o cartão em 14/10, 12 de 12 enviados. Grupo B (12 leads, cerca de R$ 95 mil) está agendado para 15/10 às 11h, em processo local em segundo plano (log em `analise/cartao-estimativa/lote-B.log`), pulando quem escrever antes. Ficaram de fora: Joana (conferência), Ely (presencial), Patrícia (advogado), Elielma (no JURÍDICO) e José Milton (valor errado).
 - 14/10/2026: cartão em todas as etapas (Camila `ffe15f1`, deploy `e381618c` SUCCESS), a pedido do usuário. As etapas 1 a 4 da retomada de proposta saem como cartão + uma linha própria de cada etapa, todas terminando em "Para seguir, é só responder 1." A etapa 0, logo depois do PDF, segue em texto. Antes da mudança, 11 retomadas de 14/10 (etapas 2 a 4) saíram em texto. Primeiro resultado: Manoel Carlos respondeu "1" ao cartão e recebeu a lista de documentos.
+
+## 14/10/2026: leads da campanha INSS ficavam fora da fila do AM (caso Flávia)
+
+- Problema: a Flávia (ae3a8476) veio da página do INSS, mas o texto do formulário chegou ao servidor sem quebras de linha. Nenhum campo foi lido, a origem ficou "inss" sem os dados e o cálculo não disparou. O "1" do menu do robô ainda tirava o lead do caminho do INSS. A Camila pediu documentos e o lead não entrou na fila de aprovação.
+- Correção (Camila `8c99443`, deploy `39c3e0a1` SUCCESS):
+  - `lerFormularioInss` separa os campos pelos rótulos quando faltam as quebras de linha;
+  - ENTRADA_INSS tem prioridade sobre ENTRADA_OPCAO_1;
+  - novo `POST /admin/calcular/:contactId` dispara o mesmo `[ACAO:CALCULAR]` com dados do operador.
+- Executado: Flávia na fila do AM (estimativa 200, pendente, origem inss, 1 candidato, sem valor sugerido, fase `aguardando_aprovacao`). Ela tem dois vínculos (Prefeitura de Sousa e Estado da Paraíba): conferir e vincular o segundo na aprovação.
+- Pendente: conferir se outros leads do INSS ficaram de fora antes da correção.
