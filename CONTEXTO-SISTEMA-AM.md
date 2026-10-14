@@ -3565,3 +3565,16 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Decisão: não usar números nem casos fictícios.
 - Aviso de ligação (Camila `e3bbeef`, deploy `1225bdb1` SUCCESS): proposta a partir de R$ 15 mil (`CAMILA_LIGACAO_VALOR_MINIMO`, valor definido pelo usuário), enviada há mais de 48h, sem documento e sem desfecho, gera um aviso para a equipe ligar; uma vez por proposta, só no expediente. Na publicação, 1 lead se enquadrava.
 - Pendentes, a cargo do usuário: áudio de um advogado (arquivo) e casos reais de RPV paga (o AM não registra nenhum).
+
+## 14/10/2026: cartão da estimativa com "responda 1" e reenvio das retomadas perdidas na queda
+
+- Contexto: na queda do WhatsApp de 12/10, 34 retomadas de proposta deram erro 500 no Digisac e ficaram "incertas". Esse estado trava todo o ciclo do contato, então nem as etapas seguintes sairiam. Conferido no Digisac: nada foi entregue.
+- Cartão (aprovado pelo usuário): botão de verdade só existe na API oficial do WhatsApp, e a conexão da Camila é WhatsApp Web, então o botão é desenhado numa imagem (1080x1350, visual da proposta) com nome, valor, "Quem paga é a Fazenda Pública", nenhum custo antecipado, 30% só no êxito, não passa pela chefia, documentos numerados e "Para seguir, responda 1".
+- Camila `3d9d6c7` (deploy `7ed427a3` SUCCESS):
+  - `camila/cartao-estimativa.js`: gera o PNG com o mesmo Chromium do PDF;
+  - a 1ª retomada de proposta sai como cartão + "Para seguir, é só responder 1." (`CARTAO_RETOMADA_ATIVO=false` volta ao texto);
+  - um "1" (ou "seguir") logo depois do cartão é aceite: pede os documentos e passa à fase de documentação (antes um "1" era lido como opção do menu do robô);
+  - `POST /admin/cartao-estimativa/:contactId` para reabordagem pontual;
+  - envio incerto: depois de 1h a retomada confere no Digisac e, se nada saiu, devolve a etapa para a fila.
+- Executado: os 8 leads cujo ciclo terminou na etapa que falhou receberam o cartão (Olga, Dallane, Conceição de Maria, Manoel Carlos, Jessica, Alexandre, Ani e Valdevan). Conferido no Digisac: chegou como imagem, seguido da linha de texto. As 8 etapas incertas foram canceladas antes do deploy. Os outros 26 voltaram para a fila (0 incertos) e saem em 14/10 entre 11h20 e 17h25; os de nível 1 já recebem o cartão.
+- Pendente: medir as respostas "1" ao cartão. Fica uma trava incerta antiga (06/10, fluxo de entrada, contato 9ebf6e24), sem relação com isto.
