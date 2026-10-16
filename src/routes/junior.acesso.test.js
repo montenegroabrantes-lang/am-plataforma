@@ -578,3 +578,10 @@ test('processos: júnior com tarefa não altera valor da estimativa nem o valor 
     assert.match(r.corpo.erro, /estimativa.*passado ao cliente/);
   }
 });
+
+test('processos: trocar o cliente vinculado é só do Master (júnior 403, id inválido 400)', async () => {
+  const r = await chamar('PUT', `/api/processos/${PROC}/cliente`, { token: JUNIOR, corpo: { cliente_id: CLIENTE } });
+  assert.equal(r.status, 403);
+  const invalido = await chamar('PUT', `/api/processos/${PROC}/cliente`, { token: MASTER, corpo: { cliente_id: 'nao-e-uuid' } });
+  assert.equal(invalido.status, 400);
+});

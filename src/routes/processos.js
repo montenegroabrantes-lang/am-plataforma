@@ -13,6 +13,7 @@ import { extrairIdProcessoPje, obterAcessoTribunal } from '../services/acessoTri
 import { preservarRequisicaoManual } from '../services/ai/tasks/classificacao.js';
 import { daTabela } from '../utils/tabelaSegura.js';
 import { valorOpcional } from '../utils/valorOpcional.js';
+import { trocarClienteDoProcesso, ErroTroca } from '../services/trocarClienteProcesso.js';
 import { erroInterno } from '../middleware/erros.js';
 import { celulaCsv } from '../utils/csv.js';
 import { diferenca } from '../utils/auditoriaCampos.js';
@@ -602,6 +603,23 @@ processosRouter.post('/', async (req, res) => {
 });
 
 // PATCH /api/processos/:id
+// PUT /api/processos/:id/cliente — troca o cliente vinculado ao processo (só Master). O campo de texto
+// "polo ativo" da ficha NÃO troca o cliente; esta rota troca, com auditoria (ver services/trocarClienteProcesso.js).
+processosRouter.put('/:id/cliente', apenasMaster, async (req, res) => {
+  if (!uuidValido(req.params.id) || !uuidValido(req.body?.cliente_id)) {
+    return res.status(400).json({ ok: false, erro: 'Processo ou cliente inválido.' });
+  }
+  const dono = await db.queryOne('SELECT visibilidade FROM processos WHERE id = $1', [req.params.id]);
+  if (!dono || !usuarioVeVisibilidade(req.user, dono.visibilidade)) return processoNaoEncontrado(res);
+  try {
+    const r = await trocarClienteDoProcesso({ processoId: req.params.id, clienteId: req.body.cliente_id, usuarioId: req.user.id, ip: req._ip });
+    res.json({ ok: true, ...r });
+  } catch (err) {
+    if (err instanceof ErroTroca) return res.status(err.status).json({ ok: false, erro: err.message });
+    throw err;
+  }
+});
+
 processosRouter.patch('/:id', async (req, res) => {
   const dono = await db.queryOne('SELECT master_responsavel_id, compartilhado, visibilidade, tribunal, grau FROM processos WHERE id = $1', [req.params.id]);
   if (!dono || !usuarioVeVisibilidade(req.user, dono.visibilidade)) return processoNaoEncontrado(res);
