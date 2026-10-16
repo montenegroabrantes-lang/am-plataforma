@@ -3597,3 +3597,33 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - 14/10/2026: fonte dos dados na origem do valor (Camila `3116be8`), caso Suzely b0e42c19. A explicação automática passa a citar a fonte pelos candidatos da análise: dados públicos de pessoal do TCE-PB, Portal da Transparência do Governo da Paraíba ou, quando a pessoa não foi encontrada nominalmente, os valores de referência do cargo, sem afirmar que foram as remunerações dela. A estimativa da Suzely (servidora de Pernambuco) foi feita pela média do cargo (`banco_tce_cargo_media`). O cartão da estimativa ainda diz "Calculado com base nas suas remunerações", o que é impreciso nesses casos (decisão do usuário pendente).
 - 14/10/2026: a origem do valor sempre menciona a busca nos portais (Camila `f14f830`), a pedido do usuário. "Foi elaborada a partir de busca [na fonte], com base nas remunerações do seu vínculo" quando a pessoa é encontrada pelo nome; "a partir de busca nos portais da transparência, com base nos dados públicos de remuneração do seu cargo" na média do cargo, sem afirmar remuneração própria.
 - 14/10/2026: entrega suspensa por atendimento humano (Camila `b53ca04`), caso Wallace 4d7105bb. A estimativa 203 foi aprovada às 17h04 com um atendente no chamado e ficou suspensa. Com aprovação do usuário, a entrega foi retomada pela API (`/api/estimativas/203/retomar-entrega`) e concluída às 17h16. Melhoria: a cada 15 min, no expediente, a entrega suspensa (aprovada há até 3 dias) volta à Camila quando o chamado está aberto, sem atendente, numa fila da Camila, sem mensagem humana desde a aprovação e sem desfecho; a equipe é avisada. Na publicação, nenhuma outra entrega se enquadrava.
+
+### 16/10/2026 — Processo vinculado ao cliente errado: correção do caso e troca de cliente na ficha
+
+- **Caso (relato do usuário):** o nome da autora foi alterado no sistema mas o processo continuava
+  atribuído a um terceiro. Achado na auditoria: em 16/10 11:32 o usuário Luciano editou o processo
+  `0819569-63.2026.8.15.2001` e trocou o campo "Polo Ativo / Cliente" de NADJA VALESKA FRANCA CAVALCANTI
+  para MARIA DO SOCORRO DOS SANTOS CARLOS. Esse campo é só o TEXTO da autora (`processos.polo_ativo`);
+  o cliente vinculado (`processos.cliente_id`) continuou a Nadja. Causa de fundo: não havia como trocar o
+  cliente de um processo já cadastrado (o `PATCH /api/processos/:id` não aceita `cliente_id`; a tela só
+  deixava vincular quando o processo não tinha cliente) e o rótulo do campo sugeria o contrário.
+- **Correção do caso (dados, 16/10, transação + auditoria com autor "Integração Claude"):** processo
+  passou para o cliente Maria do Socorro (`d70c027c-…`); a tese "Equiparação salarial no magistério" foi
+  vinculada a ela em `cliente_produtos` com **honorários 0,00%** — o percentual não foi informado e
+  PRECISA ser ajustado na ficha (seção "Tese jurídica do processo"). O processo não tinha tarefas,
+  honorários, cobranças, cessões nem publicações.
+- **Backend `31031bf` (deploy `8cfd5f4e`):** `PUT /api/processos/:id/cliente` (Master) via
+  `services/trocarClienteProcesso.js`: transação com auditoria antes/depois (`trocar_cliente_processo`);
+  cliente de destino ativo e diferente do atual; **recusa (409) se há tarefas presas ao contrato
+  (`cliente_produto_id`) do cliente atual**; leva as cobranças ao cliente em aberto e as tarefas sem
+  contrato; não cria contrato de tese (devolve `tese_sem_vinculo`). Júnior 403. Suíte 1059/1059 (1 teste
+  de PDF pulado por falta de LibreOffice).
+- **Frontend `db27c1d` (deploy `158197a7`):** aba Dados do processo separa "Cliente vinculado" (com
+  "Trocar cliente"/"Vincular cliente", busca por nome ou CPF e confirmação) de "Autora / parte ativa
+  (texto do tribunal)"; aviso quando o nome da autora diverge do cliente (`lib/autoraCliente.mjs`);
+  rótulo do campo de edição deixa claro que não troca o cliente. Verificado no Chrome logado na ficha
+  corrigida (a janela de troca abre e busca; cancelada sem trocar).
+- **Pendente / achados:** (1) percentual de honorários da Maria do Socorro na Equiparação; (2) processo
+  `0801815-11.2026.8.15.2001` vinculado a Adriana Diniz Nery com polo ativo "Estado Paraiba" (provável
+  polo invertido) — não alterado; (3) Luciano arquivou hoje 11:23 o processo `0863763-56.2023` (FGTS da
+  Nadja), provável duplicado — fora desta correção.
