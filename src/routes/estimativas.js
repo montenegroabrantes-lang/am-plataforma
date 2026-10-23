@@ -84,6 +84,8 @@ for(const [method,local,remote] of [
   ['get','/dashboard','/api/dashboard-leads'],
   ['get','/dashboard/detalhes','/api/dashboard-leads/detalhes'],
   ['get','/reabordagens/status','/api/reabordagens/status'],
+  // Coluna "Em qualificação" do quadro: leads sem estimativa (23/10/2026).
+  ['get','/leads-qualificacao','/api/qualificacao'],
   ['get','/aprendizado-automatico','/api/aprendizado-automatico'],
   ['post','/aprendizado-automatico/configuracao','/api/aprendizado-automatico/configuracao'],
   ['post','/aprendizado-automatico/:codigo/desativar','/api/aprendizado-automatico/:codigo/desativar'],
