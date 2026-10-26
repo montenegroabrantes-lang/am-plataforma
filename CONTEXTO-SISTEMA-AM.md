@@ -3660,4 +3660,6 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Diagnóstico (só leitura, 21 dias): 29 propostas, 15 responderam, 5 com documentos. Com o Sonnet 5.5 (desde 14h42 de 26/10), as respostas de vendas ficaram mais longas (412 vs 252 caracteres), com ressalva "preliminar/será confirmada" em 25% (vs 1% no 4.6) e lista de documentos em 25% (vs 8%). Caso que motivou: 0bc4e90d (medo de perder o contrato lido como pergunta de elegibilidade).
 - `AI_CAMILA_CLAUDE_MODELO=claude-sonnet-4-6` no Railway, confirmado em `/admin/ia-config`.
 - Prompt de vendas (Camila `cff057a`, deploy c76a02bf, prompt `6d71b01a6fe0`): "em exercício"/"vai prejudicar meu contrato" = medo do vínculo (tranquiliza, colegas beneficiados seguem trabalhando, dar entrada o quanto antes); sem repetir "preliminar/será confirmada" após a proposta; "é líquido?" respondido direto (os 30% saem do valor recebido, sem conta); lista de documentos só no aceite e nunca a quem avisou viagem/trabalho; urgência uma vez no fechamento. Casos 0bc4e90d, 14a04699, 3f68a094.
-- Pendente: mensagem manual à 0bc4e90d (aguarda confirmação); medir efeito no balanço de 28/10.
+- Mensagem manual à 0bc4e90d ENVIADA em 26/10 à noite (texto aprovado pelo usuário: não afeta a relação de emprego, direito adquirido, colegas beneficiados, dar entrada o quanto antes, foto do documento de identidade).
+- Mesma frase incluída no prompt (Camila `f2a9e89`, deploy 28e89112, prompt `2a59d8a5c3a7`).
+- Pendente: medir efeito no balanço de 28/10.
