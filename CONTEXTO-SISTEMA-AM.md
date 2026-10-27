@@ -3673,3 +3673,16 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   - ea7d033a perdido (marcado pelo usuário no AM), motivo "vínculo em Roraima não localizado"; estimativa pendente descartada.
 - Achado: estimativas de 4e17702a (24/10) e f0e863b9 (26/10) estão pendentes na fila do AM sem valor sugerido aprovado. A busca automática de 4e17702a casou com outra pessoa (outro cargo e órgão); a de f0e863b9 só achou média do cargo. Ninguém aprovou; o template prometeu retorno "segunda-feira" / "amanhã".
 - Pendentes: 7e28732e com a equipe; reabordagem de dfef8212 e fdd2c811 aguardando texto aprovado; 12 estimativas pendentes de agosto (calculadora antiga) aguardando decisão de descarte; automatizar a regra do link de procuração.
+
+### 27/10/2026 (manhã) — estimativas paradas: entregas e correção da causa
+
+- Estimativas 247 (4e17702a, R$ 8.900,00) e 255 (f0e863b9, R$ 13.850,00) aprovadas com o valor dado pelo usuário, pela rota `/api/estimativas/:id/aprovar`, e entregues às 10h29.
+- Achados na entrega:
+  - 255 recebeu o texto antigo VENDAS-04 (com validade e asteriscos) porque o cartão falhou com `spawn ETXTBSY`: duas entregas simultâneas chamaram o @sparticuz/chromium juntas;
+  - 247 recebeu o RESUMO-PROPOSTA com o órgão do candidato errado da busca (Prefeitura de João Pessoa) em vez do vínculo aprovado (Estado da Paraíba).
+- Causa da demora: a lista do AM não estava escondendo as novas (as 12 pendências de agosto têm `passado_atendente=true` e já ficam fora da lista e do contador). A equipe só recebia o aviso "Novo lead do site" na chegada, sem lembrete depois, e nada indicava quando a busca não achou o vínculo.
+- Correção publicada (Camila `a3d0ef7`, deploy db490fb1):
+  - `pdf.js` resolve o Chromium uma vez só e tenta de novo no ETXTBSY. Verificado em produção: duas gerações simultâneas de PDF logo após o deploy, ambas 200;
+  - o resumo usa os vínculos aprovados antes dos candidatos e diz "no Estado da Paraíba";
+  - `camila/estimativa-pendente.js`: estimativa de qualquer origem (o INSS já tinha aviso próprio) parada há 2h ou mais gera um aviso diário à equipe no expediente, dizendo se há valor sugerido ou se o vínculo precisa ser conferido à mão.
+- Pendente: mensagem de correção a 4e17702a e resumo a f0e863b9 (aguardam aprovação); o texto de reserva VENDAS-04 ainda tem validade e asteriscos.
