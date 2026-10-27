@@ -3730,3 +3730,9 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Camila `1b63e65` (deploy 8ba434a7): `camila/leads-quentes.js` manda à equipe, a partir das 9h, a lista diária dos 10 leads mais perto de fechar (nome, órgão, telefone, valor e motivo). A primeira saiu às 18h30 de 27/10.
 - Decidido não mudar: os testes do aprendizado automático continuam na Claude (cerca de US$ 2,89 por semana), porque as técnicas usadas pela Claude precisam ser testadas nela.
 - Em preparo: textos de recuperação para 24 leads da prioridade A do mapa (nada enviado sem aprovação) e o texto do valor líquido no resumo da proposta (aguarda aprovação).
+- Recuperação dos leads da prioridade A: 17 textos aprovados pelo usuário na versão 2, sem cobrança. Nenhum pede documento ou lembra o que a pessoa deixou de fazer; todos dizem "a sua análise segue reservada" e "quando for um bom momento, é só me responder". A 1ª versão, que pedia a foto da identidade, foi barrada. Envio em duas tarefas agendadas, respeitando o limite de 12 por dia:
+  - 28/10 9h: 1 a 10, 12 e 13;
+  - 29/10 9h: 11, 14, 15, 18 e 23.
+  - Depois de cada envio, as retomadas automáticas desses leads são canceladas. 7 leads do grupo B ficam parados por decisão do usuário. Nas mensagens de Bosoerg, Gilvânia e Keila vale o valor aprovado. Para Ely e Maria do Socorro, que pediram presencial, a estratégia é fechar pelo WhatsApp.
+  - Regra registrada: mensagem que escrevemos primeiro não cobra nada; na conversa, a Camila mantém o convite "pode começar só pela foto da identidade" depois de responder à dúvida.
+  - Camila `1c380ba`: o 3º dia para quem já respondeu 1 não pede mais documento.
