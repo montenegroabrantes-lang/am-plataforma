@@ -3694,3 +3694,25 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Texto reserva da entrega trocado (Camila `7bb9fc0`, deploy e5163d33). Quando o cartão falha, o valor sai no RESUMO-PROPOSTA e não mais no VENDAS-04 (que tinha validade e asteriscos). O VENDAS-04 só volta se nem o resumo puder ser montado.
 - Retornos combinados: nenhum dos 4 de outubro (121d37e4, 7e28732e, dfef8212, 6448cf6a) saiu; todos foram cancelados como "cliente_respondeu" (por figurinha, "Ok" ou a própria mensagem que pediu o horário). Corrigido (Camila `d36ed40`, deploy 876ae306): figurinha e reação contam como acuse; mensagem anterior ao agendamento não cancela; a última conferência antes do envio aceita o acuse. Novo `camila/retorno-nao-cumprido.js`: 30 min depois do horário sem envio, aviso à equipe com o motivo registrado. Limitação: 121d37e4 e 6448cf6a foram cancelados sem mensagem do cliente visível no banco; se voltar a acontecer, o aviso novo mostra o caso na hora.
 - Agendada a tarefa `georgina-contracheque-28-10` (28/10 9h): envia a f0e863b9 o texto aprovado sobre comprovar o vínculo pelo Portal da Transparência, só se ela não tiver respondido.
+
+### 27/10/2026 (tarde) — comportamento da Camila nas vendas: prompt reescrito, conversa completa e retomada sem cobrança
+
+- Aprovado pelo usuário ("monte o cronograma de execução e execute"). Publicado na Camila `01dd951`, deploy fd83b765, prompt `616ff658b166`; `/health` ok e sem erros no log após o deploy.
+- Prompt de vendas (`camila/prompt-vendas.js`) reescrito:
+  - papel de consultora;
+  - antes de responder, lê a conversa, identifica o sentimento e escolhe o menor passo;
+  - primeira frase responde à pergunta; um argumento e no máximo um pedido;
+  - falas por situação: medo pelo emprego, origem do valor, golpe, líquido, prazo, "vou pensar"/cônjuge, viagem, aceite, documento recebido, desistência sem insistir;
+  - "direito já reconhecido pelos tribunais superiores", uma vez e no contexto certo, sem lei, tema ou FGTS, sem nomear Estado ou Município como pagador.
+  - Removidas as regras contraditórias: hesitação com dois horários obrigatórios, proibição de prova social, "termine sempre pedindo documento", ressalvas de "preliminar". O texto de origem do valor em `camila/oferta-comercial.js` perdeu "sujeita à confirmação pelos tribunais" e "nem direito garantido".
+- Contexto da IA (`continuidade.js`): conversa completa (até 40 mensagens, com textos automáticos e falas da equipe, sem eco duplicado) e ficha do lead (nome, cargo, órgão, valor e data da proposta, se respondeu 1, se a lista de documentos já foi enviada). Antes eram 12 mensagens em JSON. No `server.js`, o contexto pós-proposta não manda a lista se ela já foi enviada, e depois de uma objeção o pedido é só a foto da identidade.
+- Retomada da proposta (`camila/sequencia-proposta.js`, textos aprovados):
+  - dia 1: "A sua análise do período [órgão] está aqui. Se surgir qualquer dúvida, é só me chamar.";
+  - dia 3: o cartão da estimativa com "O pedido não afeta o seu vínculo. É um direito seu, já reconhecido pelos tribunais superiores. Para seguir, é só responder 1.";
+  - dia 7: "Vou deixar a sua análise reservada…";
+  - nível 4 cancelado (`sequencia_encerrada`);
+  - quem já respondeu 1 não recebe o cartão (vai o texto pedindo a identidade).
+  - Saem de uso os cartões e textos de "rotina" e prescrição na proposta. Registro com código `SEQUENCIA-n`. Interruptor: `RETOMADA_SEQUENCIA_ATIVA=false` volta à cadência anterior.
+- Bateria de 13 casos reais (prompt atual × novo, mesmo modelo): nenhum problema automático no novo e respostas 33% mais curtas. Relatório em `analise/bateria-prompt-2026-10-27.md`. Os 3 desvios achados na 1ª rodada foram corrigidos: cônjuge lido como pedido de contato, lista junto da objeção, Estado como pagador. O último ajuste ("vou pensar" depois de uma explicação fraca) não foi retestado porque a API ficou sem crédito.
+- ACHADO URGENTE: a conta da Anthropic usada pela Camila ficou sem crédito durante a bateria ("credit balance is too low"). Produção não parou: o roteador cai para o GPT-4.1, mais fraco nas vendas. O aprendizado automático fez 54 chamadas Claude hoje. Recarga depende do usuário.
+- Pendente: medir em 28/10 a resposta à sequência nova e a repetição da lista; retestar o caso "vou pensar" quando houver crédito.
