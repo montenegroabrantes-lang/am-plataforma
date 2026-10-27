@@ -3717,3 +3717,16 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - ACHADO URGENTE: a conta da Anthropic usada pela Camila ficou sem crédito durante a bateria ("credit balance is too low"). Produção não parou: o roteador cai para o GPT-4.1, mais fraco nas vendas. O aprendizado automático fez 54 chamadas Claude hoje. Recarga depende do usuário.
 - Pendente: medir em 28/10 a resposta à sequência nova e a repetição da lista; retestar o caso "vou pensar" quando houver crédito.
 - 27/10 fim da tarde: chave da API da Anthropic trocada pelo usuário no Railway (conta com crédito); chamada de teste aceita e Camila reiniciada (deploy 142a1d03). Bateria rodada de novo: o caso "vou pensar" ainda terminava com pergunta sobre o cálculo; regra ajustada e retestada ("Claro, [nome]. Te chamo amanhã à tarde?"). Publicado na Camila `56d04a7`, deploy 4945ffee. Resíduo visto na bateria: ainda aparece às vezes "faz todo sentido" e travessão, apesar da regra.
+
+### 27/10/2026 (noite): fechamentos, avisos e prioridade dos leads
+
+- f0e863b9 fechado (informado pelo usuário): gravado em `leads_desfecho` com valor 13850. A tarefa agendada de 28/10 9h para esse lead foi apagada.
+- Achado e corrigido: o `valor_fechado` de ffc61bda estava gravado como 9,565 (digitado "9.565" no AM e lido como decimal). Corrigido para 9565,98, igual à proposta. Se o "Fechar" do AM aceita valor com ponto de milhar, o bug pode se repetir: conferir no AM.
+- 12 estimativas pendentes de agosto (calculadora antiga, `passado_atendente=true`) marcadas como `descartada`: ids 36, 44, 45, 48 a 54, 56 e 57.
+- Camila `7f48c94` (deploy 80e6d1a5):
+  - `ai-router` avisa a equipe uma vez por dia quando a conta da Claude ou da OpenAI fica sem crédito ou a chave é recusada;
+  - `camila/estilo-final.js` tira travessão e frase feita de abertura antes do envio;
+  - `camila/fechamento-procuracao.js` registra como fechado, a cada 15 min, quem recebeu o link do Portal de Assinaturas e ainda não tinha desfecho (os 43 atuais já tinham).
+- Camila `1b63e65` (deploy 8ba434a7): `camila/leads-quentes.js` manda à equipe, a partir das 9h, a lista diária dos 10 leads mais perto de fechar (nome, órgão, telefone, valor e motivo). A primeira saiu às 18h30 de 27/10.
+- Decidido não mudar: os testes do aprendizado automático continuam na Claude (cerca de US$ 2,89 por semana), porque as técnicas usadas pela Claude precisam ser testadas nela.
+- Em preparo: textos de recuperação para 24 leads da prioridade A do mapa (nada enviado sem aprovação) e o texto do valor líquido no resumo da proposta (aguarda aprovação).
