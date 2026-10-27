@@ -3663,3 +3663,13 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Mensagem manual à 0bc4e90d ENVIADA em 26/10 à noite (texto aprovado pelo usuário: não afeta a relação de emprego, direito adquirido, colegas beneficiados, dar entrada o quanto antes, foto do documento de identidade).
 - Mesma frase incluída no prompt (Camila `f2a9e89`, deploy 28e89112, prompt `2a59d8a5c3a7`).
 - Pendente: medir efeito no balanço de 28/10.
+
+### 27/10/2026 — mapa do histórico da Camila e desfechos das vendas
+
+- Análise só leitura de todo o histórico (365 contatos, 26/08 a 26/10) em `analise/mapa-camila-2026-10-26/` (MAPA-CONSOLIDADO.md + relatórios A a D). Plano de execução em 7 fases apresentado; aguardando aprovação.
+- Desfechos gravados no banco da Camila (`leads_desfecho`), autorizados pelo usuário:
+  - fechado por confirmação do usuário: 9f928218 (já estava), 03a9f3db, b0020c63, 2814ca03;
+  - fechado pela regra nova do usuário ("link de procuração na conversa = fechado"): 099e4649, 60946833, 04dfd62b, b2b663ea, 31e4d87e, 2836e5c6, 5325c986, d2766f49, ccb07e3b, 27963edb, 19db55a6, 99d5ed4c, 8d9512d3, c3fb6942. Exceção mantida: 6448cf6a segue perdido (desistiu depois do link);
+  - ea7d033a perdido (marcado pelo usuário no AM), motivo "vínculo em Roraima não localizado"; estimativa pendente descartada.
+- Achado: estimativas de 4e17702a (24/10) e f0e863b9 (26/10) estão pendentes na fila do AM sem valor sugerido aprovado. A busca automática de 4e17702a casou com outra pessoa (outro cargo e órgão); a de f0e863b9 só achou média do cargo. Ninguém aprovou; o template prometeu retorno "segunda-feira" / "amanhã".
+- Pendentes: 7e28732e com a equipe; reabordagem de dfef8212 e fdd2c811 aguardando texto aprovado; 12 estimativas pendentes de agosto (calculadora antiga) aguardando decisão de descarte; automatizar a regra do link de procuração.
