@@ -3691,3 +3691,4 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Bug achado nesse caso: a confirmação automática de arquivo recebido não saía desde 16/10. `chegouOutroArquivoLogoDepois` contava o próprio arquivo (gravado 3-4s depois do createdAt do Digisac) como "outro arquivo". Nos últimos 10 dias, a maioria dos envios de documento ficou sem confirmação.
 - Regra nova do usuário: sem o último contracheque, o escritório comprova o vínculo pelos portais da transparência e a coleta segue.
 - Corrigidos o bug e a regra (Camila `ca496bc`, deploy 4dea14d4, prompt `d6bd65bf4cbb`).
+- Texto reserva da entrega trocado (Camila `7bb9fc0`, deploy e5163d33). Quando o cartão falha, o valor sai no RESUMO-PROPOSTA e não mais no VENDAS-04 (que tinha validade e asteriscos). O VENDAS-04 só volta se nem o resumo puder ser montado.
