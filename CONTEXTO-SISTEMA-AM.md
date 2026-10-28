@@ -3763,3 +3763,9 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   4. a confirmação de arquivo pede só o que falta;
   5. `camila/vinculo-comprovacao.js`: o aviso à equipe diz se o vínculo já foi localizado no nome do cliente na busca da estimativa ou se é preciso comprovar no portal.
 - Cartão da estimativa (imagem) volta a exigir "4. Último contracheque", sem "se tiver", a pedido do usuário; os textos mantêm a versão opcional (Camila, 27/10/2026).
+- Conferência rápida da noite de 27/10 (só leitura):
+  - sem erros no servidor; as vendas seguem pela Claude desde a troca da chave (as 3 respostas pelo GPT foram às 17h20, antes da troca);
+  - o aprendizado automático fez 132 chamadas à Claude em 3h, retestando as técnicas contra o prompt novo (cerca de US$ 1); conferir no balanço;
+  - houve 3 atendimentos depois das 17h, nenhum depois das correções; 095ea583 (lead que disse que vai escanear e mandar os documentos) é lead quente;
+  - há 52 retomadas para 28/10, já com os textos novos.
+- Pré-proposta (Camila `429a57b`, deploy ok, aprovado pelo usuário): a retomada entrega a proposta direto, com cartão, PDF e resumo, uma única vez. Sai a pergunta "posso apresentar os valores?". As outras etapas são canceladas com o motivo `proposta_entregue`. O único lead pendente nessa etapa (31b7fe33) tem estimativa de 24/08, com mais de 30 dias, e o próprio sistema cancela; nenhuma entrega automática sai em 28/10.
