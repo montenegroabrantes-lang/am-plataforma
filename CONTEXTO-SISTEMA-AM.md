@@ -3738,3 +3738,12 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   - Camila `1c380ba`: o 3º dia para quem já respondeu 1 não pede mais documento.
 - Caso 0409691a, analisado a pedido do usuário. A frase de entrada da página ("falar com um dos advogados") e o "1" do menu geraram dois pedidos iguais de dados, com 12 s de diferença. A confirmação do perfil terminou sem próximo passo, embora o cálculo tivesse sido disparado. O "Certo" recebeu "Combinado. Fico à disposição por aqui." durante a análise. Publicado na Camila `607c50a`: o "1" que chega até 5 min depois de um pedido de dados não gera outro, e junto do CALCULAR a Camila diz que a estimativa chega por aqui. Aguardam aprovação do usuário: textos da cortesia e do pedido de advogado na entrada. O campo de valor do "Fechar" do AM já estava corrigido desde 30/09 (frontend e trava no backend); não há outros valores errados em `onboardings_contrato`.
 - Textos aprovados aplicados (Camila `011f570` + teste `7ee944c`): cortesia sem "Fico à disposição" (durante a análise: "Assim que a sua estimativa estiver pronta, envio por aqui."); entrada com pedido de advogado responde "Claro. Esta análise é acompanhada pelo Dr. Ramon Oliveira Abrantes." antes dos dados; "Ok" à proposta termina com o convite à foto da identidade.
+- Caso b13292c0 (27/10, noite), analisado a pedido do usuário. Ela respondeu "1" em 23/10 e mandou 2 arquivos às 21h17, a CNH e um PDF "Governo-da-Paraíba". Recebeu duas confirmações seguidas, cada uma com a lista completa dos 4 documentos. Antes disso:
+  - recebeu o cartão "responda 1" em 26/10, depois de já ter respondido 1 (corrigido na sequência nova);
+  - o resumo dizia "você trabalhou em Estado Paraiba".
+- Publicado na Camila `0d11f87`, deploy ok:
+  - a espera para confirmar arquivos sobe de 15 s para 45 s, com nova conferência logo antes do envio;
+  - o nome do arquivo identifica o documento (CNH vale identidade e CPF);
+  - Estado digitado de forma solta sai com o nome oficial ("no Estado da Paraíba").
+- O nº 5 (b13292c0) foi retirado do envio de recuperação de 28/10.
+- Em aberto: as retomadas de tipo "documentos" (02/11 em diante) ainda pedem o próximo documento, o que contraria a regra "sem cobrança no proativo". Aguarda decisão do usuário.
