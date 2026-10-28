@@ -3756,3 +3756,9 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   - a passagem automática à equipe só ocorre no 3º arquivo, e quem manda CNH e comprovante (2 arquivos) nunca passa;
   - 12 leads ficaram com 1 ou 2 arquivos e nenhum foi passado automaticamente; 9 fecharam porque a equipe agiu à mão.
   - Proposta ao usuário: passar quando identidade e residência estiverem identificadas, ou com 2 arquivos depois de 24h sem novo envio; contracheque opcional na lista; aviso à equipe com o vínculo já localizado na busca. Aguarda aprovação.
+- Contracheque opcional e passagem pelo documento (Camila `9587d5d`, deploy ok, prompt `6478ec5fd9c6`), aprovados pelo usuário:
+  1. passagem à equipe quando identidade e comprovante de residência estão identificados (legenda ou nome do arquivo), sem esperar o 3º arquivo;
+  2. `camila/passagem-por-tempo.js`: com 2 ou mais arquivos e nada novo há 24h, sem atendente no chamado, o lead vai para a contratação e a equipe recebe aviso. Na verificação antes do deploy, nenhum lead se enquadrava; b13292c0 mandou o 3º arquivo às 22h16 e passou pela regra antiga;
+  3. lista em todos os textos: "4. Último contracheque, se tiver (se não tiver, o escritório comprova o vínculo pelos portais da transparência)". No cartão, "se tiver", com a imagem conferida;
+  4. a confirmação de arquivo pede só o que falta;
+  5. `camila/vinculo-comprovacao.js`: o aviso à equipe diz se o vínculo já foi localizado no nome do cliente na busca da estimativa ou se é preciso comprovar no portal.
