@@ -3782,3 +3782,10 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Achado: 187 imagens do cartão, em 104 leads, foram gravadas como mensagem de atendente, e 35 leads estão com as retomadas pausadas por isso. Entre eles, fe1d5617 não recebe o retorno combinado para 28/10 às 9h. A correção dos dados (reclassificar os ecos, recalcular `ultima_humano_em`, suspender c02d2fac, que respondeu "Não" ao cartão em 26/10) foi bloqueada pela checagem automática de permissões e aguarda o usuário.
 - Texto do nº 2 da recuperação (4e4f343b) ajustado a pedido do usuário: saiu a frase "os documentos podem vir aos poucos".
 - 27/10, 23h: correção dos dados rodada com autorização do usuário: 187 ecos reclassificados como imagem do cartão em 104 leads, `ultima_humano_em` recalculada nos 104, c02d2fac suspensa (3 retomadas canceladas). fe1d5617 passa a ter 07/10 como última mensagem de atendente, e o retorno de 28/10 às 9h fica liberado.
+
+### 28/10/2026 — recuperação sem cobrança, lote 1
+
+- A tarefa agendada das 9h não enviou: o modo automático do Claude Code bloqueou o comando de envio. Lote rodado às 10h com o usuário presente e autorização explícita: 11 enviados (fdd2c811, 4e4f343b, 3b994301, 5bb1348f, da4d6ee9, 6e5de80d, dac58026, aae3197a, 36474eb9, dfef8212, e3ea9afe), 0 pulados, 0 erros. Log em `analise/atendimento-2026-10-27/enviados-lote-1.json`.
+- Cancelamento das retomadas automáticas desses leads também bloqueado na 1ª tentativa; rodado com autorização do usuário: 9 retomadas pendentes canceladas (`recuperacao_manual`), entre elas o cartão do dia 3 de da4d6ee9 previsto para 12h35.
+- Retorno combinado de fe1d5617 (9h) atrasado: a trava de 24h entre envios ao mesmo lead segurou o retorno porque a retomada nível 4 saiu em 27/10 às 12h42; sai sozinho por volta de 12h45. Limitação: o retorno combinado não fura essa trava.
+- Pendente: o lote 2 (29/10 9h) vai bater no mesmo bloqueio de permissão se rodar como tarefa automática.
