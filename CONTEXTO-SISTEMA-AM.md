@@ -3769,3 +3769,15 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   - houve 3 atendimentos depois das 17h, nenhum depois das correções; 095ea583 (lead que disse que vai escanear e mandar os documentos) é lead quente;
   - há 52 retomadas para 28/10, já com os textos novos.
 - Pré-proposta (Camila `429a57b`, deploy ok, aprovado pelo usuário): a retomada entrega a proposta direto, com cartão, PDF e resumo, uma única vez. Sai a pergunta "posso apresentar os valores?". As outras etapas são canceladas com o motivo `proposta_entregue`. O único lead pendente nessa etapa (31b7fe33) tem estimativa de 24/08, com mais de 30 dias, e o próprio sistema cancela; nenhuma entrega automática sai em 28/10.
+- Revisão independente e conferência das automações (noite de 27/10). Correções publicadas na Camila `3ba53f3` e `826c2b8`, com deploy ok e 346 testes:
+  - a passagem por documento decide só pelo nome dos arquivos;
+  - o fechamento pelo link só vale para lead com proposta, marca `aguardando_assinatura` e não bloqueia mais o lembrete de assinatura;
+  - a passagem por tempo considera só fila da Camila, só arquivos depois da proposta e só lead sem conversa nas últimas 24h;
+  - a entrega da pré-proposta tem conferência final e, se falhar, avisa a equipe;
+  - arquivo com legenda conta na espera de confirmação;
+  - o filtro de estilo mantém o nome do cliente;
+  - com a sequência desligada, o cartão volta;
+  - a imagem do cartão é registrada como da Camila;
+  - "não" seco ao cartão suspende o acompanhamento.
+- Achado: 187 imagens do cartão, em 104 leads, foram gravadas como mensagem de atendente, e 35 leads estão com as retomadas pausadas por isso. Entre eles, fe1d5617 não recebe o retorno combinado para 28/10 às 9h. A correção dos dados (reclassificar os ecos, recalcular `ultima_humano_em`, suspender c02d2fac, que respondeu "Não" ao cartão em 26/10) foi bloqueada pela checagem automática de permissões e aguarda o usuário.
+- Texto do nº 2 da recuperação (4e4f343b) ajustado a pedido do usuário: saiu a frase "os documentos podem vir aos poucos".
