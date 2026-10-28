@@ -3747,3 +3747,12 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   - Estado digitado de forma solta sai com o nome oficial ("no Estado da Paraíba").
 - O nº 5 (b13292c0) foi retirado do envio de recuperação de 28/10.
 - Em aberto: as retomadas de tipo "documentos" (02/11 em diante) ainda pedem o próximo documento, o que contraria a regra "sem cobrança no proativo". Aguarda decisão do usuário.
+- Retomada da etapa de documentos trocada (Camila `59cab24` + teste `1e41240`, deploy ok). Uma única mensagem fixa e aprovada: "Recebemos os seus arquivos. Se precisar de ajuda com algum documento, é só me dizer por aqui." As etapas seguintes são encerradas (`sequencia_encerrada`). O nome do arquivo passa a identificar o documento:
+  - "Governo-da-Paraíba", "Demonstrativo" e "recibo de pagamento" contam como contracheque;
+  - fatura e conta de concessionária contam como comprovante de residência;
+  - "CNH" conta como identidade e CPF.
+- Falha de processo minha: em 2 publicações de 27/10, o push saiu com 1 teste antigo vermelho, porque o grep encadeado com && não barrava. O comportamento publicado estava certo. A trava agora é explícita.
+- Análise do comprovante de vínculo (contracheque) nos 35 leads com arquivo em 45 dias:
+  - a passagem automática à equipe só ocorre no 3º arquivo, e quem manda CNH e comprovante (2 arquivos) nunca passa;
+  - 12 leads ficaram com 1 ou 2 arquivos e nenhum foi passado automaticamente; 9 fecharam porque a equipe agiu à mão.
+  - Proposta ao usuário: passar quando identidade e residência estiverem identificadas, ou com 2 arquivos depois de 24h sem novo envio; contracheque opcional na lista; aviso à equipe com o vínculo já localizado na busca. Aguarda aprovação.
