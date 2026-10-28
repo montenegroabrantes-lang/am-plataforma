@@ -3762,3 +3762,4 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   3. lista em todos os textos: "4. Último contracheque, se tiver (se não tiver, o escritório comprova o vínculo pelos portais da transparência)". No cartão, "se tiver", com a imagem conferida;
   4. a confirmação de arquivo pede só o que falta;
   5. `camila/vinculo-comprovacao.js`: o aviso à equipe diz se o vínculo já foi localizado no nome do cliente na busca da estimativa ou se é preciso comprovar no portal.
+- Cartão da estimativa (imagem) volta a exigir "4. Último contracheque", sem "se tiver", a pedido do usuário; os textos mantêm a versão opcional (Camila, 27/10/2026).
