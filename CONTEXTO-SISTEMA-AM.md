@@ -3830,3 +3830,4 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Com autorização do usuário: criadas as estimativas 267 e 268 (cópias da 264, mesmo valor e aprovador) com os dois números corretos; o cron entregou às 9h17 (conversas bffdc401 e 30b2bf79). As 4 retomadas pendentes do 31a6aada foram canceladas (`motivo='numero_de_terceiro'`) e o contato foi descartado. Scripts em `analise/atendimento-2026-10-30/`.
 - Envios manuais aprovados em 29/10: 1ffa15e9, 511598f6, 095ea583 e b13292c0 (pedido de comprovante/documentos e fechamento).
 - Limitação: não há tela para corrigir o telefone de uma estimativa já entregue; a correção foi por script.
+- Recuperação lote 2 (atrasado de 29/10, rodado com o usuário em 30/10): 3 enviados (62ed3c79, 3f68a094, 29ea0ce7), 1 pulado por atendente no chamado (cc952f19); 3 retomadas automáticas canceladas, sem tocar em assinatura nem retorno combinado.
