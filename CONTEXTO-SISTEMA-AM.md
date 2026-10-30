@@ -3831,3 +3831,11 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Envios manuais aprovados em 29/10: 1ffa15e9, 511598f6, 095ea583 e b13292c0 (pedido de comprovante/documentos e fechamento).
 - Limitação: não há tela para corrigir o telefone de uma estimativa já entregue; a correção foi por script.
 - Recuperação lote 2 (atrasado de 29/10, rodado com o usuário em 30/10): 3 enviados (62ed3c79, 3f68a094, 29ea0ce7), 1 pulado por atendente no chamado (cc952f19); 3 retomadas automáticas canceladas, sem tocar em assinatura nem retorno combinado.
+
+### 30/10/2026 — caso 511598f6: documentos narrados e contracheque
+- Problema: a cada anexo a Camila listava o que "faltava" (pedia o CPF já contido na CNH) e, no mesmo minuto, a IA dizia outra coisa sobre o contracheque; um atendente precisou corrigir.
+- Regra aprovada pelo usuário e publicada (commit `fa2cd5b`, deploy SUCCESS, `/health` ok, prompt `30632f76e1b1`):
+  1. no primeiro documento (o último de uma rajada), uma confirmação curta — "Recebi, <nome>. Obrigada! Já estou encaminhando para a equipe preparar a sua procuração." — e passagem à contratação; a equipe confere e pede o que faltar;
+  2. o pedido de documentos traz "4. Último contracheque" como item normal (sai o "se tiver/se não tiver…") em todos os textos, prompt e cartão;
+  3. o portal da transparência só é mencionado se o cliente perguntar ou disser que não tem o contracheque.
+- Testes: test:safe verde; test:continuidade 364/364. A mudança de prompt faz o aprendizado retestar as técnicas na madrugada seguinte.
