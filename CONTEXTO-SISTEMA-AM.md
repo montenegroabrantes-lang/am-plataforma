@@ -3846,3 +3846,8 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   1. Carência: sem a versão nova provada, a última versão aprovada da técnica continua valendo por até 24h (`CAMILA_APRENDIZADO_CARENCIA_HORAS`, 0 desliga); reprovação da versão nova encerra a carência na hora. A contagem é em memória e recomeça se o servidor reiniciar (limitada pela validade de 7 dias da última prova).
   2. Provas: técnicas usadas nos últimos 30 dias primeiro; as não usadas, quando só a versão mudou, esperam até uma semana desde a última prova.
 - Mudança pedida no prompt continua entrando na hora do deploy; ajustes sem urgência podem ser agrupados num deploy por dia.
+
+### 30/10/2026 — lead 61f01bf6: segundo vínculo fora da análise e descarte pontual
+- Após a proposta (estimativa 265, Estado de PE), a cliente informou um vínculo municipal e a Camila abriu a estimativa 266 e prometeu retorno no mesmo dia. Por decisão do usuário, saiu mensagem manual aprovada (3 partes, `enviar-lote.cjs`) mantendo a proposta da 265 e pedindo os documentos para fechar o contrato.
+- A 266 foi descartada com um UPDATE pontual (só `status='descartada'`, observação e responsável). O `recusar()` de `estimativas.js` (botão "descartar") não serve nesse caso: ele também encerra/suspende o contato, cancela as retomadas e descarta as outras estimativas aprovadas do mesmo contato, o que mataria a proposta já entregue. Verificado depois: 265 `aprovada_entregue`, contato ativo, 4 retomadas pendentes.
+- Limitação conhecida: não existe no AM uma ação "descartar só esta estimativa" para segundo vínculo de lead com proposta já entregue.
