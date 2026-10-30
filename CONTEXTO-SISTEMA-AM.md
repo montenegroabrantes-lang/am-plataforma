@@ -3839,3 +3839,10 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   2. o pedido de documentos traz "4. Último contracheque" como item normal (sai o "se tiver/se não tiver…") em todos os textos, prompt e cartão;
   3. o portal da transparência só é mencionado se o cliente perguntar ou disser que não tem o contracheque.
 - Testes: test:safe verde; test:continuidade 364/364. A mudança de prompt faz o aprendizado retestar as técnicas na madrugada seguinte.
+
+### 30/10/2026 — aprendizado: carência após mudança de prompt e provas por uso
+- Medição (7 dias): as provas das técnicas somaram 6,2 milhões de tokens, ~90% em leitura de cache (custo de um décimo); só 3 das 10 técnicas ativas foram usadas em conversa em 30 dias.
+- Publicado (commit `f47ede9`, deploy SUCCESS, `/health` ok), aprovado pelo usuário:
+  1. Carência: sem a versão nova provada, a última versão aprovada da técnica continua valendo por até 24h (`CAMILA_APRENDIZADO_CARENCIA_HORAS`, 0 desliga); reprovação da versão nova encerra a carência na hora. A contagem é em memória e recomeça se o servidor reiniciar (limitada pela validade de 7 dias da última prova).
+  2. Provas: técnicas usadas nos últimos 30 dias primeiro; as não usadas, quando só a versão mudou, esperam até uma semana desde a última prova.
+- Mudança pedida no prompt continua entrando na hora do deploy; ajustes sem urgência podem ser agrupados num deploy por dia.
