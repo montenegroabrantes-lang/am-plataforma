@@ -3880,4 +3880,6 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 
 - Fichas criadas pelo usuário na tela de Clientes: 5b1c649f, 14d96c0b, 04463fc7, a51e77e0.
 - Via API (sessão do usuário): processo vinculado ao cliente, tese FGTS contratada a 40% e marcada no processo — bb149e77, 759491b4, df2577c7, bfe65721. Verificado no banco.
-- Pendente: fichas dos processos 0572f095 (TRF3) e fbc33095 (TRF6) ainda não existem; quando criadas, repetir o mesmo vínculo.
+- Concluído no mesmo dia: 0572f095 → ficha 9cef96b6; fbc33095 → ficha a51e77e0; bfe65721 → ficha nova 8f1aa9e0. Os 6 processos com cliente, tese FGTS e 40% verificados no banco.
+- Correção de cadastro: a ficha a51e77e0 foi criada com o nome de um cliente e o CPF de outro. Como o CPF não é editável no AM, a ficha foi renomeada para o titular do CPF (cargo removido do vínculo) e o outro cliente ganhou ficha nova (8f1aa9e0), com processo e tese transferidos.
+- Limitação conhecida: o AM não permite corrigir CPF digitado errado; a saída é renomear/recriar a ficha.
