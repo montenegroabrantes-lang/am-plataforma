@@ -541,10 +541,10 @@ processosRouter.post('/', async (req, res) => {
   if (!['1','2'].includes(grau)) {
     return res.status(400).json({ ok: false, erro: 'grau deve ser 1 ou 2.' });
   }
-  // Inferir sistema pelo tribunal se não enviado. O TRF1 opera PJe nos dois
-  // graus; os demais TRFs mantêm o comportamento legado até mapeamento próprio.
-  const TRF = new Set(['TRF1','TRF3','TRF4','TRF5','TRF6']);
-  const sistemaFinal = sistema || (tribunal === 'TRF1' ? 'pje' : TRF.has(tribunal) ? 'eproc' : 'pje');
+  // Inferir sistema pelo tribunal se não enviado. TRF1, TRF3 e TRF5 operam PJe;
+  // TRF4 e TRF6, eproc. Tribunais estaduais caem em PJe.
+  const SISTEMA_TRF = { TRF1: 'pje', TRF3: 'pje', TRF4: 'eproc', TRF5: 'pje', TRF6: 'eproc' };
+  const sistemaFinal = sistema || SISTEMA_TRF[tribunal] || 'pje';
   if (!['pje','eproc'].includes(sistemaFinal)) {
     return res.status(400).json({ ok: false, erro: 'sistema deve ser pje ou eproc.' });
   }
