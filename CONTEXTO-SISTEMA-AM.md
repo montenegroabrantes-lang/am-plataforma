@@ -3875,3 +3875,9 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 ### 04/11/2026 — 4 apelações do TRF6 cadastradas (sem cliente vinculado)
 - Lidas do relatório de processos do advogado no eproc 2º grau do TRF6 (Chrome do usuário) e cadastradas pelo `POST /api/processos`: 6003369-91.2024.4.06.3802 (id 759491b4, GAB. 34), 6001775-33.2024.4.06.3805 (id df2577c7, GAB. 32), 6006975-15.2024.4.06.3807 (id fbc33095, GAB. 44) e 6004633-92.2024.4.06.3819 (id bfe65721, GAB. 41). Todas TRF6, eproc, 2º grau, Apelação Cível, polo passivo União Federal (assunto: contrato temporário, Lei 8.745/1993), nome no polo ativo.
 - Nenhum dos 4 clientes tem ficha no AM; mesma pendência dos processos do TRF3 (ficha com CPF pelo usuário, depois vínculo e tese).
+
+### 04/11/2026 — Fichas novas vinculadas aos processos TRF3/TRF6 com FGTS 40%
+
+- Fichas criadas pelo usuário na tela de Clientes: 5b1c649f, 14d96c0b, 04463fc7, a51e77e0.
+- Via API (sessão do usuário): processo vinculado ao cliente, tese FGTS contratada a 40% e marcada no processo — bb149e77, 759491b4, df2577c7, bfe65721. Verificado no banco.
+- Pendente: fichas dos processos 0572f095 (TRF3) e fbc33095 (TRF6) ainda não existem; quando criadas, repetir o mesmo vínculo.
