@@ -3883,3 +3883,9 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Concluído no mesmo dia: 0572f095 → ficha 9cef96b6; fbc33095 → ficha a51e77e0; bfe65721 → ficha nova 8f1aa9e0. Os 6 processos com cliente, tese FGTS e 40% verificados no banco.
 - Correção de cadastro: a ficha a51e77e0 foi criada com o nome de um cliente e o CPF de outro. Como o CPF não é editável no AM, a ficha foi renomeada para o titular do CPF (cargo removido do vínculo) e o outro cliente ganhou ficha nova (8f1aa9e0), com processo e tese transferidos.
 - Limitação conhecida: o AM não permite corrigir CPF digitado errado; a saída é renomear/recriar a ficha.
+
+### 04/11/2026 — Correção TRF3/TRF5 = PJe: no GitHub, NÃO publicada
+
+- Commit `2e8994c` na `main` (testes: 1064, 0 falhas; antes foi preciso `npm install` local, faltavam docx/jszip/imapflow em node_modules).
+- O push não gerou deploy e o `railway up` respondeu "Your trial has expired. Please select a plan to continue using Railway." Último deploy do backend: `745d46c5` (27/10, commit `dc5cae7`). Produção segue no ar (`/health` ok), mas nenhum deploy novo sai até o usuário escolher um plano no painel do Railway.
+- Pendente: depois do plano, publicar o backend (`railway up --service am-plataforma` ou redeploy) e conferir.
