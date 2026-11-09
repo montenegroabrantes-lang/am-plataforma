@@ -3900,3 +3900,14 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Frontend `17fc6c3` (deploy `b63c7519` SUCCESS): aba "Peças" na ficha do processo (tipo, resultado, data do protocolo, órgão, teses, resumo, "Abrir no Drive"); link direto `?aba=pecas`. Conferido em produção no processo ad1a95c9 (2 peças).
 - Pendentes autorizáveis (não feitos): 3) peça com prazo marcar o prazo cumprido com confirmação; 4) inicial protocolada criar o processo no AM; 5) ajustar a skill de petição para esse fluxo.
 - Observação: o checkout local do frontend estava no ramo `publicar-pacote`, 30 commits atrás; trocado para `main` atualizada antes da mudança.
+
+### 09/11/2026 — Fecho da peça no AM pelas skills (itens 3, 4 e 5)
+
+- Backend `e392a03` (deploy `97232012` SUCCESS). Rotas novas no acervo (escopo "acervo" do conector, só Master):
+  - `GET /api/acervo/contexto-processo?numero=&cliente_id=&cliente_nome=` — SÓ LEITURA: processo(s) pelo CNJ, prazos abertos (tarefas `tipo='prazo'`); sem processo, cliente por id ou nome (cada palavra, usa só se único) com tarefas `protocolar` abertas e vínculos ativos.
+  - `POST /api/acervo/prazos/:id/cumprir {peca_id?}` — conclui UMA tarefa de prazo aberta (recusa outro tipo, prazo já fechado e peça de outro processo), anota a peça na observação, remove o evento do Calendar, auditoria `cumprir_prazo`.
+  - `POST /api/acervo/protocolos/:id/concluir` — reaproveita o handler `concluirTarefaComNumero` (extraído de `PATCH /api/tarefas/:id/concluir-com-numero`, mesma regra: CNJ, período, vínculo, tribunal pelo número, cria o processo).
+- Conector: ferramentas `consultar_processo_peca`, `cumprir_prazo`, `registrar_protocolo_inicial` (as de escrita dizem para chamar só após confirmação do usuário).
+- Verificado em produção (só leitura): a consulta achou o processo e o prazo aberto de um caso real e achou cliente pelo nome. As escritas não foram exercitadas em produção (cobertas por testes; o protocolo usa a mesma regra da tela de Tarefas). Testes: 1081, 0 falhas (novo `acervo.fecho.test.js`).
+- Skills `arquivamento-pecas` (seção "Fecho da peça no AM" + checklist) e `peticao-elite-am` (Entrega + passo 10) versionadas em `.claude/skills/`; as skills ativas ficam no Claude (claude.ai) e só valem depois que o usuário enviar os .zip (gerados em `analise/skills-2026-11-09/`, fora do Git).
+- Limitação: inicial sem tarefa de protocolo aberta não cria processo pelo conector (a skill orienta cadastrar pela tela Processos).
