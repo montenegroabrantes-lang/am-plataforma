@@ -130,6 +130,54 @@ function construirServidor(token) {
     },
   }, async ({ id, ...b }) => saida(await chamar('PATCH', `/acervo/pecas/${id}/resultado`, token, b)));
 
+  // ── Fecho da peça: atualizar o AM depois do protocolo (com confirmação do usuário). ──
+
+  s.registerTool('consultar_processo_peca', {
+    title: 'Consultar processo da peça (prazos e protocolo)',
+    description: 'SÓ LEITURA. Use ao concluir uma peça, antes de qualquer atualização no AM. Com o número CNJ, devolve o '
+      + 'processo no AM (cliente, tese) e os PRAZOS ABERTOS dele (tarefas de prazo). Sem processo no AM (inicial recém-'
+      + 'protocolada), informe cliente_id: devolve as TAREFAS DE PROTOCOLO abertas do cliente e os vínculos ativos. '
+      + 'Mostre ao usuário o que encontrou e pergunte qual prazo a peça cumpre (ou qual protocolo concluir) antes de '
+      + 'chamar cumprir_prazo ou registrar_protocolo_inicial.',
+    inputSchema: {
+      numero: z.string().max(40).optional().describe('Número CNJ, com ou sem pontuação'),
+      cliente_id: z.string().uuid().optional().describe('Cliente, quando o processo ainda não existe no AM'),
+      cliente_nome: z.string().max(120).optional().describe('Sem cliente_id: nome do cliente; com mais de um resultado, '
+        + 'a resposta lista clientes_encontrados — confirme com o usuário e consulte de novo com o cliente_id'),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async a => saidaCompacta(await chamar('GET', `/acervo/contexto-processo${qs(a)}`, token)));
+
+  s.registerTool('cumprir_prazo', {
+    title: 'Marcar prazo como cumprido',
+    description: 'Conclui UMA tarefa de prazo (id devolvido por consultar_processo_peca) porque a peça foi protocolada. '
+      + 'SÓ chame depois que o usuário confirmar, na conversa, qual prazo a peça cumpre; nunca escolha sozinho entre '
+      + 'vários prazos. Informe peca_id (devolvido por criar_peca) para registrar a ligação. Fica na auditoria.',
+    inputSchema: {
+      tarefa_id: z.string().uuid(),
+      peca_id: z.string().uuid().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async ({ tarefa_id, ...b }) => saida(await chamar('POST', `/acervo/prazos/${tarefa_id}/cumprir`, token, b)));
+
+  s.registerTool('registrar_protocolo_inicial', {
+    title: 'Registrar protocolo da inicial (cria o processo no AM)',
+    description: 'Inicial protocolada no PJe: conclui a tarefa de protocolo do cliente (id devolvido por '
+      + 'consultar_processo_peca) com o número CNJ e cria o processo no AM, já com cliente, tese, polo passivo e tribunal '
+      + '(deduzido do número). Mesma regra da tela de Tarefas: exige periodo_fim (AAAA-MM, fim do período pedido na '
+      + 'inicial) e, se o cliente tiver mais de um vínculo ativo, vinculo_id. SÓ chame depois que o usuário confirmar '
+      + 'a tarefa, o número e o período. Se o cliente não tiver tarefa de protocolo aberta, não crie nada: avise o '
+      + 'usuário para cadastrar o processo pela tela Processos.',
+    inputSchema: {
+      tarefa_id: z.string().uuid(),
+      numero_processo: z.string().regex(/^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/).describe('CNJ com pontuação: 0000000-00.0000.0.00.0000'),
+      periodo_fim: z.string().regex(/^\d{4}-\d{2}$/).describe('AAAA-MM'),
+      periodo_inicio: z.string().regex(/^\d{4}-\d{2}$/).optional().describe('AAAA-MM'),
+      vinculo_id: z.string().uuid().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async ({ tarefa_id, ...b }) => saida(await chamar('POST', `/acervo/protocolos/${tarefa_id}/concluir`, token, b)));
+
   s.registerTool('criar_precedente', {
     title: 'Registrar precedente',
     description: 'Registra acórdão, sentença ou decisão no acervo de precedentes. Use ao obter decisão favorável ou ao localizar julgado reaproveitável. O campo ratio deve trazer a razão de decidir em uma a três linhas.',

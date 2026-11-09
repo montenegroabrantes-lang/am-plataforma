@@ -749,7 +749,9 @@ tarefasRouter.get('/:id/valores-sugeridos', apenasMaster, async (req, res) => {
   res.json({ ...base, valor_estimativa: ob.valor_estimado ?? null, valor_proposta: ob.valor_fechado ?? null });
 });
 
-tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
+// Também usada pelo conector (POST /api/acervo/protocolos/:id/concluir), para a skill de petição
+// registrar a inicial protocolada sem a área de tarefas inteira no escopo do conector.
+export async function concluirTarefaComNumero(req, res) {
   const { numero_processo, periodo_inicio, periodo_fim, vinculo_id } = req.body;
 
   const CNJ_RE = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
@@ -975,7 +977,8 @@ tarefasRouter.patch('/:id/concluir-com-numero', async (req, res) => {
   }
 
   res.json({ ok: true, processo_id: processoId, numero: numeroLimpo });
-});
+}
+tarefasRouter.patch('/:id/concluir-com-numero', concluirTarefaComNumero);
 
 // Cadastro contraditório: vínculo marcado como ativo E com data de fim. ciclosRecorrentes.js o trata
 // como ativo e pode propor um período que já não existe; aceitar o ciclo também zera

@@ -7,6 +7,8 @@ import { registrarErroInterno, mensagemErroInterno } from '../middleware/erros.j
 import { salvarDocumentoHtml } from '../services/drive/documentos.js';
 import { salvarPecaPadrao } from '../services/drive/pecas.js';
 import { prepararProtocolo } from '../services/drive/protocolo.js';
+import { deletarEventoCalendar } from '../services/calendar/index.js';
+import { concluirTarefaComNumero } from './tarefas.js';
 
 export const acervoRouter = Router();
 
@@ -174,3 +176,95 @@ acervoRouter.post('/drive/pecas', apenasMaster, async (req, res) => {
     res.status(502).json({ ok: false, erro: 'drive', mensagem: 'Não foi possível gravar no Google Drive agora. Confira a autorização do Google.' });
   }
 });
+
+// ── Fecho da peça pelas skills (09/11/2026) ──────────────────────────────────────────────────
+// A skill de petição, ao terminar a peça, consulta o processo, mostra ao usuário o prazo que a peça
+// cumpre (ou a tarefa de protocolo da inicial) e só depois da confirmação dele chama as rotas de
+// escrita abaixo. Nada aqui é decidido sozinho: as escritas exigem o id exato da tarefa.
+
+const STATUS_ABERTOS = ['pendente', 'em_execucao', 'aguardando_validacao', 'devolvida'];
+
+// GET /api/acervo/contexto-processo?numero=&cliente_id= — SÓ LEITURA.
+// Com o número: o processo no AM e os prazos abertos dele. Sem processo (inicial recém-protocolada)
+// e com cliente_id: as tarefas de protocolo abertas do cliente e os vínculos ativos.
+acervoRouter.get('/contexto-processo', apenasMaster, async (req, res) => { try {
+  const digitos = String(req.query.numero || '').replace(/\D/g, '');
+  const clienteId = req.query.cliente_id || null;
+  const clienteNome = String(req.query.cliente_nome || '').trim().slice(0, 120);
+  if (clienteId && !uuidValido(clienteId)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'Cliente inválido.' });
+  if (digitos && digitos.length !== 20) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'Número CNJ incompleto: são 20 dígitos.' });
+  if (!digitos && !clienteId && !clienteNome) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'Informe o número do processo ou o cliente.' });
+
+  const processos = digitos ? await db.query(
+    `SELECT p.id, p.numero, p.tribunal, p.grau, p.cliente_id, c.nome AS cliente_nome, pr.nome AS tese
+       FROM processos p LEFT JOIN clientes c ON c.id=p.cliente_id LEFT JOIN produtos pr ON pr.id=p.produto_id
+      WHERE regexp_replace(p.numero, '[^0-9]', '', 'g')=$1 ORDER BY p.grau`, [digitos]) : [];
+
+  const prazos = processos.length ? await db.query(
+    `SELECT t.id, t.processo_id, t.descricao, t.prazo_data, t.status, t.urgencia
+       FROM tarefas t WHERE t.tipo='prazo' AND t.processo_id = ANY($1::uuid[]) AND t.status = ANY($2::text[])
+      ORDER BY t.prazo_data NULLS LAST`, [processos.map(p => p.id), STATUS_ABERTOS]) : [];
+
+  // Sem cliente_id, acha pelo nome (cada palavra precisa aparecer); só usa se achar um único cliente.
+  // O conector de petição costuma ter só o escopo "acervo", sem o localizar_cliente da comunicação.
+  let clientesEncontrados = [];
+  if (!processos.length && !clienteId && clienteNome.length >= 3) {
+    const palavras = clienteNome.split(/\s+/).filter(w => w.length >= 2).slice(0, 6);
+    if (palavras.length) {
+      clientesEncontrados = await db.query(
+        `SELECT id, nome FROM clientes WHERE ativo=true AND ${palavras.map((_, i) => `nome ILIKE $${i + 1}`).join(' AND ')} ORDER BY nome LIMIT 6`,
+        palavras.map(w => `%${w}%`));
+    }
+  }
+  const idCliente = clienteId || (processos.length === 1 ? processos[0].cliente_id : null)
+    || (clientesEncontrados.length === 1 ? clientesEncontrados[0].id : null);
+  let protocolos = [], vinculos = [];
+  if (!processos.length && idCliente) {
+    protocolos = await db.query(
+      `SELECT t.id, t.status, t.subtipo, t.prazo_data, t.ciclo_inicio, t.precisa_triagem, pr.nome AS tese
+         FROM tarefas t JOIN cliente_produtos cp ON cp.id=t.cliente_produto_id JOIN produtos pr ON pr.id=cp.produto_id
+        WHERE t.tipo='protocolar' AND cp.cliente_id=$1 AND t.status = ANY($2::text[])
+        ORDER BY t.prazo_data NULLS LAST, t.criado_em`, [idCliente, STATUS_ABERTOS]);
+    vinculos = await db.query(
+      `SELECT id, cargo, orgao, polo_passivo FROM cliente_vinculos WHERE cliente_id=$1 AND vinculo_ativo=true ORDER BY ordem`, [idCliente]);
+  }
+  res.json({ ok:true, processos, prazos_abertos: prazos, clientes_encontrados: clientesEncontrados, protocolos_pendentes: protocolos, vinculos_ativos: vinculos });
+} catch (e) { erro(res, e); } });
+
+// POST /api/acervo/prazos/:id/cumprir — marca como concluída UMA tarefa de prazo, depois que o
+// usuário confirmou qual prazo a peça cumpre. body: { peca_id? } (liga a peça na observação/auditoria).
+acervoRouter.post('/prazos/:id/cumprir', apenasMaster, async (req, res) => { try {
+  if (!uuidValido(req.params.id)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'Tarefa inválida.' });
+  const pecaId = req.body?.peca_id || null;
+  if (pecaId && !uuidValido(pecaId)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'Peça inválida.' });
+  const t = await db.queryOne(`SELECT id, tipo, status, processo_id, descricao, calendar_event_id FROM tarefas WHERE id=$1`, [req.params.id]);
+  if (!t) return res.status(404).json({ ok:false, erro:'nao-encontrado', mensagem:'Tarefa não encontrada.' });
+  if (t.tipo !== 'prazo') return res.status(409).json({ ok:false, erro:'validacao', mensagem:'Esta tarefa não é um prazo processual.' });
+  if (!STATUS_ABERTOS.includes(t.status)) return res.status(409).json({ ok:false, erro:'validacao', mensagem:`O prazo já está ${t.status}.` });
+  let peca = null;
+  if (pecaId) {
+    peca = await db.queryOne(`SELECT id, titulo, processo_id FROM acervo_pecas WHERE id=$1`, [pecaId]);
+    if (!peca) return res.status(404).json({ ok:false, erro:'nao-encontrado', mensagem:'Peça não encontrada no acervo.' });
+    if (peca.processo_id && t.processo_id && peca.processo_id !== t.processo_id) {
+      return res.status(409).json({ ok:false, erro:'validacao', mensagem:'A peça e o prazo são de processos diferentes.' });
+    }
+  }
+  const nota = `Cumprido com a peça${peca ? ` "${peca.titulo}"` : ''} (registro pelo acervo).`;
+  const r = await db.execute(
+    `UPDATE tarefas SET status='concluida', concluida_em=NOW(),
+       observacao = CASE WHEN COALESCE(observacao,'')='' THEN $2 ELSE observacao || E'\n' || $2 END
+     WHERE id=$1 AND status = ANY($3::text[])`, [t.id, nota, STATUS_ABERTOS]);
+  if (r.rowCount === 0) return res.status(409).json({ ok:false, erro:'validacao', mensagem:'O prazo mudou de situação; consulte de novo.' });
+  if (t.calendar_event_id) deletarEventoCalendar(t.calendar_event_id).catch(() => {});
+  await registrarAuditoria({ usuarioId:req.user.id, acao:'cumprir_prazo', entidade:'tarefa', entidadeId:t.id,
+    valorAntes:{ status:t.status }, valorDepois:{ status:'concluida', peca_id: peca?.id || null }, ip:req._ip });
+  res.json({ ok:true, tarefa_id:t.id, processo_id:t.processo_id, descricao:t.descricao });
+} catch (e) { erro(res, e); } });
+
+// POST /api/acervo/protocolos/:id/concluir — inicial protocolada: conclui a tarefa de protocolo com o
+// número CNJ e cria o processo no AM (cliente, tese, polo, tribunal pelo CNJ). Mesma regra da tela de
+// Tarefas (concluir-com-numero). body: { numero_processo, periodo_fim, periodo_inicio?, vinculo_id? }
+acervoRouter.post('/protocolos/:id/concluir', apenasMaster, async (req, res) => { try {
+  if (!uuidValido(req.params.id)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'Tarefa inválida.' });
+  await concluirTarefaComNumero(req, res);
+} catch (e) { if (!res.headersSent) erro(res, e); } });
