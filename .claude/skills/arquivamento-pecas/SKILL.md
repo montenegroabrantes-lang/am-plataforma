@@ -163,6 +163,13 @@ Pasta RAIZ correspondente ao tipo de peça, conforme a tabela da Parte I. Se a p
 
 Na dúvida entre duas pastas, pergunte. Não crie pasta nova sem autorização.
 
+### Como gravar
+
+- **Peça que vai ao PJe** (inicial, impugnação, recurso, contrarrazões, embargos, petição): `salvar_peca_drive` do conector ACERVO JURIDICO. Ele monta a peça no layout oficial do escritório (cabeçalho, rodapé, títulos numerados, fecho e assinaturas) e grava na pasta do cliente. Enviar `pasta_id` da pasta do cliente, `nome` no padrão `TIPO - CLIENTE - PROCESSO` sem extensão e o conteúdo em `blocos` (enderecamento, paragrafo, acao, titulo, subtitulo, citacao, pedido, tabela, fecho, assinaturas). Formato padrão PDF (o PJe só aceita PDF); acrescentar `docx` em `formatos` quando o usuário quiser editar. Arquivo de mesmo nome é substituído. Se a ferramenta devolver erro, nada foi gravado: relate e não siga como se a peça estivesse salva.
+- **Peça com recortes de imagem dos autos** (prints de documentos no corpo): `salvar_peca_drive` não aceita imagens. Montar localmente no layout do escritório (seção "Formatação" da `peticao-elite-am`) e subir o arquivo pelo conector do Google Drive.
+- **Planilha, memória de cálculo ou documento que não é peça**: `salvar_documento_drive`, com o conteúdo em HTML simples e `orientacao` "paisagem" para tabelas largas.
+- **Limite de destino das duas ferramentas**: só gravam em _PENDENTE A PROTOCOLAR, OUTORGANTES, AM Advogados — Clientes e subpastas diretas. A cópia de modelo na RAIZ (ou em PRODUTOS E TESES) é feita pelo conector do Google Drive, copiando o arquivo já gravado na pasta do cliente.
+
 ## 3. Passo 2 — Curar o precedente, se houver
 
 Acórdão, sentença ou decisão favorável é o ativo mais valioso do arquivamento, e o que mais se perde. Sempre que a peça nascer de um julgado favorável, ou o caso produzir um, registre-o.
@@ -221,7 +228,7 @@ Se as ferramentas `mcp__ACERVO_JURIDICO__*` não aparecerem disponíveis nesta s
 
 ```
 ☐ Nome do arquivo no padrão TIPO - CLIENTE - PROCESSO?
-☐ Gravado na pasta RAIZ do tipo correto?
+☐ Gravado na pasta do cliente com salvar_peca_drive (PDF) e, se for modelo, copiado para a pasta RAIZ do tipo correto?
 ☐ Há julgado favorável no caso? Foi curado na skill de matéria e gravado na tese?
 ☐ Ementa do precedente conferida em fonte primária?
 ☐ criar_peca (e, se houver, criar_precedente) chamado no AM Plataforma via conector ACERVO JURIDICO, com processo_numero?

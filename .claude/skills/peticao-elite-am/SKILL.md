@@ -194,13 +194,13 @@ Quando a Fazenda, citada, não contesta, a peça é curta e não depende da reve
 - Quando o usuário pedir a estratégia, entregar só a estratégia. Não começar a redigir até a ordem expressa ("traga a peça", "redija").
 - Primeiro entregar a **estratégia** (arquitetura da peça com os argumentos classificados por força, confissões do adversário com página, triangulação, flancos próprios, o que afirmar, o que nunca afirmar, o que guardar). Redigir ou editar somente após autorização expressa do usuário.
 - **Depois do protocolo, atualizar o AM.** Quando o usuário informar que a peça foi protocolada, seguir o "Fecho da peça no AM" da skill `arquivamento-pecas`: registrar a peça com o número do processo, cumprir o prazo correspondente e, se for inicial, concluir a tarefa de protocolo criando o processo, sempre confirmando com o usuário antes de cada escrita.
-- Padrão: peça em texto no chat, pronta para copiar e colar. Gerar .docx quando o usuário pedir, com nome no padrão `TIPO - CLIENTE - PROCESSO.docx` (skill `arquivamento-pecas`), salvo na pasta do usuário e com os recortes de imagem previstos no método de construção. Versões sucessivas substituem o arquivo anterior com o mesmo nome.
+- Padrão: peça em texto no chat, pronta para copiar e colar. Quando o usuário pedir o arquivo, gravar na pasta do cliente com `salvar_peca_drive` (conector ACERVO JURIDICO), que aplica o layout do escritório e gera PDF por padrão (.docx só se pedido), com nome no padrão `TIPO - CLIENTE - PROCESSO` (skill `arquivamento-pecas`). Peça com recortes de imagem dos autos, previstos no método de construção, é montada localmente no layout da seção "Formatação" e enviada ao Drive pelo conector do Google Drive, porque `salvar_peca_drive` não aceita imagens. Versões sucessivas substituem o arquivo anterior com o mesmo nome.
 
 ---
 
 ## Formatação — layout do escritório
 
-O layout oficial está no Drive: BANCO DE DADOS › LAYOUT - PETICOES (pasta `11nVK-xAAQ3qyxrBmSLWkzypmGCv83QyT`), modelo "PADRAO __2_AMOSTRA - NOVO LAYOUT - INICIAL EMLUR.docx". Antes de montar a peça, listar a pasta para ver se há versão mais nova. Toda peça entregue em .docx ou PDF segue este layout, salvo instrução em contrário:
+O layout oficial está no Drive: BANCO DE DADOS › LAYOUT - PETICOES (pasta `11nVK-xAAQ3qyxrBmSLWkzypmGCv83QyT`), modelo "PADRAO __2_AMOSTRA - NOVO LAYOUT - INICIAL EMLUR.docx". Antes de montar a peça, listar a pasta para ver se há versão mais nova. Toda peça entregue em .docx ou PDF segue este layout, salvo instrução em contrário. A ferramenta `salvar_peca_drive` aplica este layout sozinha a partir dos blocos (títulos e subtítulos numerados automaticamente, nome da ação em faixa, citações, pedidos, fecho e assinaturas); as especificações abaixo valem para conferir o resultado e para montar localmente a peça que leva recortes de imagem:
 
 - **Página**: A4; margens superior 3 cm, esquerda 3 cm, inferior 2 cm, direita 2 cm; cabeçalho a 1,4 cm e rodapé a 0,6 cm da borda.
 - **Fonte**: Arial 12 no corpo; Arial 11 nas citações.
@@ -266,5 +266,5 @@ OAB/PB 23.176
 7. Varrer a peça pela economia argumentativa e pela lista de traços de IA — suprimir repetições e fórmulas antes de revisar a forma.
 8. Red team: reler como procurador adverso e como relator; eliminar concessões, premissas adversárias adotadas por hipótese, frases que possam ser devolvidas contra o cliente e afirmações que possam ser usadas em processo conexo. Conferir se cada conclusão é verificável pelo juiz no ID e na página indicados.
 9. Revisar ortografia linha a linha conforme as regras acima.
-10. Protocolada a peça, atualizar o AM pelo "Fecho da peça no AM" (`arquivamento-pecas`).
-10. Entregar em texto no chat; quando pedido .docx ou PDF, montar no layout do escritório (seção "Formatação — layout do escritório") e conferir visualmente cada página.
+10. Entregar em texto no chat; quando pedido o arquivo, gravar com `salvar_peca_drive` na pasta do cliente ou, se houver recortes de imagem, montar no layout do escritório (seção "Formatação — layout do escritório") e conferir visualmente cada página.
+11. Protocolada a peça, atualizar o AM pelo "Fecho da peça no AM" (`arquivamento-pecas`).
