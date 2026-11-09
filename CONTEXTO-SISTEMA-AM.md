@@ -3891,3 +3891,12 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Pendente: depois do plano, publicar o backend (`railway up --service am-plataforma` ou redeploy) e conferir.
 
 - 06/11/2026: usuário assinou plano no Railway; `railway up --service am-plataforma` publicou `2e8994c` (deploy `55bba811` SUCCESS, `/health` ok). Não foi criado processo de teste em produção para conferir a inferência; a próxima inclusão de processo TRF3/TRF5 já deve sair como PJe.
+
+### 09/11/2026 — Peças das skills ligadas ao processo + aba Peças na ficha
+
+- Problema: as skills de petição registram a peça no acervo pelo conector (`criar_peca`) mandando só o número CNJ; o backend gravava o número como texto e nunca ligava processo/cliente. Havia 56 peças, 51 com número de processo existente no AM e 0 ligadas.
+- Backend `681ac81` (deploy `c10ca85e` SUCCESS): `POST /api/acervo/pecas` e `/precedentes` resolvem `processo_numero` (com ou sem pontuação) para o processo quando há um único registro; com 1º e 2º grau do mesmo número, desempata pela instância (`1grau`→1, `2grau`/`turma-recursal`→2); número desconhecido ou ambíguo segue gravado só como texto. `GET /api/acervo?processo_id=` filtra as peças do processo. Descrição do campo no conector atualizada. Testes: 1072, 0 falhas (novo `acervo.processo.test.js`).
+- Backfill no banco com autorização do usuário: 51 peças ligadas (processo, cliente e número formatado), em transação com conferência de contagem. Verificado: 56 total, 51 com processo e cliente; nenhuma divergência de visibilidade.
+- Frontend `17fc6c3` (deploy `b63c7519` SUCCESS): aba "Peças" na ficha do processo (tipo, resultado, data do protocolo, órgão, teses, resumo, "Abrir no Drive"); link direto `?aba=pecas`. Conferido em produção no processo ad1a95c9 (2 peças).
+- Pendentes autorizáveis (não feitos): 3) peça com prazo marcar o prazo cumprido com confirmação; 4) inicial protocolada criar o processo no AM; 5) ajustar a skill de petição para esse fluxo.
+- Observação: o checkout local do frontend estava no ramo `publicar-pacote`, 30 commits atrás; trocado para `main` atualizada antes da mudança.
