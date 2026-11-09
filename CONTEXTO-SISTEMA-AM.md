@@ -2362,7 +2362,7 @@ prompt novo). `test:safe` e `test:continuidade` (224) verdes.
 ### 29–30/09/2026 — Análise geral do sistema e da jornada (somente leitura, nada executado)
 
 - **O que foi feito:** análise multiagente somente leitura aprovada pelo usuário (plano em
-  `PLANO-ANALISE-MELHORIA-SISTEMA-AM.md`): inventário, 9 frentes (segurança, resiliência,
+  `analise/PLANO-ANALISE-MELHORIA-SISTEMA-AM.md`, local, fora do Git): inventário, 9 frentes (segurança, resiliência,
   usabilidade, funcionalidades, gestão/financeiro, bom dia no WhatsApp, e-mail, telefonia OPT, IA),
   jornada estimativa → proposta → cadastro → documentos → protocolo, e funil de vendas medido no
   banco da Camila. Cada frente teve verificador independente. Código analisado = produção
