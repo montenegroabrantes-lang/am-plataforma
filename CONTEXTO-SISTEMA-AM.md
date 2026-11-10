@@ -3911,3 +3911,9 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Verificado em produção (só leitura): a consulta achou o processo e o prazo aberto de um caso real e achou cliente pelo nome. As escritas não foram exercitadas em produção (cobertas por testes; o protocolo usa a mesma regra da tela de Tarefas). Testes: 1081, 0 falhas (novo `acervo.fecho.test.js`).
 - Skills `arquivamento-pecas` (seção "Fecho da peça no AM" + checklist) e `peticao-elite-am` (Entrega + passo 10) versionadas em `.claude/skills/`; as skills ativas ficam no Claude (claude.ai) e só valem depois que o usuário enviar os .zip (gerados em `analise/skills-2026-11-09/`, fora do Git).
 - Limitação: inicial sem tarefa de protocolo aberta não cria processo pelo conector (a skill orienta cadastrar pela tela Processos).
+
+### 10/11/2026 — Navegação: seta ← volta para a tela de origem
+- Problema relatado: ao abrir a ficha do cliente (pela busca ou pelo lead/processo), a seta ← levava sempre à lista e o lead que estava aberto se perdia, obrigando a refazer a busca.
+- Frontend `b607cc7` (deploy `4b9edde9`): `src/lib/voltar.mjs` guarda por aba (sessionStorage) a pilha das telas do AM; a seta ← das fichas de cliente e de processo usa o histórico quando há tela do AM antes, senão vai para a lista. Leads: o lead aberto fica na URL (`?lead=ID`) e reabre ao voltar. Ficha do processo: o nome do "Cliente vinculado" abre a ficha do cliente.
+- Verificado em produção (só navegação): lista → processo → cliente → ← processo → ← lista; lead aberto → outra tela → voltar do navegador reabre o mesmo lead.
+- Limitação: filtros e busca digitados na aba Leads ainda não ficam na URL (voltam limpos).
