@@ -5,11 +5,12 @@
  * Delay de até 72h em relação ao tribunal de origem.
  */
 import axios from 'axios';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
-const BASE    = 'https://api-publica.datajud.cnj.jus.br';
+export const BASE = 'https://api-publica.datajud.cnj.jus.br';
 // Chave pública do CNJ — disponível em datajud-wiki.cnj.jus.br.
 // Mesmo sendo pública, prefira definir DATAJUD_API_KEY no env para facilitar rotação.
-const API_KEY = process.env.DATAJUD_API_KEY ||
+export const API_KEY = process.env.DATAJUD_API_KEY ||
                 'cDZHYzlZa0JadVREZDJCendQbXY6SkJlTzNjLV9TRENyQk1RdnFKZGRQdw==';
 
 if (!process.env.DATAJUD_API_KEY) {
@@ -17,7 +18,7 @@ if (!process.env.DATAJUD_API_KEY) {
 }
 
 // Mapeamento tribunal → índice DataJud
-const INDICE = {
+export const INDICE = {
   TJPB: 'api_publica_tjpb',
   TJRN: 'api_publica_tjrn',
   TJPE: 'api_publica_tjpe',
@@ -48,9 +49,20 @@ function http() {
 
 // Ponto único de saída HTTP e de espera: os testes trocam os dois por dublês (nenhuma rede, nenhum
 // atraso real). Em produção, `post` é a chamada à API pública e `esperar` é um setTimeout.
+// Sync pelo navegador (11/11/2026): as respostas já vieram de uma máquina do escritório pela extensão;
+// `comTransporte` faz a execução do sync ler delas em vez de chamar a API (e sem esperas).
+const transporteDaExecucao = new AsyncLocalStorage();
+export function comTransporte(substituto, fn) { return transporteDaExecucao.run(substituto, fn); }
+
 export const transporte = {
-  post(indice, body) { return http().post(`/${indice}/_search`, body); },
-  esperar(ms)        { return new Promise(r => setTimeout(r, ms)); },
+  post(indice, body) {
+    const sub = transporteDaExecucao.getStore();
+    return sub ? sub.post(indice, body) : http().post(`/${indice}/_search`, body);
+  },
+  esperar(ms) {
+    if (transporteDaExecucao.getStore()) return Promise.resolve();
+    return new Promise(r => setTimeout(r, ms));
+  },
 };
 
 // ─────────────────────────────────────────────
@@ -136,7 +148,7 @@ export const TAMANHO_LOTE = lerTamanhoLote(process.env.DATAJUD_TAMANHO_LOTE);
 const TENTATIVAS  = 4;                       // 1 + 3 novas tentativas
 const ESPERAS_MS  = [5_000, 15_000, 45_000]; // espera crescente entre as tentativas
 const ESPERA_MAX_MS = 120_000;               // teto ao respeitar o Retry-After do servidor
-const TAMANHO_PAGINA = 1000;                 // size da consulta; com ≤100 números nunca deveria encher
+export const TAMANHO_PAGINA = 1000;                 // size da consulta; com ≤100 números nunca deveria encher
 
 export class ErroDataJud extends Error {
   constructor(mensagem, { status = null, tentativas = 1 } = {}) {

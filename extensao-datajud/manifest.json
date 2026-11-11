@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "AM — DataJud",
+  "version": "1.0.0",
+  "description": "Com o AM aberto, consulta o DataJud por esta máquina (o DataJud recusa o servidor) e entrega o resultado ao AM.",
+  "host_permissions": ["https://api-publica.datajud.cnj.jus.br/*"],
+  "background": { "service_worker": "fundo.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://am-plataforma-web-production.up.railway.app/*"],
+      "js": ["conteudo.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

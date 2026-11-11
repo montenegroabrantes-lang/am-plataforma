@@ -1,0 +1,15 @@
+AM — DataJud (extensão do Chrome)
+
+Para que serve: o DataJud recusa as consultas que saem do servidor do AM. Com esta extensão, qualquer
+máquina do escritório com o AM aberto no Chrome faz a consulta pela própria internet e entrega o
+resultado ao AM. No máximo uma vez a cada 12 horas, uma máquina por vez. Ninguém precisa clicar em nada.
+
+Instalar (uma vez por máquina):
+1. Copie esta pasta (extensao-datajud) para a máquina, num lugar fixo (ex.: Documentos).
+2. No Chrome, abra chrome://extensions
+3. Ligue "Modo do desenvolvedor" (canto superior direito).
+4. Clique em "Carregar sem compactação" e escolha a pasta extensao-datajud.
+5. Abra o AM e faça login normalmente.
+
+A extensão só acessa a página do AM e o endereço do DataJud. Não lê outras abas, senhas nem outros sites.
+Atualizar: troque os arquivos da pasta e clique no botão de recarregar da extensão em chrome://extensions.

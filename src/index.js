@@ -53,6 +53,7 @@ import { oauthRouter } from './oauth/index.js';
 
 // Middleware
 import { autenticar } from './middleware/auth.js';
+import { datajudNavegadorRouter } from './routes/datajudNavegador.js';
 import { auditar }    from './middleware/auditoria.js';
 import { cabecalhosSeguranca } from './middleware/cabecalhos.js';
 import { limiteLoginPorEmail } from './middleware/limiteLogin.js';
@@ -83,6 +84,8 @@ if (!process.env.FRONTEND_URL) {
 }
 app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(cookieParser());
+// Respostas do DataJud trazidas pela extensão (andamentos completos) passam de 2 MB.
+app.use('/api/datajud-navegador', express.json({ limit: '25mb' }));
 app.use(express.json({ limit: '2mb' }));
 // (S-01) sem express.urlencoded global: formulário HTML de outro site não chega a rota nenhuma.
 // O parser de formulário fica só no /oauth/authorize e /oauth/token (montarUrlencodedOauth).
@@ -156,6 +159,7 @@ app.use('/api/produtos',      autenticar, produtosRouter);
 app.use('/api/dashboard',    autenticar, dashboardRouter);
 app.use('/api/triagem',        autenticar, triagemRouter);
 app.use('/api/monitoramento', autenticar, monitoramentoRouter);
+app.use('/api/datajud-navegador', autenticar, datajudNavegadorRouter);
 app.use('/api/rankings',      autenticar, rankingsRouter);
 app.use('/api/polos-passivos',    autenticar, polosPassivosRouter);
 app.use('/api/classif',           autenticar, classificacoesRouter);
