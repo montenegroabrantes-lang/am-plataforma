@@ -21,7 +21,7 @@ test('procedente e procedente em parte podem ser informados', () => {
   const r1 = resumirProcesso(proc(), [mov('2026-05-01', 'Conclusos para julgamento'), mov('2026-06-01', 'Julgado procedente o pedido')]);
   assert.equal(r1.encaminhar, false);
   assert.match(r1.etapa, /julgado procedente$/);
-  assert.match(montarTextoCliente({ nome: 'ANA', resumo: { ...r1, ultimoAndamentoEm: '01/06/2026' } }), /O seu processo 0821303-20\.2024\.8\.15\.2001 já tem sentença, com o pedido julgado procedente\./);
+  assert.match(montarTextoCliente({ nome: 'ANA', resumo: { ...r1, ultimoAndamentoEm: '01/06/2026' } }), /^Ana, sou Camila, assistente da Abrantes & Montenegro\. O seu processo já tem sentença, com o pedido julgado procedente\./);
   const r2 = resumirProcesso(proc(), [mov('2026-06-01', 'Procedência em Parte')]);
   assert.match(r2.etapa, /procedente em parte/);
 });
@@ -69,7 +69,8 @@ test('texto ao cliente: Fazenda Pública, sem valor, sem exclamação, convite a
     resumo: { numero: '0861312-58.2023.8.15.2001', etapa: 'está com o juiz para a sentença, antes da resposta da Fazenda Pública', ultimoAndamentoEm: '29/05/2026' } });
   assert.match(texto, /^Maria, sou Camila/);
   assert.match(texto, /Fazenda Pública/);
-  assert.match(texto, /outro processo seu/);
+  assert.match(texto, /O seu processo mais antigo em andamento está com o juiz/);
+  assert.doesNotMatch(texto, /\d{7}-\d{2}/);
   assert.doesNotMatch(texto, /!|R\$|senhor|Munic|Estado/i);
 });
 
@@ -142,7 +143,8 @@ test('pula o mais antigo quando já está arquivado ou com a execução extinta'
   const r = await consultaParaCliente({ id: 'c', nome: 'ELIZETE' }, null, banco);
   assert.equal(r.numero, '0818548-52.2026.8.15.2001');
   assert.equal(r.encaminhar, false);
-  assert.doesNotMatch(r.texto, /outro processo/);
+  assert.match(r.texto, /O seu processo está com o juiz/);
+  assert.doesNotMatch(r.texto, /0818548/);
   // indicado pelo cliente, vale o indicado mesmo encerrado (vai para a equipe)
   const r2 = await consultaParaCliente({ id: 'c', nome: 'ELIZETE' }, '0802266-07', banco);
   assert.equal(r2.motivo, 'execucao_extinta');

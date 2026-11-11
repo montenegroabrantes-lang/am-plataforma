@@ -66,7 +66,7 @@ export function analisarAndamentos(movimentacoes = [], situacaoAtual = null) {
   return { fase, resultado, recursoJulgado, pagamento, arquivado, concluido };
 }
 
-// Cada frase completa "O seu processo <número> ...".
+// Cada frase completa "O seu processo ...".
 const FRASES = {
   inicial: 'está na fase inicial, antes da resposta da Fazenda Pública',
   citacao: 'aguarda a resposta da Fazenda Pública, que já foi chamada ao processo',
@@ -119,18 +119,17 @@ const primeiroNome = nome => {
   return p ? p[0].toUpperCase() + p.slice(1).toLowerCase() : '';
 };
 
+// O número do processo nunca vai no texto (11/11/2026): se o cliente pedir, a Camila passa
+// à equipe jurídica. Com mais de um processo em andamento, diz que é o mais antigo.
 export function montarTextoCliente({ nome, resumo, outrosProcessos = 0 }) {
   const n = primeiroNome(nome);
   const abertura = n ? `${n}, sou Camila, assistente da Abrantes & Montenegro.` : 'Sou Camila, assistente da Abrantes & Montenegro.';
-  const partes = [
+  const sujeito = outrosProcessos > 0 ? 'O seu processo mais antigo em andamento' : 'O seu processo';
+  return [
     abertura,
-    `O seu processo ${resumo.numero} ${resumo.etapa}.`,
+    `${sujeito} ${resumo.etapa}.`,
     `O último andamento registrado é de ${resumo.ultimoAndamentoEm}. Qualquer novidade, avisamos por aqui.`,
-  ];
-  if (outrosProcessos > 0) {
-    partes.push('Se quiser a situação de outro processo seu, é só me informar o número.');
-  }
-  return partes.join(' ');
+  ].join(' ');
 }
 
 const digitos = v => String(v || '').replace(/\D/g, '');
