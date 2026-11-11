@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Agendamento do sync do DataJud pelo Mac (scripts/sync-datajud-local.sh), 07h30 e 19h30.
+     Instalar: cp scripts/br.am.sync-datajud.plist ~/Library/LaunchAgents/ && launchctl load ~/Library/LaunchAgents/br.am.sync-datajud.plist
+     Remover:  launchctl unload ~/Library/LaunchAgents/br.am.sync-datajud.plist && rm ~/Library/LaunchAgents/br.am.sync-datajud.plist -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>br.am.sync-datajud</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/zsh</string>
+    <string>/Users/ramonabrantes/am-plataforma/scripts/sync-datajud-local.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <array>
+    <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>30</integer></dict>
+    <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>30</integer></dict>
+  </array>
+  <key>StandardOutPath</key>
+  <string>/tmp/am-sync-datajud.launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/am-sync-datajud.launchd.log</string>
+</dict>
+</plist>
