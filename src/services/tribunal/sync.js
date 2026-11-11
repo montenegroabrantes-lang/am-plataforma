@@ -15,6 +15,41 @@ const DIAS_MAX_DIAGNOSTICO_IA = 7;
 // Se este tanto de lotes seguidos falhar (após as novas tentativas), o tribunal está fora: não insiste.
 const MAX_LOTES_FALHOS_SEGUIDOS = 3;
 
+// 11/11/2026: desde 03-04/11 o DataJud responde 429/timeout para o IP do Railway, e cada falha da API
+// somava em sync_falhas de cada processo — 807 processos "erro_sync" que eram um problema só, da API.
+// Agora falha da API (lote sem resposta, 429, timeout, resposta parcial) não conta no processo: fica em
+// sync_execucoes (status_http, falhas, erro). Só falha do próprio processo (gravar o resultado) conta.
+// O TJPB sai do DataJud por padrão: o índice dele parou em 10/10 e os andamentos chegam pelo e-mail do
+// PJe (push_tj). DATAJUD_TRIBUNAIS_IGNORADOS="" volta a consultar todos.
+export function tribunaisForaDoDatajud() {
+  return String(process.env.DATAJUD_TRIBUNAIS_IGNORADOS ?? 'TJPB')
+    .split(',').map(t => t.trim().toUpperCase()).filter(Boolean);
+}
+
+// Tribunal fora do DataJud: o status do processo passa a refletir o push do PJe (ok quando já chegou
+// andamento por ele; senão, aguardando a primeira captura) e o contador de falhas é zerado.
+async function marcarTribunaisForaDoDatajud(tribunais) {
+  if (!tribunais.length) return 0;
+  try {
+    const r = await db.execute(
+      `UPDATE processos p
+          SET sync_falhas = 0,
+              sync_status = CASE WHEN EXISTS (SELECT 1 FROM movimentacoes m WHERE m.processo_id = p.id AND m.origem = 'push_tj')
+                                 THEN 'ok' ELSE 'aguardando_primeira_captura' END,
+              sync_fonte  = CASE WHEN EXISTS (SELECT 1 FROM movimentacoes m WHERE m.processo_id = p.id AND m.origem = 'push_tj')
+                                 THEN 'push_tj' ELSE p.sync_fonte END
+        WHERE p.tribunal = ANY($1) AND p.status IN ('ativo', 'suspenso')
+          AND (p.sync_status = 'erro_sync' OR COALESCE(p.sync_falhas, 0) <> 0)`,
+      [tribunais]
+    );
+    if (r?.rowCount) console.log(`[Sync] ${r.rowCount} processo(s) de ${tribunais.join(', ')} fora do DataJud: status ajustado ao push do PJe.`);
+    return r?.rowCount || 0;
+  } catch (err) {
+    console.warn('[Sync] Não deu para ajustar o status dos tribunais fora do DataJud:', err.message);
+    return 0;
+  }
+}
+
 // ─────────────────────────────────────────────
 //  INFERÊNCIA DE SITUACAO_ATUAL PELO TIPO DE AÇÃO
 //  Só aplica se o processo ainda não foi classificado manualmente
@@ -301,12 +336,17 @@ export async function sincronizarTodos({ batimentoLockMs } = {}) {
     console.log('[Sync] Iniciando sync DataJud — consulta pelos números dos nossos processos');
 
     // Nunca capturados e mais atrasados primeiro: se a API cair no meio, o que fica de fora é o mais recente.
-    const processos = await db.query(
+    const foraDoDatajud = tribunaisForaDoDatajud();
+    await marcarTribunaisForaDoDatajud(foraDoDatajud);
+    const todos = await db.query(
       `SELECT id, numero, tribunal, datajud_atualizado_em
          FROM processos
         WHERE status IN ('ativo', 'suspenso')
         ORDER BY datajud_atualizado_em ASC NULLS FIRST`
     );
+    const processos = foraDoDatajud.length
+      ? todos.filter(p => !foraDoDatajud.includes(String(p.tribunal || '').toUpperCase()))
+      : todos;
     for (const p of processos) p.numeroPuro = p.numero.replace(/\D/g, ''); // 20 dígitos, como o DataJud guarda
 
     // Agrupa por tribunal: cada um é um índice diferente do DataJud
@@ -335,6 +375,9 @@ export async function sincronizarTodos({ batimentoLockMs } = {}) {
     console.log(`[Sync]    ${ok} processos sincronizados (${metricas.casados} reconhecidos pelo DataJud), ${fail} falhas`);
     console.log(`[Sync]    Movimentações novas: ${novasMovs}`);
 
+    const indisponiveis = [...metricas.tribunaisIndisponiveis];
+    if (indisponiveis.length) console.warn(`[Sync] ⚠ DataJud sem resposta para: ${indisponiveis.join(', ')}`);
+    // `erro` fica para erro fatal; a indisponibilidade aparece em status_http e falhas da execução.
     await fecharExecucaoSync(db, execucaoId, { viaDatajud: ok, falhas: fail, novasMovimentacoes: novasMovs, metricas: metricas.resumo() });
 
     return resultados;
@@ -381,8 +424,9 @@ async function sincronizarTribunal(tribunal, processos, ctx) {
       // O tribunal não respondeu em vários lotes seguidos (cada um já esgotou as novas tentativas): insistir só
       // prolongaria a execução. Os que sobram contam como falha e voltam na próxima execução.
       for (const p of lotes.slice(i).flat()) {
-        await registrarFalha(p, resultados, `${tribunal}: DataJud indisponível — não consultado nesta execução`);
+        await registrarFalha(p, resultados, `${tribunal}: DataJud indisponível — não consultado nesta execução`, { daApi: true });
       }
+      metricas.tribunaisIndisponiveis.add(tribunal);
       console.warn(`[Sync DataJud] ${tribunal}: ${lotesFalhosSeguidos} lotes seguidos sem resposta — restante fica para a próxima execução`);
       break;
     }
@@ -397,7 +441,8 @@ async function sincronizarTribunal(tribunal, processos, ctx) {
       lotesFalhosSeguidos++;
       metricas.registrarStatus(err.status);
       console.warn(`[Sync DataJud] ${tribunal}: lote ${i + 1}/${lotes.length} falhou —`, err.message);
-      for (const p of lote) await registrarFalha(p, resultados, `${tribunal}: ${err.message}`);
+      for (const p of lote) await registrarFalha(p, resultados, `${tribunal}: ${err.message}`, { daApi: true });
+      if (i === lotes.length - 1 && lotesFalhosSeguidos === lotes.length) metricas.tribunaisIndisponiveis.add(tribunal);
       continue;
     }
 
@@ -418,7 +463,7 @@ async function processarLote(tribunal, lote, resposta, { lock, resultados, metri
     if (!achado) {
       if (resposta.falharam.has(proc.numeroPuro)) {
         // Resposta parcial do DataJud: este número não chegou, e não chegar não é "não existe".
-        await registrarFalha(proc, resultados, `${tribunal}: resposta parcial do DataJud`);
+        await registrarFalha(proc, resultados, `${tribunal}: resposta parcial do DataJud`, { daApi: true });
       } else {
         await marcarNaoEncontrado(proc.id);
       }
@@ -457,9 +502,10 @@ async function processarLote(tribunal, lote, resposta, { lock, resultados, metri
   console.log(`[Sync DataJud] ${tribunal}: lote com ${lote.length} processo(s), ${novosNoLote} movimentação(ões) nova(s)`);
 }
 
-async function registrarFalha(proc, resultados, erro) {
-  resultados.push({ processoId: proc.id, numero: proc.numero, ok: false, erro });
-  await registrarFalhaSyncProcesso(proc.id);
+// daApi=true: a API não respondeu (ou respondeu em parte). Conta como falha da execução, não do processo.
+async function registrarFalha(proc, resultados, erro, { daApi = false } = {}) {
+  resultados.push({ processoId: proc.id, numero: proc.numero, ok: false, erro, daApi });
+  if (!daApi) await registrarFalhaSyncProcesso(proc.id);
 }
 
 // O DataJud respondeu e não tem o processo (novo demais — o DataJud atrasa até 72 h —, sigiloso ou de outro

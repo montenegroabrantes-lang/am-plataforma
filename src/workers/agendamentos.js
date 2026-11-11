@@ -10,7 +10,7 @@
 //   escalonamento-vespera   30 8,16 * * *  → 05:30 e 13:30 todo dia   08:30 e 16:30, segunda a sexta (+ sem feriado nacional)
 //   verificar-token-google  0 8 * * * com tz → 08:00 todo dia (já estava certo; só passou pra cá)
 //
-// NÃO mudam, de propósito: o sync do tribunal (0 * * * *), o push do TJPB (*/5), o
+// NÃO mudam, de propósito: o push do TJPB (*/5), o
 // reprocessamento da Camila (*/15) e do Drive (*/30) — são "a cada N", sem hora do dia — e o
 // SAC (0 */2 e 0 */4), que só troca a fase da hora e cujo watchdog mede intervalo, não relógio
 // (A4-09 propõe desligá-lo). Dar `tz` a esses só criaria agendamento novo sem ganho.
@@ -29,6 +29,9 @@ export const AGENDA = {
   'ciclos-recorrentes':     { pattern: '0 7 * * *',       tz: TZ_ESCRITORIO },
   'escalonamento-vespera':  { pattern: '30 8,16 * * 1-5', tz: TZ_ESCRITORIO },
   'verificar-token-google': { pattern: '0 8 * * *',       tz: TZ_ESCRITORIO },
+  // 11/11/2026: antes de hora em hora (UTC); o DataJud passou a recusar o IP do Railway por excesso
+  // de requisições. Duas vezes por dia basta: o TJPB chega pelo push do PJe.
+  'sincronizar-todos':      { pattern: '0 7,19 * * *',    tz: TZ_ESCRITORIO },
 };
 
 // Remove da fila os repeatables de `nomes` cujo padrão/fuso não seja o de AGENDA. Chamar DEPOIS

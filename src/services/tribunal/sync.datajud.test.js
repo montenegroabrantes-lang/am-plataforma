@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 process.env.REDIS_URL = 'redis://127.0.0.1:1';
 process.env.ANTHROPIC_API_KEY = '';   // a IA de diagnóstico nunca pode chamar serviço externo aqui
 process.env.OPENAI_API_KEY    = '';
+process.env.DATAJUD_TRIBUNAIS_IGNORADOS = ''; // os processos simulados são do TJPB
 const { db }    = await import('../../db/index.js');
 const { redis } = await import('../../cache/redis.js');
 const { transporte } = await import('./datajud.js');
@@ -256,7 +257,7 @@ test('429 na 1ª página: NÃO vira "nada mudou" — todos os processos do lote 
   assert.equal(f.statusHttp, 429);
   assert.equal(f.erro, null, 'não é erro fatal: a execução terminou, com falhas');
   assert.ok([...c.linhas.values()].every(p => p.datajud_atualizado_em === null), 'a marca de nenhum processo avançou');
-  assert.ok([...c.linhas.values()].every(p => p.sync_falhas === 1), 'cada um conta 1 falha');
+  assert.ok([...c.linhas.values()].every(p => p.sync_falhas === 0), 'falha da API não conta no processo (11/11/2026)');
   assert.equal(c.insertsMov, 0);
   assert.equal(c.chamadasApi.length, 8, '2 lotes x 4 tentativas — e para: não repete a mesma página para sempre');
   assert.equal(c.chaves.has(CHAVE_LOCK_SYNC), false);
@@ -305,7 +306,7 @@ test('429 no MEIO: só o lote afetado falha, os outros são capturados e a execu
 
   for (let i = 1; i <= 300; i++) {
     const p = c.linhas.get(`p${i}`);
-    if (i > 100 && i <= 200) { assert.equal(p.datajud_atualizado_em, null); assert.equal(p.sync_falhas, 1); }
+    if (i > 100 && i <= 200) { assert.equal(p.datajud_atualizado_em, null); assert.equal(p.sync_falhas, 0); }
     else { assert.ok(p.datajud_atualizado_em); assert.equal(p.sync_status, 'ok'); }
   }
 });
@@ -321,7 +322,7 @@ test('janela que não avança: o que falhou volta na execução seguinte e é ca
   });
   await sincronizarTodos();                                   // execução 1: lote do meio falha
   assert.equal(c.linhas.get('p150').datajud_atualizado_em, null);
-  assert.equal(c.linhas.get('p150').sync_falhas, 1);
+  assert.equal(c.linhas.get('p150').sync_falhas, 0); // falha da API não conta no processo
 
   apiSaudavel = true;
   c.chamadasApi.length = 0;
@@ -389,8 +390,23 @@ test('resposta parcial (429 com processos no corpo): os que vieram são gravados
   assert.equal(resultados.find(r => r.processoId === 'p1').ok, true);
   assert.equal(resultados.find(r => r.processoId === 'p2').ok, false);
   assert.equal(c.linhas.get('p1').sync_status, 'ok');
-  assert.equal(c.linhas.get('p2').sync_falhas, 1);
+  assert.equal(c.linhas.get('p2').sync_falhas, 0); // falha da execução, não do processo
+  assert.equal(ultimoFechamento(c).falhas, 1);
   assert.equal(ultimoFechamento(c).statusHttp, 429);
+});
+
+test('TJPB fora do DataJud por padrão: não é consultado e o status acompanha o push do PJe', async () => {
+  const antes = process.env.DATAJUD_TRIBUNAIS_IGNORADOS;
+  delete process.env.DATAJUD_TRIBUNAIS_IGNORADOS;
+  try {
+    const c = montarCenario({ processos: nProcessos(3), dataJud: dataJudCom([1, 2, 3]) });
+    const resultados = await sincronizarTodos();
+    assert.equal(resultados.length, 0, 'nenhum processo do TJPB consultado');
+    assert.equal(contarPorTerms(c).length, 0, 'nenhuma chamada ao DataJud');
+    assert.ok(c.sqls.some(q => /m\.origem = 'push_tj'/.test(q.sql) && q.params[0].includes('TJPB')), 'status ajustado pelo push do PJe');
+  } finally {
+    if (antes === undefined) delete process.env.DATAJUD_TRIBUNAIS_IGNORADOS; else process.env.DATAJUD_TRIBUNAIS_IGNORADOS = antes;
+  }
 });
 
 test('número fora do padrão CNJ não entra nos lotes nem conta como falha', async () => {

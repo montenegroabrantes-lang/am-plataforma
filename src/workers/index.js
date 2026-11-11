@@ -61,12 +61,12 @@ export async function iniciarWorkers() {
   // criarPublicacoesWorker();
   await agendarSACWorker();
 
-  // Agenda sync de todos os processos a cada hora
+  // Sync DataJud às 07h e 19h de Brasília (11/11/2026; antes a cada hora). Horário em agendamentos.js.
   await syncQueue.add(
     'sincronizar-todos',
     {},
     {
-      repeat:     { pattern: '0 * * * *' },
+      repeat:     { ...AGENDA['sincronizar-todos'] },
       jobId:      'sync-todos-recorrente',
       removeOnComplete: 10,
       removeOnFail:      5,
@@ -197,12 +197,13 @@ export async function iniciarWorkers() {
   // A5-03: mudar padrão ou `tz` de um repeatable cria um agendamento NOVO e mantém o antigo no
   // Redis — sem esta limpeza, o bom dia sairia às 05h (UTC antigo) e às 08h, e o backup 2x por dia.
   // Roda depois dos `add` acima, para nunca haver um instante sem agendamento.
+  await removerAgendamentosAntigos(syncQueue, ['sincronizar-todos']);
   await removerAgendamentosAntigos(backupQueue, ['backup-diario']);
   await removerAgendamentosAntigos(alertasQueue, [
     'lembretes-diarios', 'ciclos-recorrentes', 'escalonamento-vespera', 'verificar-token-google',
   ]);
 
-  console.log('[Workers] Sync DataJud (a cada hora), Backup (02h BRT), Alertas WhatsApp (08h BRT, seg-sex), Ciclos Recorrentes (07h BRT), Escalonamento de Véspera (08h30/16h30 BRT, seg-sex), Reprocessamento de Sync Camila (15/15min), Reprocessamento de Sync Drive (30/30min), Detector de protocolo no Drive (30/30min) e Teste do token Google (08h BRT) iniciados.');
+  console.log('[Workers] Sync DataJud (07h e 19h BRT, sem o TJPB), Backup (02h BRT), Alertas WhatsApp (08h BRT, seg-sex), Ciclos Recorrentes (07h BRT), Escalonamento de Véspera (08h30/16h30 BRT, seg-sex), Reprocessamento de Sync Camila (15/15min), Reprocessamento de Sync Drive (30/30min), Detector de protocolo no Drive (30/30min) e Teste do token Google (08h BRT) iniciados.');
   // Lista dos agendamentos vivos no Redis, com a próxima execução já em Brasília: se algum horário
   // estiver errado (ou sobrar um agendamento antigo), aparece aqui no primeiro deploy.
   for (const fila of [syncQueue, backupQueue, alertasQueue, sacQueue]) {

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 // fechada (nenhuma rede real) e desconecta no fim; tudo que o sync usa (db, redis) é trocado por
 // dublês em cada teste, então não existe banco nem Redis de verdade aqui.
 process.env.REDIS_URL = 'redis://127.0.0.1:1';
+process.env.DATAJUD_TRIBUNAIS_IGNORADOS = ''; // estes testes simulam processos do TJPB no DataJud
 const { db }     = await import('../../db/index.js');
 const { redis }  = await import('../../cache/redis.js');
 const { sincronizarTodos } = await import('./sync.js');

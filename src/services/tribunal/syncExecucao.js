@@ -38,6 +38,7 @@ export function criarMetricasSync() {
   const m = {
     hits: 0,
     casados: 0,
+    tribunaisIndisponiveis: new Set(),
     registrarStatus(status) {
       if (!Number.isFinite(status)) return;
       if (status >= 200 && status < 300) statusOk = status; else statusRuim = status;
