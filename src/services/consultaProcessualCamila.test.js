@@ -45,6 +45,20 @@ test('pagamento e arquivamento vão para a equipe; desarquivamento reabre', () =
   assert.notEqual(resumirProcesso(proc(), [mov('2026-06-01', 'Cumprimento de Levantamento da Suspensão')]).motivo, 'pagamento');
 });
 
+test('andamento depois do arquivamento reabre (caso 7aa3a374)', () => {
+  const r = resumirProcesso(proc({ situacao_atual: 'cumprimento_sentenca' }), [
+    mov('2025-10-18', 'Extinção da execução ou do cumprimento da sentença'),
+    mov('2025-10-18', 'Arquivamento'),
+    mov('2025-10-21', 'Publicação'),
+    mov('2026-03-02', 'Trânsito em julgado'),
+    mov('2026-04-12', 'Expedição de precatório/rpv'),
+    mov('2026-10-22', 'Juntada de Petição de petição'),
+  ]);
+  assert.equal(r.motivo, 'pagamento', 'RPV expedida e sem pagamento: equipe jurídica, não arquivamento');
+  // só publicação depois do arquivamento: continua arquivado
+  assert.equal(resumirProcesso(proc(), [mov('2026-01-01', 'Arquivado Definitivamente'), mov('2026-01-05', 'Publicação')]).motivo, 'arquivamento');
+});
+
 test('cumprimento de sentença e trânsito em julgado', () => {
   const r = resumirProcesso(proc(), [mov('2025-01-01', 'Procedência'), mov('2025-03-01', 'Trânsito em julgado')]);
   assert.match(r.etapa, /definitiva/);

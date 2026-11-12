@@ -40,6 +40,12 @@ export function analisarAndamentos(movimentacoes = [], situacaoAtual = null) {
 
   for (const m of lista) {
     const t = sem(m.texto);
+    // Andamento de verdade depois de um arquivamento ou de uma extinção da execução reabre o
+    // processo (caso 7aa3a374, 11/11/2026: extinção e arquivamento em 2025, depois trânsito, nova
+    // RPV e petições em 2026). Publicação, certidão, decurso e intimação não reabrem.
+    if ((arquivado || concluido) && !/arquiv|extin|publica|disponibiliza|certid|decurso|intima|ato ordinat|documento|expedicao de documento/.test(t)) {
+      arquivado = false; concluido = false;
+    }
     if (/desarquiv/.test(t)) { arquivado = false; continue; }
     if (/arquivad|arquivamento/.test(t)) { arquivado = true; continue; }
     if (/extin\w* (da|a) execucao|extin\w* do cumprimento|extinta a execucao/.test(t)) { pagamento = true; concluido = true; continue; }
