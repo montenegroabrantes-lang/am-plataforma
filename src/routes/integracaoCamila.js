@@ -40,6 +40,6 @@ integracaoCamilaRouter.get('/processo', async (req, res) => {
 // grava o contato do Digisac/WhatsApp na ficha (só campos vazios) e já devolve a consulta.
 integracaoCamilaRouter.post('/identificar', async (req, res) => {
   const { cpf, nome, contactId, telefone, numero } = req.body || {};
-  if (!cpf || !nome) return res.status(400).json({ ok: false, erro: 'Informe nome e CPF.' });
+  if (!cpf) return res.status(400).json({ ok: false, erro: 'Informe o CPF.' });
   res.json({ ok: true, ...(await identificarClienteParaCamila({ cpf, nome, contactId, telefone, numero })) });
 });

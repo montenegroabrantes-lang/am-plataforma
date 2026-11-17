@@ -217,9 +217,10 @@ export async function consultarProcessoParaCamila({ contactId, telefone, numero 
   return consultaParaCliente(cliente, numero, banco);
 }
 
-// Identificação pelo nome completo + CPF. Exige os dois: CPF exato e nome compatível com o
-// cadastro (todas as palavras do nome informado no cadastro, ou o inverso). Quando confere,
-// grava o contato do Digisac e o WhatsApp na ficha se esses campos estiverem vazios.
+// Identificação pelo CPF (17/11/2026: basta o CPF exato). Se o cliente também informar o nome,
+// ele precisa ser compatível com o cadastro (todas as palavras do nome informado no cadastro,
+// ou o inverso). Quando confere, grava o contato do Digisac e o WhatsApp na ficha se esses
+// campos estiverem vazios.
 export function nomeConfere(informado, cadastrado) {
   const a = normalizarNomeCliente(informado).split(' ').filter(Boolean);
   const b = normalizarNomeCliente(cadastrado).split(' ').filter(Boolean);
@@ -235,7 +236,8 @@ export async function identificarClienteParaCamila({ cpf, nome, contactId, telef
   const cliente = await banco.queryOne(
     `SELECT id, nome, whatsapp, digisac_contact_id FROM clientes WHERE ativo IS NOT FALSE AND regexp_replace(cpf, '\\D', '', 'g') = $1`,
     [cpfLimpo]);
-  if (!cliente || !nomeConfere(nome, cliente.nome)) return { encontrado: false, motivo: 'nao_confere' };
+  if (!cliente) return { encontrado: false, motivo: 'nao_confere' };
+  if (String(nome || '').trim() && !nomeConfere(nome, cliente.nome)) return { encontrado: false, motivo: 'nao_confere' };
 
   const telefoneLimpo = digitos(telefone);
   const gravarContato = contactId && !cliente.digisac_contact_id;
@@ -248,7 +250,7 @@ export async function identificarClienteParaCamila({ cpf, nome, contactId, telef
           atualizado_em = NOW()
         WHERE id = $1`,
       [cliente.id, gravarContato ? String(contactId) : null, gravarTelefone ? telefoneLimpo : null]);
-    console.log('[CAMILA] cliente identificado por nome+CPF; vínculo gravado na ficha id=%s contato=%s telefone=%s',
+    console.log('[CAMILA] cliente identificado por CPF; vínculo gravado na ficha id=%s contato=%s telefone=%s',
       cliente.id.slice(0, 8), Boolean(gravarContato), Boolean(gravarTelefone));
   }
   return { ...(await consultaParaCliente(cliente, numero, banco)), vinculoGravado: Boolean(gravarContato || gravarTelefone) };

@@ -144,6 +144,17 @@ test('identificação por CPF + nome grava o vínculo só em campo vazio', async
   assert.equal((await identificarClienteParaCamila({ cpf: '123', nome: 'Maria Erocleide' }, banco)).motivo, 'cpf_invalido');
 });
 
+test('identificação só pelo CPF (sem nome) encontra o cliente', async () => {
+  const banco = bancoFalso({
+    cliente: { id: 'c1234567-x', nome: 'MARIA EROCLEIDE ARRUDA', whatsapp: null, digisac_contact_id: null, cpf: '12345678901' },
+    processos: [proc({ data_distribuicao: '2024-01-01' })], movs: [mov('2026-06-01', 'Conclusos para julgamento')],
+  });
+  const r = await identificarClienteParaCamila({ cpf: '123.456.789-01', contactId: 'ctt1', telefone: '5583999990000' }, banco);
+  assert.equal(r.encontrado, true);
+  assert.equal(r.vinculoGravado, true);
+  assert.deepEqual(banco.updates[0], ['c1234567-x', 'ctt1', '5583999990000']);
+});
+
 test('pula o mais antigo quando já está arquivado ou com a execução extinta', async () => {
   const p1 = proc({ id: 'antigo', numero: '0802266-07.2024.8.15.2001' });
   const p2 = proc({ id: 'novo', numero: '0818548-52.2026.8.15.2001' });
