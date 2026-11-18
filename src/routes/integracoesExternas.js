@@ -2,6 +2,8 @@ import { Router } from 'express';
 import axios from 'axios';
 import { autenticarChaveExterna } from './chavesApi.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
+import { db } from '../db/index.js';
+import { criarListagemProcessos, exigePermissao } from '../services/processosExternos.js';
 
 export const integracoesExternasRouter = Router();
 
@@ -11,13 +13,15 @@ function camila() {
   return baseURL && apiKey ? axios.create({ baseURL, headers: { 'x-api-key': apiKey }, timeout: 10_000 }) : null;
 }
 
-function exigePermissao(permissao) {
-  return (req, res, next) => req.integracao?.permissoes?.includes(permissao)
-    ? next()
-    : res.status(403).json({ ok: false, erro: `Esta chave não possui a permissão “${permissao}”.` });
-}
-
 integracoesExternasRouter.use(autenticarChaveExterna);
+
+// Somente leitura: alimenta a folha de despachos e o painel financeiro.
+integracoesExternasRouter.get(
+  '/v1/processos',
+  exigePermissao('leitura'),
+  exigePermissao('processos'),
+  criarListagemProcessos(db),
+);
 
 // Solicita uma mensagem a um contato que já exista na Camila/Digisac.
 // O AM não inventa número de telefone nem chama o Digisac diretamente: usa o mesmo endpoint
