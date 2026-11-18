@@ -16,6 +16,8 @@ export const MOVIMENTOS_AUTOMATICOS = [
 ].join('|');
 
 const MS_POR_DIA = 86_400_000;
+const MOVIMENTOS_NO_HISTORICO = 60;
+const LIMITE_MAXIMO_COM_HISTORICO = 100;
 
 export function exigePermissao(permissao) {
   return (req, res, next) => (req.integracao?.permissoes?.includes(permissao)
@@ -23,11 +25,28 @@ export function exigePermissao(permissao) {
     : res.status(403).json({ ok: false, erro: `Esta chave não possui a permissão “${permissao}”.` }));
 }
 
-export function montarConsultaProcessos({ status, pagina, limite } = {}) {
+export function montarConsultaProcessos({ status, pagina, limite, historico } = {}) {
   if (status !== undefined && !STATUS_VALIDOS.has(status)) {
     return { erro: 'Status inválido. Use ativo, suspenso, encerrado ou arquivado.' };
   }
-  const paginacao = paginacaoSegura(pagina, limite ?? 100);
+  const comHistorico = historico === '1' || historico === 'true';
+  const paginacao = comHistorico
+    ? paginacaoSegura(pagina, limite ?? LIMITE_MAXIMO_COM_HISTORICO, LIMITE_MAXIMO_COM_HISTORICO)
+    : paginacaoSegura(pagina, limite ?? 100);
+  const colunaHistorico = comHistorico ? `,
+           COALESCE(hist.itens, '[]'::json) AS movimentacoes` : '';
+  const juncaoHistorico = comHistorico ? `
+      LEFT JOIN LATERAL (
+        SELECT json_agg(json_build_object('data', h.data_movimentacao, 'texto', h.texto)
+                        ORDER BY h.data_movimentacao DESC) AS itens
+          FROM (
+            SELECT m.data_movimentacao, LEFT(m.texto, 200) AS texto
+              FROM movimentacoes m
+             WHERE m.processo_id = p.id
+             ORDER BY m.data_movimentacao DESC
+             LIMIT ${MOVIMENTOS_NO_HISTORICO}
+          ) h
+      ) hist ON true` : '';
   const filtros = status === undefined ? [] : [status];
   const where = `p.visibilidade = 'normal'${status === undefined ? '' : ' AND p.status = $1'}`;
 
@@ -42,7 +61,7 @@ export function montarConsultaProcessos({ status, pagina, limite } = {}) {
            ultima.data_movimentacao AS ultima_movimentacao_em,
            ultima.texto AS ultima_movimentacao,
            relevante.data_movimentacao AS ultima_movimentacao_relevante_em,
-           relevante.texto AS ultima_movimentacao_relevante
+           relevante.texto AS ultima_movimentacao_relevante${colunaHistorico}
       FROM processos p
       LEFT JOIN LATERAL (
         SELECT m.data_movimentacao, LEFT(m.texto, 300) AS texto
@@ -57,7 +76,7 @@ export function montarConsultaProcessos({ status, pagina, limite } = {}) {
          WHERE m.processo_id = p.id AND m.texto !~* $${padrao}
          ORDER BY m.data_movimentacao DESC
          LIMIT 1
-      ) relevante ON true
+      ) relevante ON true${juncaoHistorico}
      WHERE ${where}
      ORDER BY p.numero
      LIMIT $${padrao + 1} OFFSET $${padrao + 2}`;
@@ -97,6 +116,7 @@ export function criarListagemProcessos(conexao, relogio = () => new Date()) {
       status: req.query.status,
       pagina: req.query.pagina,
       limite: req.query.limite,
+      historico: req.query.historico,
     });
     if (consulta.erro) return res.status(400).json({ ok: false, erro: consulta.erro });
     try {

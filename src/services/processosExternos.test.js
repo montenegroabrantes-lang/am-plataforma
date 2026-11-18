@@ -54,6 +54,20 @@ test('status desconhecido é recusado e o limite tem teto', () => {
   assert.equal(montarConsultaProcessos({ limite: 5000 }).limite, 200);
 });
 
+test('o histórico só entra quando pedido e tem limites próprios', () => {
+  const semHistorico = montarConsultaProcessos();
+  assert.doesNotMatch(semHistorico.sqlItens, /AS movimentacoes|hist\.itens/);
+
+  const comHistorico = montarConsultaProcessos({ historico: '1', limite: 500 });
+  assert.match(comHistorico.sqlItens, /COALESCE\(hist\.itens, '\[\]'::json\) AS movimentacoes/);
+  assert.match(comHistorico.sqlItens, /LIMIT 60/);
+  assert.match(comHistorico.sqlItens, /LEFT\(m\.texto, 200\)/);
+  assert.equal(comHistorico.limite, 100);
+  assert.doesNotMatch(comHistorico.sqlItens, /clientes|cpf|polo_ativo|notas/i);
+
+  assert.doesNotMatch(montarConsultaProcessos({ historico: 'nao' }).sqlItens, /hist\.itens/);
+});
+
 test('serializa valores, acervo em branco e dias parado', () => {
   const agora = new Date('2026-11-18T12:00:00Z');
   const processo = serializarProcesso({
