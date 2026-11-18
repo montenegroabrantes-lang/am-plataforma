@@ -3953,3 +3953,9 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - `dias_parado` conta desde a última movimentação relevante, ignorando decurso de prazo, publicação, disponibilização, provimento correcional, expedição de outros documentos e retificação de movimento.
 - Estado: não publicado e não verificado em produção. A consulta SQL não foi executada em um PostgreSQL real nesta sessão, só coberta por testes unitários.
 - Pendências: criar a chave em Configurações → Integrações e API; carregar as letras do 2º JEFP lidas no PJe em 18/11/2026; exibir o Acervo no frontend (`am-plataforma-web`); criar a rotina diária.
+
+### 18/11/2026 — API de leitura publicada e histórico de movimentações
+- PR #11 mesclado (merge `6c6d853`, deploy `0e2cc4f5` SUCCESS). Conferido em produção: migração `2026_11_18_processos_acervo` aplicada, `/health` 200 e `GET /api/integracoes/v1/processos` respondendo com a chave da folha de despachos (881 processos).
+- Medição contra 110 processos conferidos no PJe: usando só a última movimentação, o ato correto saiu em 28 (25%). Valores praticamente não estão cadastrados (valor homologado em 1 de 881; causa, estimativa, proposta e RPV em nenhum).
+- Branch `feat/api-historico-movimentacoes`: `GET /api/integracoes/v1/processos?historico=1` acrescenta `movimentacoes` (até 60 por processo, texto limitado a 200 caracteres), com teto de 100 processos por página.
+- Pendências: medir a precisão com o histórico (meta de 90% antes de ativar a rotina), carregar as letras de acervo e cadastrar os valores.
