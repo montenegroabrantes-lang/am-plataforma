@@ -1017,6 +1017,13 @@ async function iniciar() {
       await db.execute(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS drive_protocolo_pasta_url TEXT`);
       await db.execute(`ALTER TABLE tarefas ADD COLUMN IF NOT EXISTS drive_numeros_encontrados JSONB`);
     });
+    // Acervo do juízo (Cargo judicial no PJe). Em branco quando o PJe não indica a letra.
+    await migrar('2026_11_18_processos_acervo', async () => {
+      await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS acervo TEXT CHECK (acervo IS NULL OR acervo ~ '^[A-Z]$')`);
+      await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS acervo_origem TEXT`);
+      await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS acervo_lido_em TIMESTAMPTZ`);
+    });
+
     await migrar('2026_10_S03_sessao_revogavel', () => migrarSessaoRevogavel((sql) => db.execute(sql)));
     // S-13: gatilho de auditoria só-inserção, por último entre as migrações do esquema (ver o comentário do S-13 acima).
     await migrar('2026_10_S13_auditoria_imutavel', () => protegerAuditoria(db))
