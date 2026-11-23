@@ -320,3 +320,123 @@ export function criarDownloadArquivo(conexao, auditar = registrarAuditoria) {
     }
   };
 }
+
+// ── Métricas (aba "Métricas" da tela Despachos) ────────────────────────────────
+// O retrato do dia sai dos itens da última varredura (GET /api/despachos). Aqui fica a evolução,
+// calculada a partir da última varredura de cada dia (horário de Brasília). Só leitura.
+export const PERIODOS_METRICAS = [7, 30, 90];
+const UM_DIA = 24 * 60 * 60 * 1000;
+const diaUTC = dia => Date.UTC(+dia.slice(0, 4), +dia.slice(5, 7) - 1, +dia.slice(8, 10));
+const entreDias = (a, b) => Math.round((diaUTC(b) - diaUTC(a)) / UM_DIA);
+// Segunda-feira da semana do dia (AAAA-MM-DD).
+export function inicioDaSemana(dia) {
+  const t = diaUTC(dia);
+  const semana = (new Date(t).getUTCDay() + 6) % 7;
+  return new Date(t - semana * UM_DIA).toISOString().slice(0, 10);
+}
+const mediana = lista => {
+  const v = [...lista].sort((a, b) => a - b);
+  const m = Math.floor(v.length / 2);
+  return v.length % 2 ? v[m] : Math.round((v[m - 1] + v[m]) / 2);
+};
+
+// dias: [{ dia: 'AAAA-MM-DD', itens: [{ processo_id, folha, local, bloco }] }], do mais antigo ao mais novo.
+export function evolucaoDespachos(dias) {
+  const serie = dias.map(({ dia, itens }) => {
+    const linha = { dia };
+    for (const f of FOLHAS) linha[f] = 0;
+    for (const i of itens) linha[i.folha] += 1;
+    return linha;
+  });
+
+  // Entradas, saídas e trocas de folha entre um dia e o seguinte.
+  const fluxo = [];
+  for (let k = 1; k < dias.length; k++) {
+    const comNumero = l => l.map(i => ({ ...i, numero: i.processo_id }));
+    const d = diferencas(comNumero(dias[k - 1].itens), comNumero(dias[k].itens));
+    fluxo.push({
+      dia: dias[k].dia,
+      entraram: d.filter(x => x.de === null).length,
+      sairam: d.filter(x => x.para === 'sai').length,
+      mudaram: d.filter(x => x.de !== null && x.para !== 'sai').length,
+    });
+  }
+
+  // Tempo até sair da folha, por ato de entrada. Quem já estava no 1º dia do período não entra
+  // na conta (não se sabe quando entrou).
+  const abertos = new Map();
+  const duracoes = new Map();
+  const saidasPorSemana = [];
+  dias.forEach(({ dia, itens }, k) => {
+    const hoje = new Map(itens.map(i => [`${i.processo_id}|${i.folha}`, i]));
+    for (const [chave, aberto] of abertos) {
+      if (hoje.has(chave)) continue;
+      abertos.delete(chave);
+      saidasPorSemana.push({ semana: inicioDaSemana(dia), local: aberto.local, folha: aberto.folha });
+      if (aberto.conhecido) {
+        if (!duracoes.has(aberto.bloco)) duracoes.set(aberto.bloco, []);
+        duracoes.get(aberto.bloco).push(entreDias(aberto.desde, dia));
+      }
+    }
+    for (const [chave, i] of hoje) {
+      if (!abertos.has(chave)) abertos.set(chave, { desde: dia, conhecido: k > 0, bloco: i.bloco, local: i.local, folha: i.folha });
+    }
+  });
+  const tempoAteSair = [...duracoes.entries()]
+    .map(([ato, v]) => ({ ato, mediana: mediana(v), saidas: v.length }))
+    .sort((a, b) => b.saidas - a.saidas || a.ato.localeCompare(b.ato, 'pt-BR'));
+
+  // Resolução por vara, por semana (folhas do balcão): saíram ÷ estiveram na folha na semana.
+  const presentes = new Map();
+  for (const { dia, itens } of dias) {
+    const semana = inicioDaSemana(dia);
+    for (const i of itens) {
+      if (i.folha === 'diligencia') continue;
+      const chave = `${semana}|${i.local}`;
+      if (!presentes.has(chave)) presentes.set(chave, new Set());
+      presentes.get(chave).add(`${i.processo_id}|${i.folha}`);
+    }
+  }
+  const resolucao = [...presentes.entries()].map(([chave, conjunto]) => {
+    const [semana, vara] = chave.split('|');
+    const saidas = saidasPorSemana.filter(x => x.semana === semana && x.local === vara && x.folha !== 'diligencia').length;
+    return { semana, vara, presentes: conjunto.size, saidas };
+  }).sort((a, b) => a.semana.localeCompare(b.semana) || a.vara.localeCompare(b.vara, 'pt-BR'));
+
+  return { serie, fluxo, tempoAteSair, resolucao };
+}
+
+// GET /api/despachos/metricas?dias=30&vara=1º JEFP
+export function criarMetricasDespachos(conexao) {
+  return async (req, res) => {
+    const periodo = Number(req.query?.dias || 30);
+    if (!PERIODOS_METRICAS.includes(periodo)) return res.status(400).json({ ok: false, erro: 'Período inválido (7, 30 ou 90 dias).' });
+    const vara = texto(req.query?.vara, 80);
+    try {
+      const varreduras = await conexao.query(
+        `SELECT DISTINCT ON (dia) id, dia::text AS dia
+           FROM (SELECT id, executada_em, criado_em, (executada_em AT TIME ZONE 'America/Sao_Paulo')::date AS dia
+                   FROM despachos_varreduras
+                  WHERE executada_em >= NOW() - make_interval(days => $1)) v
+          ORDER BY dia, executada_em DESC, criado_em DESC`,
+        [periodo],
+      );
+      if (!varreduras.length) return res.json({ ok: true, periodo, dias: 0, serie: [], fluxo: [], tempoAteSair: [], resolucao: [] });
+      const params = [varreduras.map(v => v.id)];
+      if (vara) params.push(vara);
+      const itens = await conexao.query(
+        `SELECT d.varredura_id, d.processo_id, d.folha, d.local, d.bloco
+           FROM despachos_itens d JOIN processos p ON p.id = d.processo_id
+          WHERE d.varredura_id = ANY($1::uuid[]) ${vara ? 'AND d.local = $2' : ''} ${filtroVisibilidade(req.user, 'p')}`,
+        params,
+      );
+      const porVarredura = new Map(varreduras.map(v => [v.id, []]));
+      for (const i of itens) porVarredura.get(i.varredura_id)?.push(i);
+      const dias = varreduras.map(v => ({ dia: v.dia, itens: porVarredura.get(v.id) }));
+      return res.json({ ok: true, periodo, dias: dias.length, ...evolucaoDespachos(dias) });
+    } catch (err) {
+      console.error('[Despachos] Falha nas métricas:', err.message);
+      return res.status(500).json({ ok: false, erro: 'Não foi possível calcular as métricas.' });
+    }
+  };
+}
