@@ -3959,3 +3959,13 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Medição contra 110 processos conferidos no PJe: usando só a última movimentação, o ato correto saiu em 28 (25%). Valores praticamente não estão cadastrados (valor homologado em 1 de 881; causa, estimativa, proposta e RPV em nenhum).
 - Branch `feat/api-historico-movimentacoes`: `GET /api/integracoes/v1/processos?historico=1` acrescenta `movimentacoes` (até 60 por processo, texto limitado a 200 caracteres), com teto de 100 processos por página.
 - Pendências: medir a precisão com o histórico (meta de 90% antes de ativar a rotina), carregar as letras de acervo e cadastrar os valores.
+
+### 23/11/2026 — Despachos pelo PJe: gravação da varredura, tela de consulta e correção do "parado há" (branch, NÃO publicado)
+- Pedido do usuário: a rotina diária de varredura do PJe (skill `/varredura-despachos`, tarefa agendada às 15h em dias úteis, Claude in Chrome lendo o Painel do Advogado) passa a atualizar o AM, substituindo a classificação manual na consulta das folhas de despacho.
+- Branch `feat/despachos-pje` (backend): migração `2026_11_23_despachos_pje` cria `despachos_varreduras` (uma linha por execução) e `despachos_itens` (folha, vara, acervo, ato, pendência, dias parado, concluso e último andamento por processo; sem nome de parte).
+- Nova rota `POST /api/integracoes/v1/despachos/varredura`: chave externa com a nova permissão `despachos`. Grava numa transação, ignora números que não estão no AM, atualiza `processos.acervo` com origem `pje` e registra auditoria (`gravar_varredura_despachos`).
+- Nova rota interna `GET /api/despachos` (usuário logado): última varredura, respeitando a visibilidade restrita.
+- `MOVIMENTOS_AUTOMATICOS` ampliado (decurso de prazo, publicação, disponibilização, processo encaminhado, inclusão/autos incluídos no Juízo 100% Digital, expedição de documento, certidão automática, intimação confirmada, comunicação expedida), que causava o "parado há" subestimado em 187 processos.
+- Frontend (`am-plataforma-web`, branch `feat/despachos-pje`): página `/despachos` só de consulta (abas Assinaturas, Gabinete, Cartório, Outros órgãos e Lista), item "Despachos" no menu, Acervo na ficha do processo e a permissão "Despachos: gravar varredura" na tela de chaves.
+- Verificado: testes unitários novos; SQL da migração, gravação e consulta executado num PostgreSQL embutido (PGlite); build do frontend ok. Suíte do backend: 107 de 108 arquivos passam; `src/workers/backup.worker.test.js` trava nesta máquina (não alterado nesta branch).
+- Pendências: merge e publicação; o usuário acrescentar a permissão `despachos` à chave da folha de despachos; primeira carga pela skill e conferência em produção.

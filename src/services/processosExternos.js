@@ -6,13 +6,24 @@ import { paginacaoSegura } from '../utils/validacao.js';
 const STATUS_VALIDOS = new Set(['ativo', 'suspenso', 'encerrado', 'arquivado']);
 
 // Andamentos que não mostram impulso real do processo e por isso não zeram os "dias parado".
+// Andamentos que não indicam movimento real do processo (texto do PJe e do DataJud).
 export const MOVIMENTOS_AUTOMATICOS = [
   'decorrido prazo',
+  'decurso de prazo',
   'publicado',
+  'publica[cç][aã]o',
   'disponibilizado',
+  'disponibiliza[cç][aã]o',
   'provimento correcional',
   'expedi[cç][aã]o de outros',
+  'expedi[cç][aã]o de documento',
   'retificado o movimento',
+  'processo encaminhado',
+  'inclus[aã]o no ju[ií]zo',
+  'autos inclu[ií]dos no ju[ií]zo',
+  'certid[aã]o autom[aá]tica',
+  'confirmada a intima[cç][aã]o',
+  'expedida/certificada a comunica[cç][aã]o',
 ].join('|');
 
 const MS_POR_DIA = 86_400_000;

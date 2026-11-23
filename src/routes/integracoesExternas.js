@@ -4,6 +4,7 @@ import { autenticarChaveExterna } from './chavesApi.js';
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { db } from '../db/index.js';
 import { criarListagemProcessos, exigePermissao } from '../services/processosExternos.js';
+import { criarGravacaoVarredura } from '../services/despachos.js';
 
 export const integracoesExternasRouter = Router();
 
@@ -21,6 +22,13 @@ integracoesExternasRouter.get(
   exigePermissao('leitura'),
   exigePermissao('processos'),
   criarListagemProcessos(db),
+);
+
+// Grava as folhas de despacho geradas pela varredura do PJe (skill /varredura-despachos).
+integracoesExternasRouter.post(
+  '/v1/despachos/varredura',
+  exigePermissao('despachos'),
+  criarGravacaoVarredura(db),
 );
 
 // Solicita uma mensagem a um contato que já exista na Camila/Digisac.

@@ -45,6 +45,7 @@ import { integracaoCamilaRouter, autenticarIntegracaoCamila } from './routes/int
 import { chavesApiRouter } from './routes/chavesApi.js';
 import { integracoesExternasRouter } from './routes/integracoesExternas.js';
 import { acervoRouter } from './routes/acervo.js';
+import { despachosRouter } from './routes/despachos.js';
 import { reprotocoloRouter } from './routes/reprotocolo.js';
 import { comunicacaoRouter } from './routes/comunicacao.js';
 import { cobrancasRouter } from './routes/cobrancas.js';
@@ -173,6 +174,7 @@ app.use('/api/drive-conciliacao', autenticar, driveConciliacaoRouter);
 app.use('/api/onboardings',   autenticar, onboardingsRouter);
 app.use('/api/chaves-api',    autenticar, chavesApiRouter);
 app.use('/api/acervo',        autenticar, acervoRouter);
+app.use('/api/despachos',     autenticar, despachosRouter);
 // Consulta da trilha de auditoria (somente leitura; apenasMaster01 dentro do router).
 app.use('/api/auditoria',     autenticar, auditoriaRouter);
 // Levantamento de re-protocolo (somente leitura): Master + escopo OAuth "reprotocolo" no conector.
@@ -1022,6 +1024,37 @@ async function iniciar() {
       await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS acervo TEXT CHECK (acervo IS NULL OR acervo ~ '^[A-Z]$')`);
       await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS acervo_origem TEXT`);
       await db.execute(`ALTER TABLE processos ADD COLUMN IF NOT EXISTS acervo_lido_em TIMESTAMPTZ`);
+    });
+    // Folhas de despacho geradas pela varredura do PJe (skill /varredura-despachos). Só a
+    // última varredura é exibida; as anteriores ficam como histórico.
+    await migrar('2026_11_23_despachos_pje', async () => {
+      await db.execute(`CREATE TABLE IF NOT EXISTS despachos_varreduras (
+        id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        executada_em    TIMESTAMPTZ NOT NULL,
+        corte           TIMESTAMPTZ,
+        processos_lidos INTEGER NOT NULL DEFAULT 0,
+        itens_total     INTEGER NOT NULL DEFAULT 0,
+        ignorados       INTEGER NOT NULL DEFAULT 0,
+        alertas         JSONB NOT NULL DEFAULT '[]'::jsonb,
+        chave_id        UUID,
+        criado_em       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+      await db.execute(`CREATE TABLE IF NOT EXISTS despachos_itens (
+        id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        varredura_id        UUID NOT NULL REFERENCES despachos_varreduras(id) ON DELETE CASCADE,
+        processo_id         UUID NOT NULL REFERENCES processos(id) ON DELETE CASCADE,
+        folha               TEXT NOT NULL CHECK (folha IN ('assinaturas','gabinete','cartorio','outros')),
+        local               TEXT NOT NULL,
+        acervo              TEXT,
+        bloco               TEXT NOT NULL,
+        observacao          TEXT,
+        dias_parado         INTEGER,
+        concluso            TEXT,
+        ultimo_andamento    TEXT,
+        lido_no_pje         BOOLEAN NOT NULL DEFAULT TRUE
+      )`);
+      await db.execute(`CREATE INDEX IF NOT EXISTS despachos_itens_varredura_idx ON despachos_itens (varredura_id)`);
+      await db.execute(`CREATE INDEX IF NOT EXISTS despachos_varreduras_executada_idx ON despachos_varreduras (executada_em DESC)`);
     });
 
     await migrar('2026_10_S03_sessao_revogavel', () => migrarSessaoRevogavel((sql) => db.execute(sql)));
