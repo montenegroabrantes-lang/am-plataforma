@@ -3989,3 +3989,11 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - PRs mesclados: am-plataforma#15 (merge `e1a7d03`, deploy `22080216` SUCCESS, migração `2026_11_23_despachos_arquivos` aplicada) e am-plataforma-web#3 (merge `605f3f1`, deploy `bf48c84a` SUCCESS).
 - `despachos_arquivos` guarda os PDFs das folhas e as planilhas de cada varredura (30 dias). Envio por `POST /api/integracoes/v1/despachos/arquivos` (permissão `despachos`, só .pdf/.xlsx com assinatura verificada, até 5 MB; parser JSON de 8 MB só nessa rota). Lista e download em `GET /api/despachos/arquivos[/:id]`; download registrado na auditoria (`baixar_arquivo_despachos`).
 - Verificado em produção: 7 arquivos de 23/11 enviados pelo `metodo/enviar-am.mjs`; a aba Downloads lista os 7 e o download do PDF da diligência voltou íntegro (78.776 bytes, `%PDF`).
+
+### 23/11/2026 (fim da tarde) — Tela Despachos com layout novo e "o que mudou desde a véspera" PUBLICADA
+- Layout aprovado pelo usuário a partir de uma prévia com os dados reais (arquivo local `~/Desktop/RAMON/DESPACHOS/previa-layout/despachos-previa.html`).
+- PRs mesclados: am-plataforma#16 (merge `3763c99`, deploy `4f29dd78` SUCCESS, migração `2026_11_23_despachos_saidas` aplicada) e am-plataforma-web#4 (merge `117e8ae`, deploy `e5182a22` SUCCESS).
+- Backend: `despachos_varreduras.saidas` guarda as saídas com o motivo enviado pela rotina; `GET /api/despachos` devolve `mudancas` comparando a última varredura com a última do dia anterior (America/Sao_Paulo), por conjunto de folhas de cada processo.
+- Frontend: cartões por folha com entradas/saídas, "O que mudou desde a véspera", "Pede atenção" (conclusos > 30 dias, alvarás aguardando assinatura > 10 dias, prazos da Fazenda/impugnações, cumprimentos a iniciar), filtros por vara/ato/mudanças, selo do acervo, tempo parado em barra, Roteiro do balcão por prédio, Downloads, impressão e celular.
+- Verificado em produção: a tela carrega com os 430 itens; o painel de mudanças aparece vazio porque ainda não há varredura de dia anterior (a 1ª comparação será na execução de 24/11, 15h).
+- Rotina: `metodo/atualiza.mjs` marca `de` e `motivo` das saídas e `metodo/enviar-am.mjs` envia `saidas`.
