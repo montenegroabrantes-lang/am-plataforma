@@ -87,6 +87,7 @@ app.use(cors({ origin: allowedOrigin, credentials: true }));
 app.use(cookieParser());
 // Respostas do DataJud trazidas pela extensão (andamentos completos) passam de 2 MB.
 app.use('/api/datajud-navegador', express.json({ limit: '25mb' }));
+app.use('/api/integracoes/v1/despachos/arquivos', express.json({ limit: '8mb' })); // PDF/planilha em base64 (até 5 MB)
 app.use(express.json({ limit: '2mb' }));
 // (S-01) sem express.urlencoded global: formulário HTML de outro site não chega a rota nenhuma.
 // O parser de formulário fica só no /oauth/authorize e /oauth/token (montarUrlencodedOauth).
@@ -1055,6 +1056,20 @@ async function iniciar() {
       )`);
       await db.execute(`CREATE INDEX IF NOT EXISTS despachos_itens_varredura_idx ON despachos_itens (varredura_id)`);
       await db.execute(`CREATE INDEX IF NOT EXISTS despachos_varreduras_executada_idx ON despachos_varreduras (executada_em DESC)`);
+    });
+    // Arquivos gerados pela varredura (folhas em PDF e listas em planilha) para download na tela.
+    await migrar('2026_11_23_despachos_arquivos', async () => {
+      await db.execute(`CREATE TABLE IF NOT EXISTS despachos_arquivos (
+        id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        varredura_id  UUID NOT NULL REFERENCES despachos_varreduras(id) ON DELETE CASCADE,
+        nome          TEXT NOT NULL,
+        tipo          TEXT NOT NULL CHECK (tipo IN ('pdf','xlsx')),
+        tamanho       INTEGER NOT NULL,
+        conteudo      BYTEA NOT NULL,
+        criado_em     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        UNIQUE (varredura_id, nome)
+      )`);
+      await db.execute(`CREATE INDEX IF NOT EXISTS despachos_arquivos_varredura_idx ON despachos_arquivos (varredura_id)`);
     });
     // Diligência interna (trabalho do escritório) entra na mesma varredura, em folha própria.
     await migrar('2026_11_23_despachos_diligencia', async () => {
