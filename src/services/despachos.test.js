@@ -27,6 +27,8 @@ test('valida o corpo da varredura', () => {
   assert.match(validarVarredura({ executada_em: '2026-11-23T15:00:00Z', itens: [item(NUM_A, { folha: 'sai' })] }).erro, /folha/);
   assert.match(validarVarredura({ executada_em: '2026-11-23T15:00:00Z', itens: [item(NUM_A, { dias_parado: -2 })] }).erro, /dias_parado/);
 
+  assert.equal(validarVarredura({ executada_em: '2026-11-23T15:00:00Z', itens: [item(NUM_A, { folha: 'diligencia', bloco: 'Responder impugnação' })] }).erro, undefined);
+
   const ok = validarVarredura({
     executada_em: '2026-11-23T15:00:00Z',
     corte: '2026-11-23T13:00:00Z',
