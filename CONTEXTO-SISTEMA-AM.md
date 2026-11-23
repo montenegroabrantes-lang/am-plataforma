@@ -3969,3 +3969,11 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Frontend (`am-plataforma-web`, branch `feat/despachos-pje`): página `/despachos` só de consulta (abas Assinaturas, Gabinete, Cartório, Outros órgãos e Lista), item "Despachos" no menu, Acervo na ficha do processo e a permissão "Despachos: gravar varredura" na tela de chaves.
 - Verificado: testes unitários novos; SQL da migração, gravação e consulta executado num PostgreSQL embutido (PGlite); build do frontend ok. Suíte do backend: 107 de 108 arquivos passam; `src/workers/backup.worker.test.js` trava nesta máquina (não alterado nesta branch).
 - Pendências: merge e publicação; o usuário acrescentar a permissão `despachos` à chave da folha de despachos; primeira carga pela skill e conferência em produção.
+
+### 23/11/2026 (tarde) — Despachos pelo PJe PUBLICADO e primeira carga
+- PRs mesclados: am-plataforma#13 (merge `8ca8faa`, deploy `8d7c9aea` SUCCESS) e am-plataforma-web#1 (merge `5715047`, deploy `320e59f2` SUCCESS).
+- Verificado em produção: migração `2026_11_23_despachos_pje` aplicada no boot; `/health` 200; `GET /api/despachos` e `POST /api/integracoes/v1/despachos/varredura` respondem 401 sem credencial.
+- A chave externa ativa "AM 2" recebeu a permissão `despachos` (Configurações → Integrações e API).
+- Primeira carga enviada pela skill (`metodo/enviar-am.mjs`): 140 itens gravados, 1 número fora do AM ignorado, 101 acervos preenchidos com origem `pje`. A tela `/despachos` mostra Assinaturas 17, Gabinete 54, Cartório 50, Outros órgãos 19; a ficha do processo exibe o Acervo.
+- Rotina: tarefa agendada `varredura-despachos-15h` (dias úteis, 15h) roda a skill `/varredura-despachos`, que lê o Painel do Advogado do PJe, abre só os autos que mudaram e, ao final, grava a varredura no AM. A 1ª execução automática (23/11, 15h14) gerou as folhas antes do deploy; a carga no AM foi feita em seguida, manualmente, com o mesmo estado.
+- Limitações: a varredura depende do Chrome aberto com o PJe logado pelo advogado; se o PJe pedir verificação de segurança, a rotina para e avisa (não contorna).
