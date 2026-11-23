@@ -4001,3 +4001,8 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 ### 23/11/2026 — Impressão da tela Despachos corrigida
 - am-plataforma-web#5 mesclado (deploy SUCCESS). Regra global de impressão em `globals.css`: sem o menu lateral e sem a altura fixa com rolagem interna (antes a impressão sairia cortada numa página). Na tela `/despachos`, "Imprimir" gera a folha da aba aberta com o recorte dos filtros, com cabeçalho (título, filtros, total, data da leitura no PJe e da impressão).
 - Verificado em produção simulando o modo de impressão: Cartório filtrado por 2º JEFP/A, 14 processos, sem menu, cartões ou filtros.
+
+### 23/11/2026 (noite) — Impressão no padrão das folhas em PDF e observações sem repetição
+- am-plataforma-web#6 e #7 mesclados (deploy SUCCESS): "Imprimir" na tela `/despachos` sai igual às folhas em PDF do escritório (A4, Helvetica, título "Folha do Cartório · dd/mm/aaaa", total, legenda, instrução, prontos/conferir, faixa escura por vara, faixa cinza por ato, número em negrito, dias à direita, rodapé com "Página X de Y"); o recorte dos filtros entra no título.
+- Rotina (`metodo/atualiza.mjs`): as observações deixaram de acumular trechos repetidos a cada execução ("Arquivado em 20/08 · Arquivado em 20/08..."); "Novo em" antigos e nomes de documentos são retirados. Testado: duas execuções seguidas dão o mesmo resultado e nenhuma observação repete trecho. Estado salvo limpo e reenviado ao AM (430 itens, 7 arquivos).
+- Verificado em produção simulando o modo de impressão na folha do Cartório.
