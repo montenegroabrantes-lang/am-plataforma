@@ -66,12 +66,20 @@ export function validarVarredura(corpo) {
   }
 
   const alertas = (Array.isArray(corpo.alertas) ? corpo.alertas : []).map(a => texto(a, 300)).filter(Boolean).slice(0, 50);
+  // Processos que saíram das folhas nesta execução, com o motivo (ato registrado no PJe).
+  const saidas = [];
+  for (const sItem of (Array.isArray(corpo.saidas) ? corpo.saidas : []).slice(0, MAX_ITENS)) {
+    const numero = texto(sItem?.numero, 30);
+    if (!numero || !NUMERO_CNJ.test(numero)) continue;
+    saidas.push({ numero, de: FOLHAS.includes(sItem.de) ? sItem.de : null, bloco: texto(sItem.bloco, 120), motivo: texto(sItem.motivo, 200) });
+  }
   const lidos = Number(corpo.processos_lidos);
   return {
     executada_em: executadaEm,
     corte,
     processos_lidos: Number.isInteger(lidos) && lidos >= 0 ? lidos : 0,
     alertas,
+    saidas,
     itens,
     acervos,
   };
@@ -84,7 +92,7 @@ export function criarGravacaoVarredura(conexao) {
     if (dados.erro) return res.status(400).json({ ok: false, erro: dados.erro });
     try {
       const resultado = await conexao.transaction(async (tx) => {
-        const numeros = [...new Set([...dados.itens.map(i => i.numero), ...dados.acervos.map(a => a.numero)])];
+        const numeros = [...new Set([...dados.itens.map(i => i.numero), ...dados.acervos.map(a => a.numero), ...dados.saidas.map(x => x.numero)])];
         const linhas = numeros.length
           ? await tx.query('SELECT id, numero FROM processos WHERE numero = ANY($1)', [numeros])
           : [];
@@ -93,10 +101,11 @@ export function criarGravacaoVarredura(conexao) {
         const ignorados = dados.itens.length - itens.length;
 
         const varredura = await tx.queryOne(
-          `INSERT INTO despachos_varreduras (executada_em, corte, processos_lidos, itens_total, ignorados, alertas, chave_id)
-           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7) RETURNING id`,
+          `INSERT INTO despachos_varreduras (executada_em, corte, processos_lidos, itens_total, ignorados, alertas, chave_id, saidas)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb) RETURNING id`,
           [dados.executada_em, dados.corte, dados.processos_lidos, itens.length, ignorados,
-            JSON.stringify(dados.alertas), req.integracao?.id || null],
+            JSON.stringify(dados.alertas), req.integracao?.id || null,
+            JSON.stringify(dados.saidas.filter(x => idPorNumero.has(x.numero)))],
         );
 
         if (itens.length) {
@@ -140,6 +149,62 @@ export function criarGravacaoVarredura(conexao) {
   };
 }
 
+// "O que mudou hoje": compara a última varredura com a última do dia anterior (horário de Brasília).
+// Mudança de folha, entrada nova e saída (com o motivo gravado pela rotina, quando houver).
+export function diferencas(anteriores, atuais, saidasDoDia = []) {
+  // Um processo pode estar em mais de uma folha (balcão e diligência): compara o conjunto de folhas.
+  const agrupar = lista => {
+    const m = new Map();
+    for (const i of lista) {
+      if (!m.has(i.processo_id)) m.set(i.processo_id, { numero: i.numero, folhas: new Map() });
+      m.get(i.processo_id).folhas.set(i.folha, i.bloco);
+    }
+    return m;
+  };
+  const antes = agrupar(anteriores), depois = agrupar(atuais);
+  const motivo = new Map(saidasDoDia.map(s => [s.numero, s.motivo]));
+  const lista = [];
+  for (const id of new Set([...antes.keys(), ...depois.keys()])) {
+    const a = antes.get(id), d = depois.get(id);
+    const saiu = a ? [...a.folhas.keys()].filter(f => !d?.folhas.has(f)) : [];
+    const entrou = d ? [...d.folhas.keys()].filter(f => !a?.folhas.has(f)) : [];
+    const numero = (d || a).numero;
+    entrou.forEach((para, k) => {
+      const de = saiu[k] ?? null;
+      lista.push({ processo_id: id, numero, de, para, ato: d.folhas.get(para) });
+    });
+    saiu.slice(entrou.length).forEach(de => {
+      lista.push({ processo_id: id, numero, de, para: 'sai', ato: motivo.get(numero) || a.folhas.get(de) });
+    });
+  }
+  return lista;
+}
+
+async function calcularMudancas(conexao, varredura, itensAtuais, user) {
+  const anterior = await conexao.queryOne(
+    `SELECT id FROM despachos_varreduras
+      WHERE (executada_em AT TIME ZONE 'America/Sao_Paulo')::date < ($1::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date
+      ORDER BY executada_em DESC, criado_em DESC LIMIT 1`,
+    [varredura.executada_em],
+  );
+  if (!anterior) return [];
+  const [anteriores, saidas] = await Promise.all([
+    conexao.query(
+      `SELECT p.id AS processo_id, p.numero, d.folha, d.bloco
+         FROM despachos_itens d JOIN processos p ON p.id = d.processo_id
+        WHERE d.varredura_id = $1 ${filtroVisibilidade(user, 'p')}`,
+      [anterior.id],
+    ),
+    conexao.query(
+      `SELECT s->>'numero' AS numero, s->>'motivo' AS motivo
+         FROM despachos_varreduras v, jsonb_array_elements(v.saidas) s
+        WHERE (v.executada_em AT TIME ZONE 'America/Sao_Paulo')::date = ($1::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date`,
+      [varredura.executada_em],
+    ),
+  ]);
+  return diferencas(anteriores, itensAtuais, saidas);
+}
+
 // GET /api/despachos — última varredura, para a tela de consulta.
 export function criarConsultaDespachos(conexao) {
   return async (req, res) => {
@@ -158,7 +223,8 @@ export function criarConsultaDespachos(conexao) {
           ORDER BY d.folha, d.local, d.bloco, d.dias_parado DESC NULLS LAST, p.numero`,
         [varredura.id],
       );
-      return res.json({ ok: true, varredura, itens });
+      const mudancas = await calcularMudancas(conexao, varredura, itens, req.user);
+      return res.json({ ok: true, varredura, itens, mudancas });
     } catch (err) {
       console.error('[Despachos] Falha ao consultar:', err.message);
       return res.status(500).json({ ok: false, erro: 'Não foi possível carregar as folhas de despacho.' });

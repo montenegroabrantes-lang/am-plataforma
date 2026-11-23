@@ -1071,6 +1071,10 @@ async function iniciar() {
       )`);
       await db.execute(`CREATE INDEX IF NOT EXISTS despachos_arquivos_varredura_idx ON despachos_arquivos (varredura_id)`);
     });
+    // Motivo de cada processo que saiu das folhas (ato registrado no PJe), para o painel "O que mudou hoje".
+    await migrar('2026_11_23_despachos_saidas', async () => {
+      await db.execute(`ALTER TABLE despachos_varreduras ADD COLUMN IF NOT EXISTS saidas JSONB NOT NULL DEFAULT '[]'::jsonb`);
+    });
     // Diligência interna (trabalho do escritório) entra na mesma varredura, em folha própria.
     await migrar('2026_11_23_despachos_diligencia', async () => {
       await db.execute(`ALTER TABLE despachos_itens DROP CONSTRAINT IF EXISTS despachos_itens_folha_check`);
