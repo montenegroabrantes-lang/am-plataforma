@@ -3,7 +3,8 @@
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { filtroVisibilidade } from '../utils/visibilidade.js';
 
-export const FOLHAS = ['assinaturas', 'gabinete', 'cartorio', 'outros'];
+// 'diligencia' = trabalho interno do escritório, exibido separado das folhas do balcão.
+export const FOLHAS = ['assinaturas', 'gabinete', 'cartorio', 'outros', 'diligencia'];
 const NUMERO_CNJ = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
 const MAX_ITENS = 2000;
 const MAX_ACERVOS = 5000;

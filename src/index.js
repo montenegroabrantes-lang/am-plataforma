@@ -1056,6 +1056,11 @@ async function iniciar() {
       await db.execute(`CREATE INDEX IF NOT EXISTS despachos_itens_varredura_idx ON despachos_itens (varredura_id)`);
       await db.execute(`CREATE INDEX IF NOT EXISTS despachos_varreduras_executada_idx ON despachos_varreduras (executada_em DESC)`);
     });
+    // Diligência interna (trabalho do escritório) entra na mesma varredura, em folha própria.
+    await migrar('2026_11_23_despachos_diligencia', async () => {
+      await db.execute(`ALTER TABLE despachos_itens DROP CONSTRAINT IF EXISTS despachos_itens_folha_check`);
+      await db.execute(`ALTER TABLE despachos_itens ADD CONSTRAINT despachos_itens_folha_check CHECK (folha IN ('assinaturas','gabinete','cartorio','outros','diligencia'))`);
+    });
 
     await migrar('2026_10_S03_sessao_revogavel', () => migrarSessaoRevogavel((sql) => db.execute(sql)));
     // S-13: gatilho de auditoria só-inserção, por último entre as migrações do esquema (ver o comentário do S-13 acima).
