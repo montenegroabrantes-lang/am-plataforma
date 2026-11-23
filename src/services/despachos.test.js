@@ -173,3 +173,34 @@ test('arquivo: download devolve o conteúdo com o tipo certo e registra auditori
   await criarDownloadArquivo(conexao, async () => {})({ params: { id: '1 or 1=1' } }, ruim);
   assert.equal(ruim.statusCode, 400);
 });
+
+import { diferencas } from './despachos.js';
+
+test('o que mudou: mudança de folha, entrada, saída com motivo e processo em duas folhas', () => {
+  const antes = [
+    { processo_id: 'p1', numero: 'N1', folha: 'cartorio', bloco: 'Pedir conclusão para homologar o cumprimento' },
+    { processo_id: 'p2', numero: 'N2', folha: 'gabinete', bloco: 'Conferir antes de despachar' },
+    { processo_id: 'p3', numero: 'N3', folha: 'diligencia', bloco: 'Juntar concordância' },
+    { processo_id: 'p4', numero: 'N4', folha: 'cartorio', bloco: 'Expedir RPV' },
+    { processo_id: 'p4', numero: 'N4', folha: 'diligencia', bloco: 'Revisar processo parado' },
+  ];
+  const depois = [
+    { processo_id: 'p1', numero: 'N1', folha: 'gabinete', bloco: 'Homologar o cumprimento' },
+    { processo_id: 'p3', numero: 'N3', folha: 'assinaturas', bloco: 'Assinar precatório no SAPRE' },
+    { processo_id: 'p4', numero: 'N4', folha: 'cartorio', bloco: 'Expedir RPV' },
+    { processo_id: 'p5', numero: 'N5', folha: 'diligencia', bloco: 'Responder impugnação' },
+  ];
+  const r = diferencas(antes, depois, [{ numero: 'N2', motivo: 'ato praticado em 23/11' }]);
+  const de = n => r.filter(x => x.numero === n);
+  assert.deepEqual(de('N1').map(x => [x.de, x.para]), [['cartorio', 'gabinete']]);
+  assert.deepEqual(de('N2').map(x => [x.de, x.para, x.ato]), [['gabinete', 'sai', 'ato praticado em 23/11']]);
+  assert.deepEqual(de('N3').map(x => [x.de, x.para]), [['diligencia', 'assinaturas']]);
+  assert.deepEqual(de('N4').map(x => [x.de, x.para]), [['diligencia', 'sai']]);
+  assert.deepEqual(de('N5').map(x => [x.de, x.para]), [[null, 'diligencia']]);
+});
+
+test('saídas inválidas são descartadas na validação', () => {
+  const ok = validarVarredura({ executada_em: '2026-11-23T15:00:00Z', itens: [], saidas: [{ numero: 'x' }, { numero: NUM_A, de: 'gabinete', motivo: 'm'.repeat(300) }] });
+  assert.equal(ok.saidas.length, 1);
+  assert.equal(ok.saidas[0].motivo.length, 200);
+});
