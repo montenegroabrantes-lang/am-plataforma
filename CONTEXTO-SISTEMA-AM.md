@@ -4029,3 +4029,7 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Testes: `src/routes/acervoExterno.test.js` (6 casos). Frontend: as duas permissões aparecem nas
   caixas de criação e edição de chave.
 - Limitação: não há tela para editar teses/peças/precedentes por campo; por ora só via API/chave.
+- Publicado: backend merge 9f7211f, frontend merge 45bc361. Chave "Acervo jurídico — Claude" criada em
+  produção (acervo_leitura + acervo_edicao, sem expiração). Verificado ao vivo com a chave: catálogo de
+  teses e busca de precedente respondem 200; PATCH em tese inexistente chega à rota (404 "Tese não
+  encontrada"); `POST /drive/documentos` bloqueado (404). Nenhum dado foi alterado no teste.
