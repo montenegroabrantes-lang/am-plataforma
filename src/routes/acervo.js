@@ -127,6 +127,131 @@ for (const [tipo,tabela] of [['pecas','acervo_pecas'],['precedentes','acervo_pre
   acervoRouter.post(`/${tipo}/:id/restaurar`, apenasMaster, async(req,res)=>{if(!uuidValido(req.params.id))return res.status(400).json({ok:false,erro:'ID inválido.'});const [r]=await db.query(`UPDATE ${tabela} SET arquivada_em=NULL,arquivada_por=NULL WHERE id=$1${escopoVisibilidade(req,tabela)} AND arquivada_em IS NOT NULL RETURNING id`,[req.params.id]);if(!r)return res.status(404).json({ok:false,erro:'Registro não encontrado.'});await registrarAuditoria({usuarioId:req.user.id,acao:'restaurar',entidade:tabela,entidadeId:r.id,ip:req._ip});res.json({ok:true});});
 }
 
+// ── Leitura individual e edição geral (23/11/2026) ─────────────────────────────────────────
+// Usadas pela tela e pela chave externa do acervo (permissões acervo_leitura / acervo_edicao).
+const LIMITE_TEXTO = 20_000;
+function texto(valor, campo, { obrigatorio = false, max = LIMITE_TEXTO } = {}) {
+  const t = valor === null || valor === undefined ? '' : String(valor).trim();
+  if (!t) { if (obrigatorio) { const e = new Error(`${campo} não pode ficar vazio.`); e.status = 422; throw e; } return null; }
+  if (t.length > max) { const e = new Error(`${campo} excede ${max} caracteres.`); e.status = 422; throw e; }
+  return t;
+}
+function dataOuNulo(valor, campo, obrigatorio = false) {
+  if (valor === null || valor === undefined || valor === '') { if (obrigatorio) { const e = new Error(`${campo} é obrigatório.`); e.status = 422; throw e; } return null; }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(valor)) || Number.isNaN(Date.parse(valor))) { const e = new Error(`${campo} inválido (use AAAA-MM-DD).`); e.status = 422; throw e; }
+  return String(valor);
+}
+// Campos editáveis e seus conversores. Só campos presentes no corpo entram no UPDATE.
+const CAMPOS_PECA = {
+  titulo: v => texto(v, 'titulo', { obrigatorio: true, max: 300 }),
+  tipo_peca: v => validarEnum(v, TIPOS, 'tipo_peca', true),
+  ente: v => validarEnum(v, ENTES, 'ente', true),
+  ente_detalhe: v => texto(v, 'ente_detalhe', { max: 200 }),
+  tribunal: v => texto(v, 'tribunal', { max: 100 }),
+  instancia: v => validarEnum(v, INSTANCIAS, 'instancia', true),
+  orgao_julgador: v => texto(v, 'orgao_julgador', { max: 300 }),
+  relator: v => texto(v, 'relator', { max: 200 }),
+  data_protocolo: v => dataOuNulo(v, 'data_protocolo'),
+  drive_file_id: v => texto(v, 'drive_file_id', { max: 200 }),
+  drive_url: v => urlHttps(v, 'drive_url'),
+  resultado: v => validarEnum(v, RESULTADOS, 'resultado', true),
+  resumo: v => texto(v, 'resumo'),
+  modelo_aprovado: v => Boolean(v),
+};
+const CAMPOS_PRECEDENTE = {
+  orgao: v => texto(v, 'orgao', { obrigatorio: true, max: 300 }),
+  tribunal: v => texto(v, 'tribunal', { max: 100 }),
+  instancia: v => validarEnum(v, INSTANCIAS, 'instancia', true),
+  relator: v => texto(v, 'relator', { max: 200 }),
+  data_julgamento: v => dataOuNulo(v, 'data_julgamento', true),
+  ente: v => validarEnum(v, ENTES, 'ente'),
+  ratio: v => texto(v, 'ratio', { obrigatorio: true }),
+  ementa: v => texto(v, 'ementa'),
+  resultado: v => validarEnum(v, RESULTADOS, 'resultado', true),
+  favoravel: v => Boolean(v),
+  vinculante: v => Boolean(v),
+  fonte_primaria_url: v => urlHttps(v, 'fonte_primaria_url'),
+  drive_file_id: v => texto(v, 'drive_file_id', { max: 200 }),
+  drive_url: v => urlHttps(v, 'drive_url'),
+};
+// Mudou o conteúdo do precedente → o selo de conferido deixa de valer (zero alucinação).
+const CAMPOS_PRECEDENTE_MATERIAIS = ['orgao', 'tribunal', 'instancia', 'data_julgamento', 'ratio', 'ementa', 'resultado', 'vinculante', 'fonte_primaria_url'];
+const comoTexto = v => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? ''));
+
+function montarAlteracoes(corpo, campos) {
+  const alteracoes = {};
+  for (const [campo, conv] of Object.entries(campos)) if (Object.hasOwn(corpo, campo)) alteracoes[campo] = conv(corpo[campo]);
+  return alteracoes;
+}
+const marcaChave = req => (req.user?.via_chave ? { via_chave: req.user.via_chave } : {});
+
+for (const [tipo, tabela, rel, coluna, campos, chave] of [
+  ['pecas', 'acervo_pecas', 'acervo_pecas_teses', 'peca_id', CAMPOS_PECA, 'peca'],
+  ['precedentes', 'acervo_precedentes', 'acervo_precedentes_teses', 'precedente_id', CAMPOS_PRECEDENTE, 'precedente'],
+]) {
+  acervoRouter.get(`/${tipo}/:id`, async (req, res) => { try {
+    if (!uuidValido(req.params.id)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'ID inválido.' });
+    const r = await db.queryOne(`SELECT x.*, ARRAY(SELECT t.slug FROM ${rel} r JOIN teses_acervo t ON t.id=r.tese_id WHERE r.${coluna}=x.id ORDER BY t.label) teses FROM ${tabela} x WHERE x.id=$1${escopoVisibilidade(req, 'x')}`, [req.params.id]);
+    if (!r) return res.status(404).json({ ok:false, erro:'Não encontrado.' });
+    res.json({ ok:true, [chave]: r });
+  } catch (e) { erro(res, e); } });
+
+  acervoRouter.patch(`/${tipo}/:id`, apenasMaster, async (req, res) => { try {
+    if (!uuidValido(req.params.id)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'ID inválido.' });
+    const b = req.body || {};
+    const alteracoes = montarAlteracoes(b, campos);
+    const teses = Object.hasOwn(b, 'teses') ? normalizarTeses(b.teses) : null;
+    if (teses) await validarTeses(teses);
+    if (!Object.keys(alteracoes).length && !teses) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Nenhum campo editável informado.' });
+    const anterior = await db.queryOne(`SELECT * FROM ${tabela} x WHERE x.id=$1${escopoVisibilidade(req, 'x')}`, [req.params.id]);
+    if (!anterior) return res.status(404).json({ ok:false, erro:'Não encontrado.' });
+    if (alteracoes.ente === 'municipio-outro-pb' && !(alteracoes.ente_detalhe ?? anterior.ente_detalhe)) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Informe o município.' });
+    const sets = []; const params = [];
+    for (const [campo, valor] of Object.entries(alteracoes)) { params.push(valor); sets.push(`${campo}=$${params.length}`); }
+    const perdeConferencia = tabela === 'acervo_precedentes' && anterior.conferido
+      && CAMPOS_PRECEDENTE_MATERIAIS.some(c => c in alteracoes && comoTexto(alteracoes[c]) !== comoTexto(anterior[c]));
+    if (perdeConferencia) sets.push('conferido=false', 'conferido_por=NULL', 'conferido_em=NULL');
+    sets.push('atualizado_em=NOW()');
+    params.push(req.params.id);
+    const [r] = await db.query(`UPDATE ${tabela} SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING *`, params);
+    if (teses) await gravarTeses(tabela, r.id, teses);
+    const antes = Object.fromEntries(Object.keys(alteracoes).map(c => [c, anterior[c]]));
+    await registrarAuditoria({ usuarioId:req.user.id, acao:'editar', entidade:chave === 'peca' ? 'acervo_peca' : 'acervo_precedente', entidadeId:r.id, valorAntes:antes, valorDepois:{ ...alteracoes, ...(teses ? { teses } : {}), ...(perdeConferencia ? { conferido:false } : {}), ...marcaChave(req) }, ip:req._ip });
+    res.json({ ok:true, [chave]: { ...r, ...(teses ? { teses } : {}) }, ...(perdeConferencia ? { aviso:'O conteúdo mudou: o precedente voltou a "não conferido" até nova conferência com fonte primária.' } : {}) });
+  } catch (e) { erro(res, e); } });
+}
+
+// Catálogo de teses: criar e editar (rótulo, pasta do Drive, ativo). O slug é a identidade e não muda.
+acervoRouter.post('/teses', apenasMaster, async (req, res) => { try {
+  const b = req.body || {};
+  const slug = String(b.slug || '').trim().toLowerCase();
+  if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug) || slug.length > 80) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'slug inválido: use letras minúsculas, números e hífen (até 80).' });
+  const label = texto(b.label, 'label', { obrigatorio: true, max: 200 });
+  const pasta = texto(b.drive_folder_id, 'drive_folder_id', { max: 200 });
+  const [t] = await db.query('INSERT INTO teses_acervo (slug,label,drive_folder_id) VALUES ($1,$2,$3) ON CONFLICT (slug) DO NOTHING RETURNING slug,label,drive_folder_id,ativo', [slug, label, pasta]);
+  if (!t) return res.status(409).json({ ok:false, erro:'validacao', mensagem:'Já existe tese com esse slug.' });
+  await registrarAuditoria({ usuarioId:req.user.id, acao:'criar', entidade:'tese_acervo', entidadeId:null, valorDepois:{ ...t, ...marcaChave(req) }, ip:req._ip });
+  res.status(201).json({ ok:true, tese:t });
+} catch (e) { erro(res, e); } });
+
+acervoRouter.patch('/teses/:slug', apenasMaster, async (req, res) => { try {
+  const b = req.body || {};
+  const alteracoes = montarAlteracoes(b, {
+    label: v => texto(v, 'label', { obrigatorio: true, max: 200 }),
+    drive_folder_id: v => texto(v, 'drive_folder_id', { max: 200 }),
+    ativo: v => Boolean(v),
+  });
+  if (!Object.keys(alteracoes).length) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Nenhum campo editável informado (label, drive_folder_id, ativo).' });
+  const anterior = await db.queryOne('SELECT slug,label,drive_folder_id,ativo FROM teses_acervo WHERE slug=$1', [String(req.params.slug)]);
+  if (!anterior) return res.status(404).json({ ok:false, erro:'Tese não encontrada.' });
+  const sets = []; const params = [];
+  for (const [campo, valor] of Object.entries(alteracoes)) { params.push(valor); sets.push(`${campo}=$${params.length}`); }
+  params.push(anterior.slug);
+  const [t] = await db.query(`UPDATE teses_acervo SET ${sets.join(', ')} WHERE slug=$${params.length} RETURNING slug,label,drive_folder_id,ativo`, params);
+  await registrarAuditoria({ usuarioId:req.user.id, acao:'editar', entidade:'tese_acervo', entidadeId:null, valorAntes:anterior, valorDepois:{ ...t, ...marcaChave(req) }, ip:req._ip });
+  res.json({ ok:true, tese:t });
+} catch (e) { erro(res, e); } });
+
 // Grava uma peça/planilha (HTML) como PDF e/ou Word na pasta do cliente no Drive (Master).
 // Usado pelo conector do Claude: o PJe exige PDF e o conector do Google Drive só grava texto.
 acervoRouter.post('/drive/documentos', apenasMaster, async (req, res) => {
