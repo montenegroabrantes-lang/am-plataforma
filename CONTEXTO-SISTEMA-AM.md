@@ -3997,3 +3997,7 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Frontend: cartões por folha com entradas/saídas, "O que mudou desde a véspera", "Pede atenção" (conclusos > 30 dias, alvarás aguardando assinatura > 10 dias, prazos da Fazenda/impugnações, cumprimentos a iniciar), filtros por vara/ato/mudanças, selo do acervo, tempo parado em barra, Roteiro do balcão por prédio, Downloads, impressão e celular.
 - Verificado em produção: a tela carrega com os 430 itens; o painel de mudanças aparece vazio porque ainda não há varredura de dia anterior (a 1ª comparação será na execução de 24/11, 15h).
 - Rotina: `metodo/atualiza.mjs` marca `de` e `motivo` das saídas e `metodo/enviar-am.mjs` envia `saidas`.
+
+### 23/11/2026 — Impressão da tela Despachos corrigida
+- am-plataforma-web#5 mesclado (deploy SUCCESS). Regra global de impressão em `globals.css`: sem o menu lateral e sem a altura fixa com rolagem interna (antes a impressão sairia cortada numa página). Na tela `/despachos`, "Imprimir" gera a folha da aba aberta com o recorte dos filtros, com cabeçalho (título, filtros, total, data da leitura no PJe e da impressão).
+- Verificado em produção simulando o modo de impressão: Cartório filtrado por 2º JEFP/A, 14 processos, sem menu, cartões ou filtros.
