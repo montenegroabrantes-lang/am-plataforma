@@ -204,3 +204,55 @@ test('saídas inválidas são descartadas na validação', () => {
   assert.equal(ok.saidas.length, 1);
   assert.equal(ok.saidas[0].motivo.length, 200);
 });
+
+import { criarMetricasDespachos, evolucaoDespachos, inicioDaSemana } from './despachos.js';
+
+test('métricas: série, fluxo, tempo até sair e resolução por vara', () => {
+  const it = (p, folha, bloco = 'Expedir RPV', local = '1º JEFP') => ({ processo_id: p, folha, local, bloco });
+  const r = evolucaoDespachos([
+    { dia: '2026-11-23', itens: [it('p1', 'cartorio'), it('p2', 'gabinete', 'Homologar o cumprimento'), it('p9', 'diligencia', 'Responder impugnação')] },
+    { dia: '2026-11-24', itens: [it('p1', 'cartorio'), it('p2', 'gabinete', 'Homologar o cumprimento'), it('p3', 'cartorio')] },
+    { dia: '2026-11-27', itens: [it('p1', 'gabinete', 'Homologar o cumprimento'), it('p2', 'gabinete', 'Homologar o cumprimento')] },
+    { dia: '2026-12-01', itens: [it('p2', 'gabinete', 'Homologar o cumprimento')] },
+  ]);
+  assert.deepEqual(r.serie.map(x => [x.dia, x.cartorio, x.gabinete, x.diligencia]), [
+    ['2026-11-23', 1, 1, 1], ['2026-11-24', 2, 1, 0], ['2026-11-27', 0, 2, 0], ['2026-12-01', 0, 1, 0],
+  ]);
+  assert.deepEqual(r.fluxo.map(x => [x.dia, x.entraram, x.sairam, x.mudaram]), [
+    ['2026-11-24', 1, 1, 0], ['2026-11-27', 0, 1, 1], ['2026-12-01', 0, 1, 0],
+  ]);
+  // p3 entrou em 24/11 e saiu em 27/11 (3 dias); p1 já estava no 1º dia: fica fora.
+  assert.deepEqual(r.tempoAteSair.find(x => x.ato === 'Expedir RPV'), { ato: 'Expedir RPV', mediana: 3, saidas: 1 });
+  // p1 (gabinete desde 27/11) saiu em 01/12, 4 dias.
+  assert.deepEqual(r.tempoAteSair.find(x => x.ato === 'Homologar o cumprimento'), { ato: 'Homologar o cumprimento', mediana: 4, saidas: 1 });
+  const semana1 = r.resolucao.find(x => x.semana === '2026-11-23');
+  assert.deepEqual(semana1, { semana: '2026-11-23', vara: '1º JEFP', presentes: 4, saidas: 2 });
+  assert.equal(inicioDaSemana('2026-11-29'), '2026-11-23');
+  assert.equal(inicioDaSemana('2026-11-30'), '2026-11-30');
+});
+
+test('métricas: período inválido, sem varredura, vara e visibilidade', async () => {
+  const ruim = respostaFake();
+  await criarMetricasDespachos({})({ query: { dias: '365' }, user: {} }, ruim);
+  assert.equal(ruim.statusCode, 400);
+
+  const vazio = respostaFake();
+  await criarMetricasDespachos({ async query() { return []; } })({ query: {}, user: {} }, vazio);
+  assert.equal(vazio.body.dias, 0);
+
+  const chamadas = [];
+  const conexao = {
+    async query(sql, params) {
+      chamadas.push({ sql, params });
+      if (/DISTINCT ON/.test(sql)) return [{ id: 'v1', dia: '2026-11-23' }];
+      return [{ varredura_id: 'v1', processo_id: 'p1', folha: 'gabinete', local: '1º JEFP', bloco: 'x' }];
+    },
+  };
+  const res = respostaFake();
+  await criarMetricasDespachos(conexao)({ query: { dias: '7', vara: '1º JEFP' }, user: { pode_marcar_restrito: false } }, res);
+  assert.equal(res.body.ok, true);
+  assert.equal(res.body.serie[0].gabinete, 1);
+  assert.deepEqual(chamadas[1].params, [['v1'], '1º JEFP']);
+  assert.match(chamadas[1].sql, /d\.local = \$2/);
+  assert.match(chamadas[1].sql, /p\.visibilidade = 'normal'/);
+});
