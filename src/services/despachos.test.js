@@ -133,3 +133,43 @@ test('o parado há ignora os andamentos automáticos reais do PJe', () => {
     assert.doesNotMatch(t, re, t);
   }
 });
+
+import { criarDownloadArquivo, criarEnvioArquivo, validarArquivo } from './despachos.js';
+
+const VID = '11111111-1111-4111-8111-111111111111';
+const PDF = Buffer.from('%PDF-1.4 teste').toString('base64');
+const XLSX = Buffer.concat([Buffer.from('PK\u0003\u0004'), Buffer.from('resto')]).toString('base64');
+
+test('arquivo: só PDF ou planilha de verdade, com nome seguro e até 5 MB', () => {
+  assert.equal(validarArquivo({ varredura_id: VID, nome: 'Folha-Gabinete-23-11-2026.pdf', conteudo_base64: PDF }).tipo, 'pdf');
+  assert.equal(validarArquivo({ varredura_id: VID, nome: 'Lista de Despacho 23-11-2026.xlsx', conteudo_base64: XLSX }).tipo, 'xlsx');
+  assert.match(validarArquivo({ varredura_id: 'x', nome: 'a.pdf', conteudo_base64: PDF }).erro, /varredura_id/);
+  assert.match(validarArquivo({ varredura_id: VID, nome: '../../etc/passwd.pdf', conteudo_base64: PDF }).erro, /Nome/);
+  assert.match(validarArquivo({ varredura_id: VID, nome: 'virus.exe', conteudo_base64: PDF }).erro, /Nome/);
+  assert.match(validarArquivo({ varredura_id: VID, nome: 'falso.pdf', conteudo_base64: XLSX }).erro, /PDF/);
+  assert.match(validarArquivo({ varredura_id: VID, nome: 'falso.xlsx', conteudo_base64: PDF }).erro, /planilha/);
+  const grande = Buffer.concat([Buffer.from('%PDF'), Buffer.alloc(5 * 1024 * 1024)]).toString('base64');
+  assert.match(validarArquivo({ varredura_id: VID, nome: 'grande.pdf', conteudo_base64: grande }).erro, /5 MB/);
+});
+
+test('arquivo: envio para varredura inexistente é recusado', async () => {
+  const res = respostaFake();
+  await criarEnvioArquivo({ async queryOne() { return null; } })({ body: { varredura_id: VID, nome: 'a b.pdf', conteudo_base64: PDF } }, res);
+  assert.equal(res.statusCode, 404);
+});
+
+test('arquivo: download devolve o conteúdo com o tipo certo e registra auditoria', async () => {
+  const auditorias = [];
+  const cabecalhos = {};
+  let enviado = null;
+  const res = { ...respostaFake(), setHeader(k, v) { cabecalhos[k] = v; }, send(b) { enviado = b; return this; } };
+  const conexao = { async queryOne() { return { id: VID, nome: 'Folha-Cartório-23-11-2026.pdf', tipo: 'pdf', conteudo: Buffer.from('%PDF-x') }; } };
+  await criarDownloadArquivo(conexao, async a => { auditorias.push(a); })({ params: { id: VID }, user: { id: 'u1' } }, res);
+  assert.equal(cabecalhos['Content-Type'], 'application/pdf');
+  assert.match(cabecalhos['Content-Disposition'], /attachment; filename\*=UTF-8''Folha-Cart%C3%B3rio/);
+  assert.equal(enviado.toString(), '%PDF-x');
+  assert.equal(auditorias[0].acao, 'baixar_arquivo_despachos');
+  const ruim = respostaFake();
+  await criarDownloadArquivo(conexao, async () => {})({ params: { id: '1 or 1=1' } }, ruim);
+  assert.equal(ruim.statusCode, 400);
+});

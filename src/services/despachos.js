@@ -165,3 +165,92 @@ export function criarConsultaDespachos(conexao) {
     }
   };
 }
+
+// ── Arquivos da varredura (PDF das folhas e planilhas) ─────────────────────────
+const TAMANHO_MAXIMO = 5 * 1024 * 1024;
+const DIAS_GUARDADOS = 30;
+const NOME_ARQUIVO = /^[\p{L}\p{N} ._()-]{3,120}\.(pdf|xlsx)$/u;
+export const MIME = { pdf: 'application/pdf', xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Valida nome, tipo e conteúdo (assinatura do arquivo) antes de gravar.
+export function validarArquivo(corpo) {
+  const varreduraId = String(corpo?.varredura_id || '');
+  if (!UUID.test(varreduraId)) return { erro: 'varredura_id inválido.' };
+  const nome = String(corpo?.nome || '').trim();
+  if (!NOME_ARQUIVO.test(nome)) return { erro: 'Nome de arquivo inválido (só .pdf ou .xlsx).' };
+  const tipo = nome.toLowerCase().endsWith('.pdf') ? 'pdf' : 'xlsx';
+  const base64 = String(corpo?.conteudo_base64 || '');
+  if (!base64 || !/^[A-Za-z0-9+/=\s]+$/.test(base64)) return { erro: 'Conteúdo inválido.' };
+  const conteudo = Buffer.from(base64, 'base64');
+  if (!conteudo.length || conteudo.length > TAMANHO_MAXIMO) return { erro: 'Arquivo vazio ou maior que 5 MB.' };
+  const assinatura = conteudo.subarray(0, 4).toString('latin1');
+  if (tipo === 'pdf' && assinatura !== '%PDF') return { erro: 'O conteúdo não é um PDF.' };
+  if (tipo === 'xlsx' && assinatura !== 'PK\u0003\u0004') return { erro: 'O conteúdo não é uma planilha .xlsx.' };
+  return { varreduraId, nome, tipo, conteudo };
+}
+
+// POST /api/integracoes/v1/despachos/arquivos — um arquivo por chamada.
+export function criarEnvioArquivo(conexao) {
+  return async (req, res) => {
+    const dados = validarArquivo(req.body);
+    if (dados.erro) return res.status(400).json({ ok: false, erro: dados.erro });
+    try {
+      const existe = await conexao.queryOne('SELECT id FROM despachos_varreduras WHERE id = $1', [dados.varreduraId]);
+      if (!existe) return res.status(404).json({ ok: false, erro: 'Varredura não encontrada.' });
+      const linha = await conexao.queryOne(
+        `INSERT INTO despachos_arquivos (varredura_id, nome, tipo, tamanho, conteudo)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (varredura_id, nome) DO UPDATE SET tipo = EXCLUDED.tipo, tamanho = EXCLUDED.tamanho, conteudo = EXCLUDED.conteudo, criado_em = NOW()
+         RETURNING id`,
+        [dados.varreduraId, dados.nome, dados.tipo, dados.conteudo.length, dados.conteudo],
+      );
+      await conexao.execute(`DELETE FROM despachos_arquivos WHERE criado_em < NOW() - INTERVAL '${DIAS_GUARDADOS} days'`);
+      return res.json({ ok: true, id: linha.id, nome: dados.nome, tamanho: dados.conteudo.length });
+    } catch (err) {
+      console.error('[Despachos] Falha ao gravar arquivo:', err.message);
+      return res.status(500).json({ ok: false, erro: 'Não foi possível gravar o arquivo.' });
+    }
+  };
+}
+
+// GET /api/despachos/arquivos — arquivos da varredura mais recente que tenha arquivos.
+export function criarListaArquivos(conexao) {
+  return async (_req, res) => {
+    try {
+      const arquivos = await conexao.query(
+        `SELECT a.id, a.nome, a.tipo, a.tamanho, a.criado_em, v.executada_em
+           FROM despachos_arquivos a
+           JOIN despachos_varreduras v ON v.id = a.varredura_id
+          WHERE a.varredura_id = (
+                SELECT a2.varredura_id FROM despachos_arquivos a2
+                  JOIN despachos_varreduras v2 ON v2.id = a2.varredura_id
+                 ORDER BY v2.executada_em DESC, a2.criado_em DESC LIMIT 1)
+          ORDER BY a.tipo, a.nome`,
+      );
+      return res.json({ ok: true, arquivos });
+    } catch (err) {
+      console.error('[Despachos] Falha ao listar arquivos:', err.message);
+      return res.status(500).json({ ok: false, erro: 'Não foi possível listar os arquivos.' });
+    }
+  };
+}
+
+// GET /api/despachos/arquivos/:id — download (registra na auditoria).
+export function criarDownloadArquivo(conexao, auditar = registrarAuditoria) {
+  return async (req, res) => {
+    if (!UUID.test(String(req.params.id || ''))) return res.status(400).json({ ok: false, erro: 'Arquivo inválido.' });
+    try {
+      const arq = await conexao.queryOne('SELECT id, nome, tipo, conteudo FROM despachos_arquivos WHERE id = $1', [req.params.id]);
+      if (!arq) return res.status(404).json({ ok: false, erro: 'Arquivo não encontrado.' });
+      await auditar({ usuarioId: req.user?.id, acao: 'baixar_arquivo_despachos', entidade: 'despachos_arquivo', entidadeId: arq.id, valorDepois: { nome: arq.nome }, ip: req._ip });
+      res.setHeader('Content-Type', MIME[arq.tipo]);
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(arq.nome)}`);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.send(arq.conteudo);
+    } catch (err) {
+      console.error('[Despachos] Falha no download:', err.message);
+      return res.status(500).json({ ok: false, erro: 'Não foi possível baixar o arquivo.' });
+    }
+  };
+}
