@@ -4012,3 +4012,20 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Frontend (PR #8, merge ec88b3b): aba "Métricas" (`/despachos?folha=metricas`) com KPIs, retrato do dia calculado dos itens da última varredura (por folha, por ato, vara × folha com clique que abre a folha filtrada via `&vara=`, tempo parado por folha, Gabinete por tempo concluso, diligência conferida × aguardando) e evolução em Recharts. Cores fixas por folha (paleta validada para daltonismo), valores escritos, dica ao passar o mouse e "Ver tabela" em todos os gráficos.
 - Verificado em produção: retrato com os números da varredura de 23/11 (142 no balcão, 288 na diligência, mediana 61 dias, 82% conclusos há +30 dias), filtro por vara e clique na vara funcionando. A evolução mostra o aviso até existir a 2ª varredura (24/11); o tempo até sair fica confiável em ~2 semanas.
 - Pendência: ajuste de largura do seletor de vara (branch `fix/metricas-seletor` no frontend).
+
+### 23/11/2026 (noite) — Chave de integração própria para o acervo jurídico
+- Duas permissões novas nas chaves externas (Configurações → Integrações e API): `acervo_leitura`
+  (buscar/listar, ler peça ou precedente, catálogo de teses) e `acervo_edicao` (criar e editar
+  teses, peças e precedentes, registrar resultado de peça, conferir precedente; inclui leitura).
+- Área `/api/integracoes/v1/acervo` (`src/routes/acervoExterno.js`), com `X-AM-API-Key`: reaproveita
+  `acervoRouter` agindo como o Master dono da chave, mas só nas rotas da lista. Ficam fora, com 404:
+  Drive, prazos, protocolos, contexto do processo, arquivar/restaurar. A chave nunca vê registros de
+  processo restrito (`pode_marcar_restrito=false`). Auditoria leva `via_chave` com o id da chave.
+- Rotas novas no acervo (tela e chave): `GET /pecas/:id`, `GET /precedentes/:id`,
+  `PATCH /pecas/:id`, `PATCH /precedentes/:id` (campos editáveis em lista fechada, teses opcionais),
+  `POST /teses` e `PATCH /teses/:slug` (rótulo, pasta do Drive, ativo; o slug não muda). Editar o
+  conteúdo de precedente conferido (órgão, tribunal, instância, data, fundamento, ementa, resultado,
+  vinculante, fonte) volta o selo para "não conferido".
+- Testes: `src/routes/acervoExterno.test.js` (6 casos). Frontend: as duas permissões aparecem nas
+  caixas de criação e edição de chave.
+- Limitação: não há tela para editar teses/peças/precedentes por campo; por ora só via API/chave.

@@ -5,6 +5,7 @@ import { registrarAuditoria } from '../middleware/auditoria.js';
 import { db } from '../db/index.js';
 import { criarListagemProcessos, exigePermissao } from '../services/processosExternos.js';
 import { criarEnvioArquivo, criarGravacaoVarredura } from '../services/despachos.js';
+import { acervoExternoRouter } from './acervoExterno.js';
 
 export const integracoesExternasRouter = Router();
 
@@ -15,6 +16,9 @@ function camila() {
 }
 
 integracoesExternasRouter.use(autenticarChaveExterna);
+
+// Acervo jurídico (teses, peças, precedentes): permissões acervo_leitura / acervo_edicao.
+integracoesExternasRouter.use('/v1/acervo', acervoExternoRouter);
 
 // Somente leitura: alimenta a folha de despachos e o painel financeiro.
 integracoesExternasRouter.get(
