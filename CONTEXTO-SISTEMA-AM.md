@@ -4011,7 +4011,7 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Backend (PR #17, merge 5638b8c): `GET /api/despachos/metricas?dias=7|30|90&vara=` — só leitura; usa a última varredura de cada dia (horário de Brasília) e devolve série por folha, entradas/saídas/trocas por dia, tempo até sair por ato (mediana; quem já estava no 1º dia do período fica fora) e resolução por vara na semana (folhas do balcão). Respeita a visibilidade dos processos. 2 testes novos (13 no arquivo).
 - Frontend (PR #8, merge ec88b3b): aba "Métricas" (`/despachos?folha=metricas`) com KPIs, retrato do dia calculado dos itens da última varredura (por folha, por ato, vara × folha com clique que abre a folha filtrada via `&vara=`, tempo parado por folha, Gabinete por tempo concluso, diligência conferida × aguardando) e evolução em Recharts. Cores fixas por folha (paleta validada para daltonismo), valores escritos, dica ao passar o mouse e "Ver tabela" em todos os gráficos.
 - Verificado em produção: retrato com os números da varredura de 23/11 (142 no balcão, 288 na diligência, mediana 61 dias, 82% conclusos há +30 dias), filtro por vara e clique na vara funcionando. A evolução mostra o aviso até existir a 2ª varredura (24/11); o tempo até sair fica confiável em ~2 semanas.
-- Pendência: ajuste de largura do seletor de vara (branch `fix/metricas-seletor` no frontend).
+- Ajuste da largura do seletor de vara publicado (PR #9 do frontend, merge 9aa1246), conferido em produção.
 
 ### 23/11/2026 (noite) — Chave de integração própria para o acervo jurídico
 - Duas permissões novas nas chaves externas (Configurações → Integrações e API): `acervo_leitura`
