@@ -199,3 +199,22 @@ test('vigilância e decisão da peça pela chave: leitura lê, edição escreve,
   assert.equal((await chamar('am_live_leitura', 'POST', '/vigilancia', { referencia: 'Tema 1', teses: ['fgts-nulidade'] })).status, 403);
   assert.equal((await chamar('am_live_edicao', 'PATCH', `/pecas/${ID}`, { decisao_id: 'nao-e-uuid' })).status, 422);
 });
+
+test('órgão julgador pela chave e sentido do resultado (contrarrazões invertem)', async () => {
+  const { permissaoNecessaria } = await import('./acervoExterno.js');
+  assert.equal(permissaoNecessaria('GET', '/orgaos'), 'acervo_leitura');
+  assert.equal(permissaoNecessaria('GET', `/orgaos/${ID}`), 'acervo_leitura');
+  assert.equal(permissaoNecessaria('POST', '/orgaos'), 'acervo_edicao');
+  assert.equal(permissaoNecessaria('PATCH', `/orgaos/${ID}`), 'acervo_edicao');
+  assert.equal(permissaoNecessaria('DELETE', `/orgaos/${ID}`), null);
+  assert.equal((await chamar('am_live_leitura', 'POST', '/orgaos', { nome: 'X', tribunal: 'TJPB', instancia: '1grau' })).status, 403);
+  assert.equal((await chamar('am_live_edicao', 'PATCH', `/pecas/${ID}`, { orgao_julgador_id: 'nao-e-uuid' })).status, 422);
+  const { sentidoResultado } = await import('./acervo.js');
+  assert.equal(sentidoResultado('inicial', 'parcialmente-procedente'), 'favoravel');
+  assert.equal(sentidoResultado('inicial', 'improcedente'), 'desfavoravel');
+  assert.equal(sentidoResultado('recurso-inominado', 'desprovido'), 'desfavoravel');
+  assert.equal(sentidoResultado('contrarrazoes', 'desprovido'), 'favoravel');
+  assert.equal(sentidoResultado('contrarrazoes', 'provido'), 'desfavoravel');
+  assert.equal(sentidoResultado('inicial', 'pendente'), null);
+  assert.equal(sentidoResultado('inicial', 'desistencia'), null);
+});

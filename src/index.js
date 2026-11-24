@@ -15,6 +15,7 @@ import { logarVersoesBoot } from './utils/versaoPgDump.js';
 import { aplicarAprovadorReprotocolo } from './db/migracoes/aprovadorReprotocolo.js';
 import { aplicarAcervoConhecimento } from './db/migracoes/acervoConhecimento.js';
 import { aplicarAcervoVigilancia } from './db/migracoes/acervoVigilancia.js';
+import { aplicarAcervoOrgaos } from './db/migracoes/acervoOrgaos.js';
 import { aprovadoresConfigurados } from './services/reprotocolo/pacote.js';
 import { aplicarMigracaoSyncR06 } from './services/tribunal/syncMigracao.js';
 
@@ -1088,6 +1089,8 @@ async function iniciar() {
     await migrar('2026_11_23_acervo_conhecimento', () => db.transaction(tx => aplicarAcervoConhecimento(tx)));
     // Fase 2: vigilância jurisprudencial (§4.5) e decisao_id da peça (§4.3). Também sem .catch.
     await migrar('2026_11_24_acervo_vigilancia', () => db.transaction(tx => aplicarAcervoVigilancia(tx)));
+    // Fase 3: órgão julgador (§4.4), ligado às peças. Também sem .catch.
+    await migrar('2026_11_24_acervo_orgaos', () => db.transaction(tx => aplicarAcervoOrgaos(tx)));
 
     await migrar('2026_10_S03_sessao_revogavel', () => migrarSessaoRevogavel((sql) => db.execute(sql)));
     // S-13: gatilho de auditoria só-inserção, por último entre as migrações do esquema (ver o comentário do S-13 acima).
