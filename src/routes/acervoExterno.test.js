@@ -232,3 +232,10 @@ test('contexto de redação pela chave: só leitura; impacto por precedente ou v
   assert.equal(permissaoNecessaria('POST', '/contexto-redacao'), null);
   assert.equal(permissaoNecessaria('GET', '/impacto'), 'acervo_leitura');
 });
+
+test('decisão detectada pela chave: só com edição', async () => {
+  const { permissaoNecessaria } = await import('./acervoExterno.js');
+  assert.equal(permissaoNecessaria('POST', `/pecas/${ID}/decisao`), 'acervo_edicao');
+  assert.equal(permissaoNecessaria('GET', `/pecas/${ID}/decisao`), null);
+  assert.equal(permissaoNecessaria('PATCH', `/pecas/${ID}/decisao`), null);
+});

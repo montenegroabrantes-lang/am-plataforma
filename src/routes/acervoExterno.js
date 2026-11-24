@@ -28,6 +28,7 @@ const EDICAO = {
   POST: [
     new RegExp('^/(pecas|precedentes|teses|argumentos|vigilancia|orgaos)$'),
     new RegExp(`^/(pecas|precedentes)/${ID}/arquivar$`),
+    new RegExp(`^/pecas/${ID}/decisao$`),
   ],
   PATCH: [
     new RegExp(`^/(pecas|precedentes|argumentos|vigilancia|orgaos)/${ID}$`),
