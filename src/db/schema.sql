@@ -487,7 +487,12 @@ CREATE INDEX ON clientes USING gin (nome gin_trgm_ops);
 -- ACERVO JURÍDICO — biblioteca curada; não confundir com pecas operacionais/IA acima.
 CREATE TABLE teses_acervo (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), slug TEXT NOT NULL UNIQUE, label TEXT NOT NULL,
-  drive_folder_id TEXT, ativo BOOLEAN NOT NULL DEFAULT true, criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  drive_folder_id TEXT, ativo BOOLEAN NOT NULL DEFAULT true, criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- Camada de conhecimento (23/11/2026): árvore de teses, situação jurídica e skill que redige.
+  tese_mae_id UUID REFERENCES teses_acervo(id),
+  status TEXT NOT NULL DEFAULT 'ativa' CONSTRAINT teses_acervo_status_check CHECK (status IN ('ativa','em_risco','suspensa','superada')),
+  status_motivo TEXT, skill_slug TEXT, atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT teses_acervo_mae_check CHECK (tese_mae_id IS NULL OR tese_mae_id <> id)
 );
 CREATE TABLE acervo_pecas (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), peca_operacional_id UUID REFERENCES pecas(id) ON DELETE SET NULL,
@@ -497,7 +502,8 @@ CREATE TABLE acervo_pecas (
   resultado TEXT NOT NULL DEFAULT 'pendente', resumo TEXT, modelo_aprovado BOOLEAN NOT NULL DEFAULT false,
   visibilidade_snapshot TEXT NOT NULL DEFAULT 'normal' CHECK (visibilidade_snapshot IN ('normal','restrito')),
   criado_por UUID REFERENCES usuarios(id), criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  arquivada_em TIMESTAMPTZ, arquivada_por UUID REFERENCES usuarios(id)
+  arquivada_em TIMESTAMPTZ, arquivada_por UUID REFERENCES usuarios(id),
+  data_decisao DATE, resultado_por_pedido JSONB NOT NULL DEFAULT '[]'::jsonb
 );
 CREATE TABLE acervo_precedentes (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), processo_id UUID REFERENCES processos(id) ON DELETE SET NULL, processo_numero TEXT,
@@ -512,3 +518,22 @@ CREATE TABLE acervo_pecas_teses (peca_id UUID NOT NULL REFERENCES acervo_pecas(i
 CREATE TABLE acervo_precedentes_teses (precedente_id UUID NOT NULL REFERENCES acervo_precedentes(id) ON DELETE CASCADE, tese_id UUID NOT NULL REFERENCES teses_acervo(id), PRIMARY KEY(precedente_id,tese_id));
 CREATE INDEX idx_acervo_pecas_busca ON acervo_pecas (ente, tribunal, instancia, resultado) WHERE arquivada_em IS NULL;
 CREATE INDEX idx_acervo_precedentes_busca ON acervo_precedentes (ente, tribunal, instancia, favoravel, conferido) WHERE arquivada_em IS NULL;
+CREATE INDEX idx_teses_acervo_mae ON teses_acervo (tese_mae_id) WHERE tese_mae_id IS NOT NULL;
+CREATE INDEX idx_acervo_pecas_teses_tese ON acervo_pecas_teses (tese_id);
+-- Argumentos (fundamento, defesa da Fazenda, resposta, preliminar, cálculo) e suas ligações.
+CREATE TABLE acervo_argumentos (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), tese_id UUID NOT NULL REFERENCES teses_acervo(id),
+  tipo TEXT NOT NULL CHECK (tipo IN ('fundamento','defesa_fazenda','resposta','preliminar','calculo')),
+  titulo TEXT NOT NULL, responde_a_id UUID REFERENCES acervo_argumentos(id), texto_modelo TEXT,
+  status TEXT NOT NULL DEFAULT 'em_teste' CHECK (status IN ('em_teste','aprovado','abandonado')), observacoes TEXT,
+  criado_por UUID REFERENCES usuarios(id), criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT acervo_argumentos_resposta_check CHECK (responde_a_id IS NULL OR (tipo = 'resposta' AND responde_a_id <> id))
+);
+CREATE INDEX idx_acervo_argumentos_tese ON acervo_argumentos (tese_id, tipo, status);
+CREATE INDEX idx_acervo_argumentos_responde ON acervo_argumentos (responde_a_id) WHERE responde_a_id IS NOT NULL;
+CREATE TABLE acervo_argumentos_precedentes (argumento_id UUID NOT NULL REFERENCES acervo_argumentos(id) ON DELETE CASCADE, precedente_id UUID NOT NULL REFERENCES acervo_precedentes(id) ON DELETE CASCADE, PRIMARY KEY(argumento_id,precedente_id));
+CREATE INDEX idx_acervo_argumentos_precedentes_prec ON acervo_argumentos_precedentes (precedente_id);
+CREATE TABLE acervo_pecas_argumentos (peca_id UUID NOT NULL REFERENCES acervo_pecas(id) ON DELETE CASCADE, argumento_id UUID NOT NULL REFERENCES acervo_argumentos(id) ON DELETE CASCADE, PRIMARY KEY(peca_id,argumento_id));
+CREATE INDEX idx_acervo_pecas_argumentos_arg ON acervo_pecas_argumentos (argumento_id);
+CREATE TABLE acervo_pecas_precedentes (peca_id UUID NOT NULL REFERENCES acervo_pecas(id) ON DELETE CASCADE, precedente_id UUID NOT NULL REFERENCES acervo_precedentes(id) ON DELETE CASCADE, PRIMARY KEY(peca_id,precedente_id));
+CREATE INDEX idx_acervo_pecas_precedentes_prec ON acervo_pecas_precedentes (precedente_id);

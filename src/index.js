@@ -13,6 +13,7 @@ import { migrarSessaoRevogavel } from './db/migracaoSessao.js';
 import { criarHealth }    from './health.js';
 import { logarVersoesBoot } from './utils/versaoPgDump.js';
 import { aplicarAprovadorReprotocolo } from './db/migracoes/aprovadorReprotocolo.js';
+import { aplicarAcervoConhecimento } from './db/migracoes/acervoConhecimento.js';
 import { aprovadoresConfigurados } from './services/reprotocolo/pacote.js';
 import { aplicarMigracaoSyncR06 } from './services/tribunal/syncMigracao.js';
 
@@ -1080,6 +1081,10 @@ async function iniciar() {
       await db.execute(`ALTER TABLE despachos_itens DROP CONSTRAINT IF EXISTS despachos_itens_folha_check`);
       await db.execute(`ALTER TABLE despachos_itens ADD CONSTRAINT despachos_itens_folha_check CHECK (folha IN ('assinaturas','gabinete','cartorio','outros','diligencia'))`);
     });
+    // Camada de conhecimento do acervo, fase 1: árvore e status de tese, argumentos (defesa da Fazenda ×
+    // resposta), ligações da peça com argumentos e precedentes, resultado por pedido. Numa transação e
+    // SEM .catch: se falhar, o boot falha e a versão anterior continua no ar.
+    await migrar('2026_11_23_acervo_conhecimento', () => db.transaction(tx => aplicarAcervoConhecimento(tx)));
 
     await migrar('2026_10_S03_sessao_revogavel', () => migrarSessaoRevogavel((sql) => db.execute(sql)));
     // S-13: gatilho de auditoria só-inserção, por último entre as migrações do esquema (ver o comentário do S-13 acima).

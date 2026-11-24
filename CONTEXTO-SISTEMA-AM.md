@@ -4033,3 +4033,15 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   produção (acervo_leitura + acervo_edicao, sem expiração). Verificado ao vivo com a chave: catálogo de
   teses e busca de precedente respondem 200; PATCH em tese inexistente chega à rota (404 "Tese não
   encontrada"); `POST /drive/documentos` bloqueado (404). Nenhum dado foi alterado no teste.
+
+### 23/11/2026 (noite) — Camada de conhecimento do acervo, fase 1 (branch, NÃO publicado)
+- Branch `feat/acervo-conhecimento` (backend). Spec: "AM - Estrutura Avancada do Acervo.md" (Drive, pasta BANCO DE DADOS), §4.1–4.3 e §7.
+- Migração `2026_11_23_acervo_conhecimento` (`src/db/migracoes/acervoConhecimento.js`, numa transação, sem `.catch`), só aditiva:
+  - `teses_acervo`: `tese_mae_id` (árvore; ciclo recusado na API e mãe ≠ própria no CHECK), `status` (ativa | em_risco | suspensa | superada, padrão ativa), `status_motivo`, `skill_slug`, `atualizado_em`.
+  - `acervo_argumentos` (tese, tipo fundamento | defesa_fazenda | resposta | preliminar | calculo, título, `responde_a_id`, `texto_modelo`, status em_teste | aprovado | abandonado, observações) + `acervo_argumentos_precedentes`.
+  - `acervo_pecas`: `data_decisao`, `resultado_por_pedido` (jsonb `[{pedido, resultado, observacao?}]`, resultado pendente | a-confirmar | deferido | parcialmente-deferido | indeferido | prejudicado | nao-apreciado) + `acervo_pecas_argumentos` e `acervo_pecas_precedentes`.
+- Rotas (`/api/acervo` e chave externa): `POST/PATCH /teses` aceitam `tese_mae` (slug), `status`, `status_motivo` (obrigatório fora de "ativa"; voltar a "ativa" limpa), `skill_slug`; `GET /teses` devolve esses campos. `GET/POST /argumentos`, `GET/PATCH /argumentos/:id` (resposta só aponta para `defesa_fazenda` da mesma tese ou de tese-mãe; defesa com respostas não muda tipo/tese; sem filtro, lista sem os abandonados; `incluir_maes=true`). `POST/PATCH /pecas` aceitam `argumentos` e `precedentes` (listas de id que substituem as anteriores, preservando ligações a precedente restrito que quem edita não vê); PATCH aceita `data_decisao` e `resultado_por_pedido`. `GET /impacto?tese=` (Master; inclui variantes, `variantes=false`, `protocolo_desde/ate`, `ente`) lista peças e processos.
+- Chave externa: `acervo_leitura` ganha argumentos e impacto; `acervo_edicao` ganha argumentos e `POST /pecas|precedentes/:id/arquivar`. Restaurar segue só na tela.
+- Auditoria com valor anterior (inclusive teses e ligações anteriores da peça) e `via_chave`; arquivar/restaurar passam a registrar antes/depois. Mensagem de enum inválido agora lista os valores aceitos.
+- Testes: `acervoExterno.test.js` (11 casos), `acervoConhecimento.test.js`; conferido também contra Postgres real (PGlite, migração 2x + fluxos completos) fora do repositório.
+- Pendências: merge/deploy; carga inicial dos argumentos (tabelas "Fazenda alega × resposta" das skills), lançar a árvore FGTS e o status do piso pela API; ferramentas MCP (`criar_argumento`, `atualizar_tese`, `impacto`…), `decisao_id` da peça, tela no frontend.
