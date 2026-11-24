@@ -533,7 +533,8 @@ function construirServidor(token) {
     description: 'Retroalimentação do resultado (§5.1), para a varredura do PJe: quando aparece sentença ou acórdão '
       + 'depois de uma peça "pendente". Grava a data da decisão; com resultado (só caso inequívoco) grava o resultado, '
       + 'sem ele deixa a peça pendente com o resultado por pedido "a-confirmar"; cria a decisão como precedente NÃO '
-      + 'conferido (ligado em decisao_id, com o link do documento) e uma tarefa para o Master conferir. Peça que já '
+      + 'conferido (ligado em decisao_id, com o link do documento) e uma tarefa para o Master conferir, com aviso '
+      + 'por WhatsApp (as decisões da mesma rotina saem juntas, em dia útil, 08h–20h). Peça que já '
       + 'tem resultado ou decisão registrada volta 409 sem alterar nada.',
     inputSchema: {
       id: z.string().uuid().describe('id da peça'),
