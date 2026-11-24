@@ -51,10 +51,10 @@ const ID = '66666666-6666-4666-8666-666666666666';
 test('lista as ferramentas novas; leitura marcada como somente leitura e arquivar como destrutiva', async () => {
   const { result } = await rpc('tools/list');
   const f = Object.fromEntries(result.tools.map(t => [t.name, t]));
-  for (const nome of ['criar_tese', 'atualizar_tese', 'listar_argumentos', 'ler_argumento', 'criar_argumento', 'atualizar_argumento', 'atualizar_peca', 'atualizar_precedente', 'arquivar_peca', 'arquivar_precedente', 'impacto_tese', 'listar_vigilancia', 'ler_vigilancia', 'criar_vigilancia', 'atualizar_vigilancia', 'listar_orgaos', 'ler_orgao', 'criar_orgao', 'atualizar_orgao', 'painel_acervo']) {
+  for (const nome of ['criar_tese', 'atualizar_tese', 'listar_argumentos', 'ler_argumento', 'criar_argumento', 'atualizar_argumento', 'atualizar_peca', 'atualizar_precedente', 'arquivar_peca', 'arquivar_precedente', 'impacto_tese', 'listar_vigilancia', 'ler_vigilancia', 'criar_vigilancia', 'atualizar_vigilancia', 'listar_orgaos', 'ler_orgao', 'criar_orgao', 'atualizar_orgao', 'painel_acervo', 'contexto_redacao', 'impacto_precedente']) {
     assert.ok(f[nome], nome);
   }
-  for (const nome of ['listar_argumentos', 'ler_argumento', 'impacto_tese', 'listar_vigilancia', 'ler_vigilancia', 'listar_orgaos', 'ler_orgao', 'painel_acervo']) assert.equal(f[nome].annotations.readOnlyHint, true, nome);
+  for (const nome of ['listar_argumentos', 'ler_argumento', 'impacto_tese', 'listar_vigilancia', 'ler_vigilancia', 'listar_orgaos', 'ler_orgao', 'painel_acervo', 'contexto_redacao', 'impacto_precedente']) assert.equal(f[nome].annotations.readOnlyHint, true, nome);
   for (const nome of ['arquivar_peca', 'arquivar_precedente']) assert.equal(f[nome].annotations.destructiveHint, true, nome);
   assert.deepEqual(f.criar_argumento.inputSchema.required.sort(), ['tese', 'tipo', 'titulo']);
 });
@@ -81,6 +81,10 @@ test('cada ferramenta chama a rota certa, com o mesmo token e só os campos envi
     ['ler_orgao', { id: ID }, 'GET', `/api/acervo/orgaos/${ID}`, null],
     ['listar_orgaos', { tribunal: 'TJPB' }, 'GET', '/api/acervo/orgaos', null],
     ['painel_acervo', {}, 'GET', '/api/acervo/painel', null],
+    ['contexto_redacao', { tese: 'fgts-nulidade' }, 'GET', '/api/acervo/contexto-redacao', null],
+    ['impacto_precedente', { precedente_id: ID }, 'GET', '/api/acervo/impacto', null],
+    ['criar_peca', { teses: ['fgts-nulidade'], titulo: 'Impugnação', tipo_peca: 'impugnacao-contestacao', ente: 'estado-paraiba', instancia: '1grau', argumentos: [ID], precedentes: [ID] }, 'POST', '/api/acervo/pecas', { teses: ['fgts-nulidade'], titulo: 'Impugnação', tipo_peca: 'impugnacao-contestacao', ente: 'estado-paraiba', instancia: '1grau', argumentos: [ID], precedentes: [ID] }],
+    ['atualizar_vigilancia', { id: ID, ultima_situacao: 'Julgado', criar_tarefa: false }, 'PATCH', `/api/acervo/vigilancia/${ID}`, { ultima_situacao: 'Julgado', criar_tarefa: false }],
     ['atualizar_peca', { id: ID, orgao_julgador_id: ID }, 'PATCH', `/api/acervo/pecas/${ID}`, { orgao_julgador_id: ID }],
   ];
   for (const [nome, args, metodo, caminho, corpo] of casos) {
@@ -118,4 +122,14 @@ test('valores fora da lista são recusados antes de chamar a API', async () => {
   assert.ok(falhou(await chamar('atualizar_peca', { id: ID, decisao_id: 'nao-e-uuid' })));
   assert.ok(falhou(await chamar('criar_orgao', { nome: 'X', tribunal: 'TJPB', instancia: 'nenhuma' })));
   assert.equal(recebidas.length, 0);
+});
+
+test('contexto_redacao e impacto_precedente levam os filtros na query', async () => {
+  recebidas.length = 0;
+  await chamar('contexto_redacao', { tese: 'fgts-nulidade', ente: 'estado-paraiba', orgao_julgador_id: ID, tipo_peca: 'impugnacao-contestacao' });
+  assert.deepEqual(recebidas[0].query, { tese: 'fgts-nulidade', ente: 'estado-paraiba', orgao_julgador_id: ID, tipo_peca: 'impugnacao-contestacao' });
+  await chamar('impacto_precedente', { precedente_id: ID, variantes: false, protocolo_desde: '2026-04-17' });
+  assert.deepEqual(recebidas[1].query, { protocolo_desde: '2026-04-17', precedente: ID, variantes: 'false' });
+  await chamar('impacto_precedente', { vigilancia_id: ID });
+  assert.deepEqual(recebidas[2].query, { vigilancia: ID });
 });

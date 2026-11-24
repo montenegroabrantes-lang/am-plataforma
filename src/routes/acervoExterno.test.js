@@ -225,3 +225,10 @@ test('painel pela chave: só leitura', async () => {
   assert.equal(permissaoNecessaria('POST', '/painel'), null);
   assert.equal(permissaoNecessaria('PATCH', '/painel'), null);
 });
+
+test('contexto de redação pela chave: só leitura; impacto por precedente ou vigilância também', async () => {
+  const { permissaoNecessaria } = await import('./acervoExterno.js');
+  assert.equal(permissaoNecessaria('GET', '/contexto-redacao'), 'acervo_leitura');
+  assert.equal(permissaoNecessaria('POST', '/contexto-redacao'), null);
+  assert.equal(permissaoNecessaria('GET', '/impacto'), 'acervo_leitura');
+});
