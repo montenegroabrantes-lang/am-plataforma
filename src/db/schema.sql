@@ -551,3 +551,12 @@ CREATE TABLE acervo_vigilancia_historico (
   situacao_anterior TEXT, situacao_nova TEXT, mudou BOOLEAN NOT NULL, registrado_por UUID REFERENCES usuarios(id), registrado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_acervo_vigilancia_historico ON acervo_vigilancia_historico (vigilancia_id, registrado_em DESC);
+-- Fase 3 (24/11/2026): órgão julgador.
+CREATE TABLE acervo_orgaos (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), nome TEXT NOT NULL, tribunal TEXT NOT NULL, instancia TEXT NOT NULL,
+  magistrado_atual TEXT, notas TEXT, ativo BOOLEAN NOT NULL DEFAULT true, criado_por UUID REFERENCES usuarios(id),
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT acervo_orgaos_unico UNIQUE (tribunal, nome)
+);
+ALTER TABLE acervo_pecas ADD COLUMN orgao_julgador_id UUID REFERENCES acervo_orgaos(id) ON DELETE SET NULL;
+CREATE INDEX idx_acervo_pecas_orgao ON acervo_pecas (orgao_julgador_id) WHERE orgao_julgador_id IS NOT NULL;

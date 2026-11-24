@@ -165,6 +165,7 @@ const CAMPOS_PECA = {
   modelo_aprovado: v => Boolean(v),
   data_decisao: v => dataOuNulo(v, 'data_decisao'),
   decisao_id: v => { if (v === null || v === '') return null; if (!uuidValido(String(v))) throw invalido('decisao_id inválido.'); return String(v).toLowerCase(); },
+  orgao_julgador_id: v => { if (v === null || v === '') return null; if (!uuidValido(String(v))) throw invalido('orgao_julgador_id inválido.'); return String(v).toLowerCase(); },
   resultado_por_pedido: v => resultadoPorPedido(v),
 };
 const CAMPOS_PRECEDENTE = {
@@ -294,6 +295,7 @@ for (const [tipo, tabela, rel, coluna, campos, chave, ligacoesTipo] of [
     const ligacoes = await lerLigacoes(b, ligacoesTipo, req);
     // §4.3: a decisão da peça é um precedente do acervo, visível a quem edita.
     if (alteracoes.decisao_id) await validarPrecedentes([alteracoes.decisao_id], req);
+    if (alteracoes.orgao_julgador_id) await conferirOrgao(alteracoes.orgao_julgador_id);
     if (!Object.keys(alteracoes).length && !teses && !Object.keys(ligacoes).length) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Nenhum campo editável informado.' });
     const anterior = await db.queryOne(`SELECT * FROM ${tabela} x WHERE x.id=$1${escopoVisibilidade(req, 'x')}`, [req.params.id]);
     if (!anterior) return res.status(404).json({ ok:false, erro:'Não encontrado.' });
@@ -664,6 +666,107 @@ acervoRouter.patch('/vigilancia/:id', apenasMaster, async (req, res) => { try {
     impacto = { teses_consideradas: consideradas.map(t => t.slug), ...(await calcularImpacto(req, consideradas.map(t => t.id))) };
   }
   res.json({ ok:true, vigilancia, ...(verifica ? { mudou } : {}), ...(impacto ? { impacto, aviso:'A situação mudou: revise as peças e os processos listados em "impacto". A decisão sobre cada ação é do advogado.' } : {}) });
+} catch (e) { erro(res, e); } });
+
+// ── Órgão julgador (§4.4) ─────────────────────────────────────────────────────────────────
+// Juízo como entidade, ligado às peças (acervo_pecas.orgao_julgador_id), com a estatística de êxito do
+// escritório naquele juízo por tese e por pedido. O texto livre acervo_pecas.orgao_julgador continua.
+const CAMPOS_ORGAO = {
+  nome: v => texto(v, 'nome', { obrigatorio: true, max: 300 }),
+  tribunal: v => texto(v, 'tribunal', { obrigatorio: true, max: 100 }),
+  instancia: v => validarEnum(v, INSTANCIAS, 'instancia', true),
+  magistrado_atual: v => texto(v, 'magistrado_atual', { max: 200 }),
+  notas: v => texto(v, 'notas', { max: 5000 }),
+  ativo: v => Boolean(v),
+};
+// Sentido do resultado para o escritório. Em contrarrazões o recurso é da parte contrária: desprovido é bom.
+const RESULTADO_FAVORAVEL = new Set(['procedente', 'parcialmente-procedente', 'provido', 'parcialmente-provido', 'acordo']);
+const RESULTADO_DESFAVORAVEL = new Set(['improcedente', 'desprovido', 'nao-conhecido', 'extinto-sem-merito']);
+export function sentidoResultado(tipoPeca, resultado) {
+  if (tipoPeca === 'contrarrazoes') {
+    if (resultado === 'desprovido' || resultado === 'nao-conhecido') return 'favoravel';
+    if (resultado === 'provido' || resultado === 'parcialmente-provido') return 'desfavoravel';
+  }
+  if (RESULTADO_FAVORAVEL.has(resultado)) return 'favoravel';
+  if (RESULTADO_DESFAVORAVEL.has(resultado)) return 'desfavoravel';
+  return null; // pendente, desistência: fora da taxa
+}
+const taxa = (fav, decididas) => (decididas ? Math.round((fav * 1000) / decididas) / 10 : null);
+async function estatisticaOrgao(req, orgaoId) {
+  const pecas = await db.query(`SELECT a.id, a.tipo_peca, a.resultado, a.resultado_por_pedido,
+      ARRAY(SELECT t.slug FROM acervo_pecas_teses apt JOIN teses_acervo t ON t.id=apt.tese_id WHERE apt.peca_id=a.id ORDER BY t.slug) teses
+    FROM acervo_pecas a WHERE a.orgao_julgador_id=$1 AND a.arquivada_em IS NULL${escopoVisibilidade(req)}`, [orgaoId]);
+  const porTese = new Map(); const porPedido = new Map();
+  let decididas = 0; let favoraveis = 0;
+  for (const p of pecas) {
+    const sentido = sentidoResultado(p.tipo_peca, p.resultado);
+    if (sentido) { decididas++; if (sentido === 'favoravel') favoraveis++; }
+    for (const slug of p.teses) {
+      const x = porTese.get(slug) ?? { tese: slug, pecas: 0, sem_decisao: 0, favoraveis: 0, desfavoraveis: 0 };
+      x.pecas++;
+      if (!sentido) x.sem_decisao++; else if (sentido === 'favoravel') x.favoraveis++; else x.desfavoraveis++;
+      porTese.set(slug, x);
+    }
+    for (const item of Array.isArray(p.resultado_por_pedido) ? p.resultado_por_pedido : []) {
+      const chave = String(item.pedido || '').trim().toLowerCase();
+      if (!chave) continue;
+      const y = porPedido.get(chave) ?? { pedido: String(item.pedido).trim(), total: 0, resultados: {} };
+      y.total++; y.resultados[item.resultado] = (y.resultados[item.resultado] || 0) + 1;
+      porPedido.set(chave, y);
+    }
+  }
+  return {
+    total_pecas: pecas.length, decididas, favoraveis, taxa_exito: taxa(favoraveis, decididas),
+    por_tese: [...porTese.values()].map(x => ({ ...x, taxa_exito: taxa(x.favoraveis, x.favoraveis + x.desfavoraveis) })).sort((a, b) => b.pecas - a.pecas),
+    por_pedido: [...porPedido.values()].sort((a, b) => b.total - a.total),
+  };
+}
+const selectOrgao = req => `SELECT o.*, (SELECT COUNT(*) FROM acervo_pecas a WHERE a.orgao_julgador_id=o.id AND a.arquivada_em IS NULL${escopoVisibilidade(req)})::int AS pecas FROM acervo_orgaos o`;
+async function conferirOrgao(id) {
+  if (!uuidValido(String(id))) throw invalido('orgao_julgador_id inválido.');
+  if (!(await db.queryOne('SELECT id FROM acervo_orgaos WHERE id=$1', [id]))) throw invalido('Órgão julgador não encontrado (cadastre antes em /orgaos).');
+}
+
+acervoRouter.get('/orgaos', async (req, res) => { try {
+  const params = []; const where = [];
+  if (req.query.ativo !== 'todos') where.push(req.query.ativo === 'false' ? 'o.ativo=false' : 'o.ativo=true');
+  if (req.query.tribunal) { params.push(String(req.query.tribunal)); where.push(`o.tribunal=$${params.length}`); }
+  if (String(req.query.q ?? '').trim()) { params.push(`%${String(req.query.q).trim()}%`); where.push(`(o.nome ILIKE $${params.length} OR COALESCE(o.magistrado_atual,'') ILIKE $${params.length})`); }
+  const orgaos = await db.query(`${selectOrgao(req)}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY o.tribunal, o.instancia, o.nome`, params);
+  res.json({ ok:true, orgaos });
+} catch (e) { erro(res, e); } });
+
+acervoRouter.get('/orgaos/:id', async (req, res) => { try {
+  if (!uuidValido(req.params.id)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'ID inválido.' });
+  const o = await db.queryOne(`${selectOrgao(req)} WHERE o.id=$1`, [req.params.id]);
+  if (!o) return res.status(404).json({ ok:false, erro:'Órgão julgador não encontrado.' });
+  res.json({ ok:true, orgao: { ...o, estatistica: await estatisticaOrgao(req, o.id) } });
+} catch (e) { erro(res, e); } });
+
+acervoRouter.post('/orgaos', apenasMaster, async (req, res) => { try {
+  const b = req.body || {};
+  const c = montarAlteracoes(b, CAMPOS_ORGAO);
+  for (const campo of ['nome', 'tribunal', 'instancia']) c[campo] = CAMPOS_ORGAO[campo](b[campo]);
+  const [o] = await db.query(`INSERT INTO acervo_orgaos (nome, tribunal, instancia, magistrado_atual, notas, ativo, criado_por) VALUES ($1,$2,$3,$4,$5,$6,$7)
+    ON CONFLICT ON CONSTRAINT acervo_orgaos_unico DO NOTHING RETURNING id`, [c.nome, c.tribunal, c.instancia, c.magistrado_atual ?? null, c.notas ?? null, c.ativo ?? true, req.user.id]);
+  if (!o) return res.status(409).json({ ok:false, erro:'validacao', mensagem:'Já existe órgão com esse nome nesse tribunal.' });
+  await registrarAuditoria({ usuarioId:req.user.id, acao:'criar', entidade:'acervo_orgao', entidadeId:o.id, valorDepois:{ ...c, ...marcaChave(req) }, ip:req._ip });
+  res.status(201).json({ ok:true, orgao: await db.queryOne(`${selectOrgao(req)} WHERE o.id=$1`, [o.id]) });
+} catch (e) { erro(res, e); } });
+
+acervoRouter.patch('/orgaos/:id', apenasMaster, async (req, res) => { try {
+  if (!uuidValido(req.params.id)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'ID inválido.' });
+  const colunas = montarAlteracoes(req.body || {}, CAMPOS_ORGAO);
+  if (!Object.keys(colunas).length) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Nenhum campo editável informado (nome, tribunal, instancia, magistrado_atual, notas, ativo).' });
+  const anterior = await db.queryOne('SELECT * FROM acervo_orgaos WHERE id=$1', [req.params.id]);
+  if (!anterior) return res.status(404).json({ ok:false, erro:'Órgão julgador não encontrado.' });
+  const sets = []; const params = [];
+  for (const [campo, valor] of Object.entries(colunas)) { params.push(valor); sets.push(`${campo}=$${params.length}`); }
+  sets.push('atualizado_em=NOW()'); params.push(anterior.id);
+  try { await db.execute(`UPDATE acervo_orgaos SET ${sets.join(', ')} WHERE id=$${params.length}`, params); }
+  catch (e) { if (e.code === '23505') throw invalido('Já existe órgão com esse nome nesse tribunal.'); throw e; }
+  await registrarAuditoria({ usuarioId:req.user.id, acao:'editar', entidade:'acervo_orgao', entidadeId:anterior.id, valorAntes:Object.fromEntries(Object.keys(colunas).map(c => [c, anterior[c]])), valorDepois:{ ...colunas, ...marcaChave(req) }, ip:req._ip });
+  res.json({ ok:true, orgao: await db.queryOne(`${selectOrgao(req)} WHERE o.id=$1`, [anterior.id]) });
 } catch (e) { erro(res, e); } });
 
 // Grava uma peça/planilha (HTML) como PDF e/ou Word na pasta do cliente no Drive (Master).

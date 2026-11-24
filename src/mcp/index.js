@@ -71,7 +71,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.7.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.8.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -343,6 +343,7 @@ function construirServidor(token) {
       precedentes: z.array(z.string().uuid()).max(200).optional().describe('ids dos precedentes citados'),
       data_decisao: z.string().nullable().optional().describe('AAAA-MM-DD da sentença/acórdão'),
       decisao_id: z.string().uuid().nullable().optional().describe('id do precedente do acervo gerado pelo julgamento desta peça (registre antes com criar_precedente)'),
+      orgao_julgador_id: z.string().uuid().nullable().optional().describe('id do órgão julgador (listar_orgaos); o texto orgao_julgador continua'),
       resultado_por_pedido: z.array(z.object({
         pedido: z.string().min(1).max(200),
         resultado: z.enum(RESULTADOS_PEDIDO),
@@ -438,6 +439,55 @@ function construirServidor(token) {
     },
     annotations: escrita,
   }, async ({ id, ...b }) => saida(await chamar('PATCH', `/acervo/vigilancia/${id}`, token, b)));
+
+  s.registerTool('listar_orgaos', {
+    title: 'Listar órgãos julgadores',
+    description: 'Juízos, varas e turmas cadastrados no acervo, com o magistrado atual, as notas de padrões observados e '
+      + 'quantas peças do escritório estão ligadas a cada um. Use para achar o id antes de ligar uma peça.',
+    inputSchema: {
+      tribunal: z.string().optional().describe('Ex.: TJPB, TJPE, TRF5'),
+      q: z.string().max(200).optional().describe('Parte do nome do órgão ou do magistrado'),
+      ativo: z.enum(['true', 'false', 'todos']).optional(),
+    },
+    annotations: leitura,
+  }, async a => saidaCompacta(await chamar('GET', `/acervo/orgaos${qs(a)}`, token)));
+
+  s.registerTool('ler_orgao', {
+    title: 'Ler órgão julgador (com êxito no juízo)',
+    description: 'Um órgão julgador com a estatística do escritório nele: peças, decididas, taxa de êxito, por tese e '
+      + 'por pedido (resultado_por_pedido). Em contrarrazões, recurso da parte contrária desprovido conta a favor. '
+      + 'Use antes de redigir para saber o que esse juízo costuma deferir ou negar.',
+    inputSchema: { id: z.string().uuid() },
+    annotations: leitura,
+  }, async ({ id }) => saidaCompacta(await chamar('GET', `/acervo/orgaos/${id}`, token)));
+
+  s.registerTool('criar_orgao', {
+    title: 'Cadastrar órgão julgador',
+    description: 'Cadastra um juízo, vara ou turma (único por tribunal + nome). Confira em listar_orgaos se já existe.',
+    inputSchema: {
+      nome: z.string().min(1).max(300),
+      tribunal: z.string().min(1).max(100),
+      instancia: z.enum(INSTANCIAS),
+      magistrado_atual: z.string().max(200).optional(),
+      notas: z.string().max(5000).optional().describe('Padrões observados (ex.: não aceita reflexo no 13º)'),
+    },
+    annotations: escrita,
+  }, async a => saida(await chamar('POST', '/acervo/orgaos', token, a)));
+
+  s.registerTool('atualizar_orgao', {
+    title: 'Atualizar órgão julgador',
+    description: 'Edita nome, tribunal, instância, magistrado atual, notas ou ativo de um órgão julgador. Fica na auditoria.',
+    inputSchema: {
+      id: z.string().uuid(),
+      nome: z.string().min(1).max(300).optional(),
+      tribunal: z.string().min(1).max(100).optional(),
+      instancia: z.enum(INSTANCIAS).optional(),
+      magistrado_atual: z.string().max(200).nullable().optional(),
+      notas: z.string().max(5000).nullable().optional(),
+      ativo: z.boolean().optional(),
+    },
+    annotations: escrita,
+  }, async ({ id, ...b }) => saida(await chamar('PATCH', `/acervo/orgaos/${id}`, token, b)));
 
   s.registerTool('impacto_tese', {
     title: 'Impacto de uma tese (peças e processos)',
