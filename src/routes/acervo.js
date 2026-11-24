@@ -964,8 +964,8 @@ const diasEntre = (de, ate) => Math.round((Date.parse(ate) - Date.parse(de)) / 8
 // Retrato atual do acervo. Usado pela rota /painel e pelo relatório mensal (curadoria, teses, vigilância).
 export async function montarPainel(req) {
   const vis = escopoVisibilidade(req);
-  const [pecas, teses, orgaos, argumentos, usoArgumentos, precedentes, vigilancia] = await Promise.all([
-    db.query(`SELECT a.id, a.titulo, a.processo_numero, a.tipo_peca, a.ente, a.resultado, a.data_protocolo, a.data_decisao, a.drive_url, a.drive_file_id, a.orgao_julgador_id,
+  const [pecas, teses, orgaos, argumentos, usoArgumentos, precedentes, vigilancia, semPeca] = await Promise.all([
+    db.query(`SELECT a.id, a.titulo, a.processo_numero, a.tipo_peca, a.ente, a.resultado, a.data_protocolo, a.data_decisao, a.drive_url, a.drive_file_id, a.orgao_julgador_id, a.retroativa,
         ARRAY(SELECT t.slug FROM acervo_pecas_teses apt JOIN teses_acervo t ON t.id=apt.tese_id WHERE apt.peca_id=a.id ORDER BY t.slug) teses
       FROM acervo_pecas a WHERE a.arquivada_em IS NULL${vis}`),
     db.query(`SELECT t.slug, t.label, t.status, t.status_motivo, m.slug AS tese_mae FROM teses_acervo t LEFT JOIN teses_acervo m ON m.id=t.tese_mae_id WHERE t.ativo=true`),
@@ -979,6 +979,13 @@ export async function montarPainel(req) {
         (SELECT MAX(h.registrado_em) FROM acervo_vigilancia_historico h WHERE h.vigilancia_id=v.id AND h.mudou AND h.situacao_anterior IS NOT NULL) AS mudou_em,
         ARRAY(SELECT t.slug FROM acervo_vigilancia_teses vt JOIN teses_acervo t ON t.id=vt.tese_id WHERE vt.vigilancia_id=v.id ORDER BY t.slug) teses
       FROM acervo_vigilancia v WHERE v.ativo=true ORDER BY v.verificado_em ASC NULLS FIRST`),
+    // Processos ativos e não restritos sem peça no acervo (spec "Peças que faltam"); detalhes em /cobertura.
+    db.query(`SELECT pr.numero AS processo_numero, t.slug AS tese FROM processos pr
+        LEFT JOIN produtos pd ON pd.id=pr.produto_id LEFT JOIN teses_acervo t ON t.id=pd.tese_acervo_id
+      WHERE pr.status='ativo' AND pr.visibilidade='normal'
+        AND NOT EXISTS (SELECT 1 FROM acervo_pecas a WHERE a.arquivada_em IS NULL AND (a.processo_id=pr.id
+          OR REGEXP_REPLACE(COALESCE(a.processo_numero,''),'[^0-9]','','g')=REGEXP_REPLACE(pr.numero,'[^0-9]','','g')))
+      ORDER BY pr.data_distribuicao DESC NULLS LAST, pr.numero`),
   ]);
   const hoje = new Date().toISOString().slice(0, 10);
   const nomeTese = new Map(teses.map(t => [t.slug, t.label]));
@@ -1035,7 +1042,10 @@ export async function montarPainel(req) {
     pecas_sem_drive: pecas.filter(p => !p.drive_url && !p.drive_file_id).map(resumoPeca),
     pecas_sem_protocolo: protocoladas.filter(p => !p.data_protocolo).map(resumoPeca),
     pecas_sem_orgao: protocoladas.filter(p => !p.orgao_julgador_id).map(resumoPeca),
-    pecas_sem_argumento: protocoladas.filter(p => TIPOS_COM_ARGUMENTO.has(p.tipo_peca) && !comArgumento.has(p.id)).map(p => ({ ...resumoPeca(p), tipo_peca: p.tipo_peca })),
+    // D4: a peça cadastrada retroativamente (inicial mínima) tem contador próprio, para não esconder as novas.
+    pecas_sem_argumento: protocoladas.filter(p => !p.retroativa && TIPOS_COM_ARGUMENTO.has(p.tipo_peca) && !comArgumento.has(p.id)).map(p => ({ ...resumoPeca(p), tipo_peca: p.tipo_peca })),
+    retroativas_sem_argumento: protocoladas.filter(p => p.retroativa && !comArgumento.has(p.id)).map(p => ({ ...resumoPeca(p), tipo_peca: p.tipo_peca })),
+    processos_sem_peca: semPeca.map(p => ({ processo_numero: p.processo_numero, tese: p.tese })),
   };
 
   return {
@@ -1056,6 +1066,37 @@ export async function montarPainel(req) {
   };
 }
 acervoRouter.get('/painel', async (req, res) => { try { res.json(await montarPainel(req)); } catch (e) { erro(res, e); } });
+
+// ── Peças que faltam no acervo, etapa 1 (spec "AM - Spec Pecas que Faltam no Acervo.md") ──────────────────
+// Cobertura (só leitura): processos ativos e não restritos sem peça no acervo. Produtos: ligação produto → tese,
+// com a sugestão pelo nome (D5: o usuário aprova; a ligação é gravada pelo PATCH). Sem nome de cliente.
+acervoRouter.get('/cobertura', async (req, res) => { try {
+  const { tese, ente, com_decisao, limite } = req.query;
+  if (ente && !ENTES.has(ente)) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'ente inválido.' });
+  const lim = limite === undefined ? 500 : Number(limite);
+  if (!Number.isInteger(lim) || lim < 1 || lim > 2000) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'limite deve ser um inteiro de 1 a 2000.' });
+  const { listarCobertura } = await import('../services/coberturaAcervo.js');
+  res.json({ ok:true, ...(await listarCobertura({ tese: tese || null, ente: ente || null, comDecisao: com_decisao === 'true' || com_decisao === '1', limite: lim })) });
+} catch (e) { erro(res, e); } });
+acervoRouter.get('/produtos', async (req, res) => { try {
+  const { listarProdutos } = await import('../services/coberturaAcervo.js');
+  res.json({ ok:true, produtos: await listarProdutos() });
+} catch (e) { erro(res, e); } });
+acervoRouter.patch('/produtos/:id/tese', apenasMaster, async (req, res) => { try {
+  if (!uuidValido(req.params.id)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'ID inválido.' });
+  const slug = req.body?.tese ?? null;
+  let teseId = null;
+  if (slug !== null) {
+    const t = await db.queryOne('SELECT id FROM teses_acervo WHERE slug=$1 AND ativo=true', [String(slug)]);
+    if (!t) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Tese inexistente.' });
+    teseId = t.id;
+  }
+  const antes = await db.queryOne('SELECT p.id, p.nome, t.slug AS tese FROM produtos p LEFT JOIN teses_acervo t ON t.id=p.tese_acervo_id WHERE p.id=$1', [req.params.id]);
+  if (!antes) return res.status(404).json({ ok:false, erro:'Não encontrado.' });
+  await db.query('UPDATE produtos SET tese_acervo_id=$1 WHERE id=$2', [teseId, req.params.id]);
+  await registrarAuditoria({ usuarioId:req.user.id, acao:'ligar_tese', entidade:'produto', entidadeId:antes.id, valorAntes:{ tese: antes.tese }, valorDepois:{ tese: slug, ...marcaChave(req) }, ip:req._ip });
+  res.json({ ok:true, produto: { id: antes.id, nome: antes.nome, tese: slug } });
+} catch (e) { erro(res, e); } });
 
 // ── Contexto antes de redigir (§5.2): GET /contexto-redacao?tese=slug[&ente=][&orgao_julgador_id=][&tipo_peca=] ──
 // O que a skill da tese precisa antes de escrever: situação da tese, vigilância, precedentes-âncora conferidos,

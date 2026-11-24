@@ -77,6 +77,7 @@ CREATE TABLE produtos (
   ativo                 BOOLEAN NOT NULL DEFAULT true,
   criado_em             TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- produtos.tese_acervo_id (ligação com a tese do acervo) é acrescentada no fim do arquivo, depois de teses_acervo.
 
 -- ─────────────────────────────────────────────
 --  CLIENTES
@@ -578,3 +579,7 @@ CREATE TABLE acervo_relatorios_mensais (
   mes TEXT PRIMARY KEY CHECK (mes ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
   dados JSONB NOT NULL, fechado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), fechado_por UUID REFERENCES usuarios(id)
 );
+-- Peças que faltam no acervo (24/11/2026): ligação produto → tese do acervo e peça cadastrada retroativamente.
+ALTER TABLE produtos ADD COLUMN tese_acervo_id UUID REFERENCES teses_acervo(id) ON DELETE SET NULL;
+ALTER TABLE acervo_pecas ADD COLUMN retroativa BOOLEAN NOT NULL DEFAULT false;
+CREATE INDEX idx_acervo_pecas_processo ON acervo_pecas (processo_id) WHERE arquivada_em IS NULL;
