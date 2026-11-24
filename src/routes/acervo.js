@@ -584,9 +584,10 @@ async function gravarTesesVigilancia(id, teses) {
   await db.execute('DELETE FROM acervo_vigilancia_teses WHERE vigilancia_id=$1', [id]);
   await db.execute('INSERT INTO acervo_vigilancia_teses (vigilancia_id, tese_id) SELECT $1, unnest($2::uuid[])', [id, teses.map(t => t.id)]);
 }
-// Registra uma verificação. Devolve se a situação mudou em relação à anterior.
+// Registra uma verificação. Devolve se a situação mudou em relação à anterior. A primeira situação
+// registrada (sem anterior) não é mudança: só passa a ser acompanhada.
 async function registrarVerificacao(id, anterior, nova, req) {
-  const mudou = (anterior ?? '') !== (nova ?? '');
+  const mudou = Boolean(anterior) && anterior !== (nova ?? '');
   await db.execute('INSERT INTO acervo_vigilancia_historico (vigilancia_id, situacao_anterior, situacao_nova, mudou, registrado_por) VALUES ($1,$2,$3,$4,$5)', [id, anterior ?? null, nova, mudou, req.user.id]);
   return mudou;
 }
@@ -804,8 +805,8 @@ acervoRouter.get('/painel', async (req, res) => { try {
     db.query(`SELECT pa.argumento_id, pa.peca_id FROM acervo_pecas_argumentos pa JOIN acervo_pecas a ON a.id=pa.peca_id WHERE a.arquivada_em IS NULL${vis}`),
     db.query(`SELECT p.id, p.processo_numero, p.orgao, p.tribunal, p.data_julgamento, p.conferido FROM acervo_precedentes p WHERE p.arquivada_em IS NULL${escopoVisibilidade(req, 'p')}`),
     db.query(`SELECT v.id, v.referencia, v.ultima_situacao, v.verificado_em,
-        (SELECT h.mudou FROM acervo_vigilancia_historico h WHERE h.vigilancia_id=v.id ORDER BY h.registrado_em DESC LIMIT 1) AS ultima_mudou,
-        (SELECT MAX(h.registrado_em) FROM acervo_vigilancia_historico h WHERE h.vigilancia_id=v.id AND h.mudou) AS mudou_em,
+        (SELECT h.mudou AND h.situacao_anterior IS NOT NULL FROM acervo_vigilancia_historico h WHERE h.vigilancia_id=v.id ORDER BY h.registrado_em DESC LIMIT 1) AS ultima_mudou,
+        (SELECT MAX(h.registrado_em) FROM acervo_vigilancia_historico h WHERE h.vigilancia_id=v.id AND h.mudou AND h.situacao_anterior IS NOT NULL) AS mudou_em,
         ARRAY(SELECT t.slug FROM acervo_vigilancia_teses vt JOIN teses_acervo t ON t.id=vt.tese_id WHERE vt.vigilancia_id=v.id ORDER BY t.slug) teses
       FROM acervo_vigilancia v WHERE v.ativo=true ORDER BY v.verificado_em ASC NULLS FIRST`),
   ]);
