@@ -165,6 +165,17 @@ export function dividirEmLotes(lista, tamanho = TAMANHO_LOTE) {
   return lotes;
 }
 
+// Dia (AAAA-MM-DD) de uma data do DataJud, como veio, sem conversão de fuso. O TJPB manda dataAjuizamento no
+// formato compacto AAAAMMDDhhmmss ("20250711120411"); cortar os 10 primeiros caracteres dava "2025071112", que
+// ninguém lia, e por isso processos.data_distribuicao nunca era preenchida (corrigido em 24/11/2026).
+export function diaDataJud(valor) {
+  const s = String(valor ?? '').trim();
+  const m = s.match(/^(\d{4})-?(\d{2})-?(\d{2})/);
+  if (!m) return null;
+  const [, a, mes, dia] = m;
+  return +mes >= 1 && +mes <= 12 && +dia >= 1 && +dia <= 31 ? `${a}-${mes}-${dia}` : null;
+}
+
 // dataHoraUltimaAtualizacao do DataJud → Date (ou null). Aceita ISO 8601 (com ou sem fuso; sem fuso vale UTC,
 // para a comparação não depender do fuso do servidor) e o formato compacto AAAAMMDDhhmmss que alguns
 // tribunais usam em outros campos de data. O que não der para ler devolve null: quem chama trata como "mudou".
@@ -340,7 +351,7 @@ function parsear(src) {
   const grau              = src.grau                   || null;
   const valor_causa       = src.valorCausa             ? Number(src.valorCausa) : null;
   const comarca_ibge      = src.orgaoJulgador?.codigoMunicipioIBGE || null;
-  const data_ajuizamento  = src.dataAjuizamento        ? src.dataAjuizamento.substring(0, 10) : null;
+  const data_ajuizamento  = diaDataJud(src.dataAjuizamento);
 
   // Assuntos processuais (Resolução 46 CNJ) — usado para ranking de matérias
   const assuntos = (src.assuntos || [])
