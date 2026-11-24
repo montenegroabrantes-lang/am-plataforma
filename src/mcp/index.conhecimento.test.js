@@ -51,10 +51,10 @@ const ID = '66666666-6666-4666-8666-666666666666';
 test('lista as ferramentas novas; leitura marcada como somente leitura e arquivar como destrutiva', async () => {
   const { result } = await rpc('tools/list');
   const f = Object.fromEntries(result.tools.map(t => [t.name, t]));
-  for (const nome of ['criar_tese', 'atualizar_tese', 'listar_argumentos', 'ler_argumento', 'criar_argumento', 'atualizar_argumento', 'atualizar_peca', 'atualizar_precedente', 'arquivar_peca', 'arquivar_precedente', 'impacto_tese']) {
+  for (const nome of ['criar_tese', 'atualizar_tese', 'listar_argumentos', 'ler_argumento', 'criar_argumento', 'atualizar_argumento', 'atualizar_peca', 'atualizar_precedente', 'arquivar_peca', 'arquivar_precedente', 'impacto_tese', 'listar_vigilancia', 'ler_vigilancia', 'criar_vigilancia', 'atualizar_vigilancia']) {
     assert.ok(f[nome], nome);
   }
-  for (const nome of ['listar_argumentos', 'ler_argumento', 'impacto_tese']) assert.equal(f[nome].annotations.readOnlyHint, true, nome);
+  for (const nome of ['listar_argumentos', 'ler_argumento', 'impacto_tese', 'listar_vigilancia', 'ler_vigilancia']) assert.equal(f[nome].annotations.readOnlyHint, true, nome);
   for (const nome of ['arquivar_peca', 'arquivar_precedente']) assert.equal(f[nome].annotations.destructiveHint, true, nome);
   assert.deepEqual(f.criar_argumento.inputSchema.required.sort(), ['tese', 'tipo', 'titulo']);
 });
@@ -71,6 +71,11 @@ test('cada ferramenta chama a rota certa, com o mesmo token e só os campos envi
     ['arquivar_peca', { id: ID }, 'POST', `/api/acervo/pecas/${ID}/arquivar`, null],
     ['arquivar_precedente', { id: ID }, 'POST', `/api/acervo/precedentes/${ID}/arquivar`, null],
     ['ler_argumento', { id: ID }, 'GET', `/api/acervo/argumentos/${ID}`, null],
+    ['atualizar_peca', { id: ID, decisao_id: ID }, 'PATCH', `/api/acervo/pecas/${ID}`, { decisao_id: ID }],
+    ['criar_vigilancia', { referencia: 'Tema 1218', teses: ['piso-salarial-magisterio-pb'], ultima_situacao: 'Pedido de vista' }, 'POST', '/api/acervo/vigilancia', { referencia: 'Tema 1218', teses: ['piso-salarial-magisterio-pb'], ultima_situacao: 'Pedido de vista' }],
+    ['atualizar_vigilancia', { id: ID, ultima_situacao: 'Julgado' }, 'PATCH', `/api/acervo/vigilancia/${ID}`, { ultima_situacao: 'Julgado' }],
+    ['ler_vigilancia', { id: ID }, 'GET', `/api/acervo/vigilancia/${ID}`, null],
+    ['listar_vigilancia', { tese: 'fgts-nulidade' }, 'GET', '/api/acervo/vigilancia', null],
   ];
   for (const [nome, args, metodo, caminho, corpo] of casos) {
     recebidas.length = 0;
@@ -103,5 +108,7 @@ test('valores fora da lista são recusados antes de chamar a API', async () => {
   assert.ok(falhou(await chamar('atualizar_peca', { id: ID, resultado_por_pedido: [{ pedido: 'FGTS', resultado: 'ganhou' }] })));
   assert.ok(falhou(await chamar('atualizar_peca', { id: ID, drive_url: 'javascript:alert(1)' })));
   assert.ok(falhou(await chamar('criar_tese', { slug: 'Inválido!', label: 'X' })));
+  assert.ok(falhou(await chamar('criar_vigilancia', { referencia: 'X', teses: [] })));
+  assert.ok(falhou(await chamar('atualizar_peca', { id: ID, decisao_id: 'nao-e-uuid' })));
   assert.equal(recebidas.length, 0);
 });

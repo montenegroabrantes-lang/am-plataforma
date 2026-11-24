@@ -45,6 +45,7 @@ function instalar() {
     if (s.startsWith('SELECT a.id, a.titulo')) return [{ id: ID, processo_id: null, processo_numero: '0876116-26.2026.8.15.2001', cliente_nome: 'X' }];
     if (s.startsWith('SELECT precedente_id AS id') || s.startsWith('SELECT argumento_id AS id')) return [];
     if (s.startsWith('INSERT INTO acervo_argumentos')) return [{ id: ID }];
+    if (s.startsWith('SELECT DISTINCT v.id, v.referencia')) return [];
     if (s.startsWith('SELECT g.*, t.slug AS tese, ARRAY')) return [];
     if (s.startsWith('SELECT slug FROM teses_acervo')) return params[0].map(slug => ({ slug }));
     if (s.startsWith('SELECT a.*') || s.startsWith('SELECT p.*')) return [];
@@ -185,4 +186,16 @@ test('impacto: lista peças e processos da tese, sem restritos; tese inexistente
   assert.ok(consultas.some(s => s.startsWith('SELECT a.id, a.titulo') && s.includes("visibilidade_snapshot = 'normal'") && s.includes('a.data_protocolo >= $2')));
   assert.equal((await chamar('am_live_leitura', 'GET', '/impacto?tese=nao-existe')).status, 404);
   assert.equal((await chamar('am_live_leitura', 'GET', '/impacto')).status, 422);
+});
+
+test('vigilância e decisão da peça pela chave: leitura lê, edição escreve, o resto fica de fora', async () => {
+  const { permissaoNecessaria } = await import('./acervoExterno.js');
+  assert.equal(permissaoNecessaria('GET', '/vigilancia'), 'acervo_leitura');
+  assert.equal(permissaoNecessaria('GET', `/vigilancia/${ID}`), 'acervo_leitura');
+  assert.equal(permissaoNecessaria('POST', '/vigilancia'), 'acervo_edicao');
+  assert.equal(permissaoNecessaria('PATCH', `/vigilancia/${ID}`), 'acervo_edicao');
+  assert.equal(permissaoNecessaria('DELETE', `/vigilancia/${ID}`), null);
+  assert.equal(permissaoNecessaria('POST', `/vigilancia/${ID}/arquivar`), null);
+  assert.equal((await chamar('am_live_leitura', 'POST', '/vigilancia', { referencia: 'Tema 1', teses: ['fgts-nulidade'] })).status, 403);
+  assert.equal((await chamar('am_live_edicao', 'PATCH', `/pecas/${ID}`, { decisao_id: 'nao-e-uuid' })).status, 422);
 });
