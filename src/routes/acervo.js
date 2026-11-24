@@ -754,9 +754,12 @@ acervoRouter.patch('/vigilancia/:id', apenasMaster, async (req, res) => { try {
 // peça "pendente" com o resultado por pedido "a-confirmar"; cria a decisão como precedente NÃO conferido
 // (com o link do documento) e liga em decisao_id; e cria uma tarefa para o Master conferir. Só peça pendente.
 const TIPOS_PRIMEIRO_GRAU = new Set(['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','memorial']);
-acervoRouter.post('/pecas/:id/decisao', apenasMaster, async (req, res) => { try {
-  if (!uuidValido(req.params.id)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'ID inválido.' });
-  const b = req.body || {};
+// Registra a decisão de uma peça (usada pela rota e pelas decisões lidas nas publicações do Diário).
+// `fonte`: de onde a decisão foi lida ('PJe' ou 'Diário'). Devolve { status, body }; validação lança 422.
+export const TIPOS_DECISAO = new Set(['Sentença', 'Acórdão', 'Decisão']);
+export async function registrarDecisao(req, pecaId, dados, { fonte = 'PJe' } = {}) {
+  if (!uuidValido(pecaId)) return { status: 400, body: { ok:false, erro:'validacao', mensagem:'ID inválido.' } };
+  const b = dados || {};
   const data = dataOuNulo(b.data_decisao, 'data_decisao');
   if (!data) throw invalido('Informe data_decisao (AAAA-MM-DD).');
   const evidencia = texto(b.evidencia, 'evidencia', { obrigatorio: true, max: 1000 });
@@ -766,23 +769,24 @@ acervoRouter.post('/pecas/:id/decisao', apenasMaster, async (req, res) => { try 
   const instancia = b.instancia ? validarEnum(b.instancia, INSTANCIAS, 'instancia') : null;
   const orgaoInformado = texto(b.orgao, 'orgao', { max: 300 });
   const criarTarefa = b.criar_tarefa !== false;
+  if (b.tipo_decisao && !TIPOS_DECISAO.has(b.tipo_decisao)) throw invalido('tipo_decisao deve ser Sentença, Acórdão ou Decisão.');
 
   const peca = await db.queryOne(`SELECT a.*, o.nome AS orgao_nome, ARRAY(SELECT apt.tese_id FROM acervo_pecas_teses apt WHERE apt.peca_id=a.id) tese_ids
-    FROM acervo_pecas a LEFT JOIN acervo_orgaos o ON o.id=a.orgao_julgador_id WHERE a.id=$1 AND a.arquivada_em IS NULL${escopoVisibilidade(req, 'a')}`, [req.params.id]);
-  if (!peca) return res.status(404).json({ ok:false, erro:'Peça não encontrada.' });
-  if (peca.resultado !== 'pendente') return res.status(409).json({ ok:false, erro:'conflito', mensagem:`A peça já tem resultado (${peca.resultado}); nada foi alterado.` });
-  if (peca.decisao_id) return res.status(409).json({ ok:false, erro:'conflito', mensagem:'A decisão desta peça já foi registrada (decisao_id); confira a tarefa aberta.' });
+    FROM acervo_pecas a LEFT JOIN acervo_orgaos o ON o.id=a.orgao_julgador_id WHERE a.id=$1 AND a.arquivada_em IS NULL${escopoVisibilidade(req, 'a')}`, [pecaId]);
+  if (!peca) return { status: 404, body: { ok:false, erro:'Peça não encontrada.' } };
+  if (peca.resultado !== 'pendente') return { status: 409, body: { ok:false, erro:'conflito', mensagem:`A peça já tem resultado (${peca.resultado}); nada foi alterado.` } };
+  if (peca.decisao_id) return { status: 409, body: { ok:false, erro:'conflito', mensagem:'A decisão desta peça já foi registrada (decisao_id); confira a tarefa aberta.' } };
   if (peca.data_protocolo && data < String(peca.data_protocolo instanceof Date ? peca.data_protocolo.toISOString() : peca.data_protocolo).slice(0, 10)) throw invalido('A decisão é anterior ao protocolo da peça.');
 
   const sentido = resultado ? sentidoResultado(peca.tipo_peca, resultado) : null;
-  const tipoDecisao = TIPOS_PRIMEIRO_GRAU.has(peca.tipo_peca) ? 'Sentença' : 'Acórdão';
-  const porPedido = resultado ? null : [{ pedido: 'Resultado geral', resultado: 'a-confirmar', observacao: `Leitura automática do PJe: ${evidencia}`.slice(0, 1000) }];
+  const tipoDecisao = b.tipo_decisao || (TIPOS_PRIMEIRO_GRAU.has(peca.tipo_peca) ? 'Sentença' : 'Acórdão');
+  const porPedido = resultado ? null : [{ pedido: 'Resultado geral', resultado: 'a-confirmar', observacao: `Leitura automática (${fonte}): ${evidencia}`.slice(0, 1000) }];
 
   const feito = await db.transaction(async t => {
     const precedente = await t.queryOne(`INSERT INTO acervo_precedentes (processo_id,processo_numero,orgao,tribunal,instancia,data_julgamento,ente,ratio,resultado,favoravel,vinculante,conferido,fonte_primaria_url,drive_url,visibilidade_snapshot,criado_por)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,false,false,NULL,$11,$12,$13) RETURNING id`,
       [peca.processo_id, peca.processo_numero, orgaoInformado || peca.orgao_nome || peca.orgao_julgador || 'A conferir', peca.tribunal, instancia || peca.instancia, data, peca.ente,
-        `A CONFERIR (${tipoDecisao.toLowerCase()} lida automaticamente no PJe): ${evidencia}`.slice(0, 2000), resultado || 'pendente', sentido === 'favoravel', documento, peca.visibilidade_snapshot, req.user.id]);
+        `A CONFERIR (${tipoDecisao.toLowerCase()} lida automaticamente no ${fonte}): ${evidencia}`.slice(0, 2000), resultado || 'pendente', sentido === 'favoravel', documento, peca.visibilidade_snapshot, req.user.id]);
     const precId = precedente.id;
     if (peca.tese_ids.length) await t.query('INSERT INTO acervo_precedentes_teses (precedente_id, tese_id) SELECT $1, unnest($2::uuid[]) ON CONFLICT DO NOTHING', [precId, peca.tese_ids]);
     await t.query(`UPDATE acervo_pecas SET data_decisao=$1, decisao_id=$2, ${resultado ? 'resultado=$3' : "resultado_por_pedido=CASE WHEN resultado_por_pedido IS NULL OR resultado_por_pedido='[]'::jsonb THEN $3::jsonb ELSE resultado_por_pedido END"}, atualizado_em=NOW() WHERE id=$4`,
@@ -790,7 +794,7 @@ acervoRouter.post('/pecas/:id/decisao', apenasMaster, async (req, res) => { try 
     let tarefa = null;
     if (criarTarefa) {
       const instrucao = [
-        `${tipoDecisao} de ${data.split('-').reverse().join('/')} lida automaticamente no PJe: ${evidencia}`,
+        `${tipoDecisao} de ${data.split('-').reverse().join('/')} lida automaticamente no ${fonte}: ${evidencia}`,
         resultado ? `Resultado gravado: ${resultado}${sentido ? ` (${sentido === 'favoravel' ? 'favorável' : 'desfavorável'} ao cliente)` : ''}. Confirme e preencha o resultado por pedido.` : 'Resultado não identificado com segurança: a peça ficou "pendente", com o resultado por pedido "a-confirmar".',
         `No acervo: confirmar resultado e resultado por pedido da peça (atualizar_peca); conferir o precedente criado (ratio, ementa e fonte primária; conferir_precedente) ou arquivá-lo se não servir.${documento ? `\nDocumento: ${documento}` : ''}`,
       ].join('\n\n');
@@ -801,7 +805,7 @@ acervoRouter.post('/pecas/:id/decisao', apenasMaster, async (req, res) => { try 
   });
   await registrarAuditoria({ usuarioId:req.user.id, acao:'decisao_detectada', entidade:'acervo_peca', entidadeId:peca.id,
     valorAntes:{ resultado: peca.resultado, data_decisao: peca.data_decisao, decisao_id: null },
-    valorDepois:{ data_decisao: data, resultado: resultado || 'pendente', a_confirmar: !resultado, decisao_id: feito.precedenteId, tarefa_id: feito.tarefa?.id ?? null, evidencia, ...marcaChave(req) }, ip:req._ip });
+    valorDepois:{ data_decisao: data, resultado: resultado || 'pendente', a_confirmar: !resultado, decisao_id: feito.precedenteId, tarefa_id: feito.tarefa?.id ?? null, evidencia, fonte, tipo_decisao: tipoDecisao, ...marcaChave(req) }, ip:req._ip });
   // Aviso por WhatsApp ao Master da tarefa (spec dos avisos do acervo, etapa 2). Espera alguns minutos para
   // as decisões da mesma rotina saírem juntas; quem despacha é o agendamento de 10 em 10 minutos.
   let aviso = null;
@@ -812,7 +816,11 @@ acervoRouter.post('/pecas/:id/decisao', apenasMaster, async (req, res) => { try 
         enviarApos: new Date(Date.now() + ESPERA_AGRUPAR_DECISOES_MIN * 60000) });
     } catch (e) { console.warn('[AvisosAcervo] Não foi possível enfileirar o aviso da decisão:', e.message); }
   }
-  res.status(201).json({ ok:true, peca_id: peca.id, data_decisao: data, resultado: resultado || 'pendente', a_confirmar: !resultado, precedente_id: feito.precedenteId, ...(feito.tarefa ? { tarefa: feito.tarefa } : {}), ...(aviso ? { aviso_whatsapp: 'enfileirado' } : {}) });
+  return { status: 201, body: { ok:true, peca_id: peca.id, data_decisao: data, resultado: resultado || 'pendente', a_confirmar: !resultado, precedente_id: feito.precedenteId, ...(feito.tarefa ? { tarefa: feito.tarefa } : {}), ...(aviso ? { aviso_whatsapp: 'enfileirado' } : {}) } };
+}
+acervoRouter.post('/pecas/:id/decisao', apenasMaster, async (req, res) => { try {
+  const r = await registrarDecisao(req, req.params.id, req.body);
+  res.status(r.status).json(r.body);
 } catch (e) { erro(res, e); } });
 
 // ── Órgão julgador (§4.4) ─────────────────────────────────────────────────────────────────
