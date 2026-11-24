@@ -4034,7 +4034,7 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   teses e busca de precedente respondem 200; PATCH em tese inexistente chega à rota (404 "Tese não
   encontrada"); `POST /drive/documentos` bloqueado (404). Nenhum dado foi alterado no teste.
 
-### 23/11/2026 (noite) — Camada de conhecimento do acervo, fase 1 (branch, NÃO publicado)
+### 23/11/2026 (noite) — Camada de conhecimento do acervo, fase 1 (PUBLICADO — PR #18, merge 4f6e6bd)
 - Branch `feat/acervo-conhecimento` (backend). Spec: "AM - Estrutura Avancada do Acervo.md" (Drive, pasta BANCO DE DADOS), §4.1–4.3 e §7.
 - Migração `2026_11_23_acervo_conhecimento` (`src/db/migracoes/acervoConhecimento.js`, numa transação, sem `.catch`), só aditiva:
   - `teses_acervo`: `tese_mae_id` (árvore; ciclo recusado na API e mãe ≠ própria no CHECK), `status` (ativa | em_risco | suspensa | superada, padrão ativa), `status_motivo`, `skill_slug`, `atualizado_em`.
@@ -4044,4 +4044,12 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Chave externa: `acervo_leitura` ganha argumentos e impacto; `acervo_edicao` ganha argumentos e `POST /pecas|precedentes/:id/arquivar`. Restaurar segue só na tela.
 - Auditoria com valor anterior (inclusive teses e ligações anteriores da peça) e `via_chave`; arquivar/restaurar passam a registrar antes/depois. Mensagem de enum inválido agora lista os valores aceitos.
 - Testes: `acervoExterno.test.js` (11 casos), `acervoConhecimento.test.js`; conferido também contra Postgres real (PGlite, migração 2x + fluxos completos) fora do repositório.
-- Pendências: merge/deploy; carga inicial dos argumentos (tabelas "Fazenda alega × resposta" das skills), lançar a árvore FGTS e o status do piso pela API; ferramentas MCP (`criar_argumento`, `atualizar_tese`, `impacto`…), `decisao_id` da peça, tela no frontend.
+- Publicado: PR #18 mesclado (merge `4f6e6bd`). Conferido em produção com a chave do acervo: migração aplicada (`GET /teses` devolve `tese_mae`, `status`, `status_motivo`, `skill_slug`), `GET /argumentos` e `GET /impacto` respondem 200. Carga e lançamentos de 24/11 na seção seguinte.
+
+### 24/11/2026 — Acervo: árvore, status do piso, carga de argumentos (produção) e ferramentas MCP (branch)
+- **Dados em produção (pela chave "Acervo jurídico — Claude", com auditoria e `via_chave`):**
+  - Árvore FGTS: `fgts-pernambuco`, `fgts-espirito-santo` e `fgts-servidor-federal` com `tese_mae = fgts-nulidade`. `GET /impacto?tese=fgts-nulidade` soma as 4 teses: 49 peças, 42 processos.
+  - `piso-salarial-magisterio-pb` = `em_risco`, motivo: modulação do Tema 1308 (26/10/2026). `GET /impacto?tese=piso-salarial-magisterio-pb&protocolo_desde=2026-04-17` devolve as 6 iniciais fora da ressalva (0876116-26.2026, 0877312-31.2026, 0805811-05.2026, 0879897-56.2026, 0806168-82.2026, 0806265-82.2026); a 0878742-52.2025 aparece sem data de protocolo e está na ressalva.
+  - Carga inicial de 62 argumentos, todos `em_teste`, tirados das tabelas "defesa × resposta" das skills `temas-551-916-stf-am`, `adicional-noturno-insalubridade` e `magisterio-direito-v01` (versões de 23/11/2026): fgts-nulidade 14 (2 fundamentos, 6 defesas, 6 respostas), fgts-pernambuco 6, adicional-noturno 15, insalubridade-profissional-saude 12, piso-salarial-magisterio-pb 15 (inclui 1 cálculo e os blocos prontos de FGTS restrito às diferenças e de prescrição em `texto_modelo`). Toda resposta ligada à defesa; precedentes ligados só entre os conferidos. A resposta pela Lei 15.437/2026 está marcada como tese não testada. Passar para `aprovado` é decisão do advogado.
+- **Ferramentas MCP (branch `feat/acervo-mcp-conhecimento`, servidor `acervo-am-advogados` 1.6.0):** `criar_tese`, `atualizar_tese`, `listar_argumentos`, `ler_argumento`, `criar_argumento`, `atualizar_argumento`, `atualizar_peca` (inclui argumentos, precedentes, `data_decisao`, `resultado_por_pedido`), `atualizar_precedente`, `arquivar_peca`, `arquivar_precedente`, `impacto_tese`; `listar_teses` com descrição nova. Chamam as rotas de `/api/acervo` com o mesmo token (escopo "acervo"). Testes: `src/mcp/index.conhecimento.test.js` (4 casos).
+- Pendências: merge/deploy das ferramentas MCP e reconexão do conector no Claude para carregá-las; as skills passarem a consultar `listar_argumentos` em vez das próprias tabelas; `decisao_id` da peça; órgão julgador e vigilância (§4.4–4.5 da spec); tela no frontend.
