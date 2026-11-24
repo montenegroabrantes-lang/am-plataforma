@@ -248,7 +248,8 @@ function construirServidor(token) {
     title: 'Atualizar tese (árvore, situação, skill, pasta)',
     description: 'Edita uma tese pelo slug: rótulo, tese-mãe (null tira da árvore), situação (ativa, em_risco, suspensa, '
       + 'superada — fora de "ativa" exige status_motivo; voltar a "ativa" limpa o motivo), skill e pasta do Drive. '
-      + 'Mudar a situação NÃO altera peças: use impacto_tese para listar o que revisar. Fica na auditoria.',
+      + 'Mudar a situação NÃO altera peças: use impacto_tese para listar o que revisar. A mudança de situação manda '
+      + 'aviso por WhatsApp a quem mudou (dia útil, 08h–20h). Fica na auditoria.',
     inputSchema: {
       slug: z.string(),
       label: z.string().min(1).max(200).optional(),

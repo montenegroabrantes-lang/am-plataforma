@@ -8,7 +8,7 @@ import { salvarDocumentoHtml } from '../services/drive/documentos.js';
 import { salvarPecaPadrao } from '../services/drive/pecas.js';
 import { prepararProtocolo } from '../services/drive/protocolo.js';
 import { deletarEventoCalendar } from '../services/calendar/index.js';
-import { enfileirarAviso, montarAvisoVigilancia, despacharEmSeguida, montarLinhaDecisao, ESPERA_AGRUPAR_DECISOES_MIN } from '../services/avisosAcervo.js';
+import { enfileirarAviso, montarAvisoVigilancia, despacharEmSeguida, montarLinhaDecisao, montarAvisoTese, ESPERA_AGRUPAR_DECISOES_MIN } from '../services/avisosAcervo.js';
 import { concluirTarefaComNumero } from './tarefas.js';
 
 export const acervoRouter = Router();
@@ -391,7 +391,18 @@ acervoRouter.patch('/teses/:slug', apenasMaster, async (req, res) => { try {
   await db.execute(`UPDATE teses_acervo SET ${sets.join(', ')} WHERE id=$${params.length}`, params);
   const tese = semId(await lerTese(anterior.slug));
   await registrarAuditoria({ usuarioId:req.user.id, acao:'editar', entidade:'tese_acervo', entidadeId:anterior.id, valorAntes:semId(anterior), valorDepois:{ ...tese, ...marcaChave(req) }, ip:req._ip });
-  res.json({ ok:true, tese });
+  // Mudou a situação (ex.: ativa → em risco): aviso por WhatsApp a quem mudou, com o alcance no acervo.
+  let aviso = null;
+  if (colunas.status && colunas.status !== anterior.status) {
+    try {
+      const consideradas = await tesesComVariantes([anterior.id]);
+      const imp = await calcularImpacto(req, consideradas.map(t => t.id));
+      aviso = await enfileirarAviso(db, { tipo: 'acervo_tese', chaveEvento: `tese:${anterior.id}:${tese.status}:${Date.now()}`, usuarioId: req.user.id,
+        texto: montarAvisoTese({ label: tese.label, slug: tese.slug, de: anterior.status, para: tese.status, motivo: tese.status_motivo, totalPecas: imp.total_pecas, totalProcessos: imp.total_processos }) });
+      if (aviso) despacharEmSeguida(['acervo_tese']);
+    } catch (e) { console.warn('[AvisosAcervo] Não foi possível enfileirar o aviso da tese:', e.message); }
+  }
+  res.json({ ok:true, tese, ...(aviso ? { aviso_whatsapp: 'enfileirado' } : {}) });
 } catch (e) { erro(res, e); } });
 
 // ── Argumentos (§4.2): fundamento | defesa_fazenda | resposta | preliminar | calculo ─────────
@@ -727,7 +738,7 @@ acervoRouter.patch('/vigilancia/:id', apenasMaster, async (req, res) => { try {
   let aviso = null;
   if (tarefa) {
     try {
-      aviso = await enfileirarAviso(db, { tipo: 'acervo_vigilancia', chaveEvento: `vigilancia:${tarefa.id}`, usuarioId: req.user.id, tarefaId: tarefa.id,
+      aviso = await enfileirarAviso(db, { tipo: 'acervo_vigilancia', chaveEvento: `vigilancia:${anterior.id}:${tarefa.id}`, usuarioId: req.user.id, tarefaId: tarefa.id,
         texto: montarAvisoVigilancia({ referencia: vigilancia.referencia, situacao, totalPecas: impacto.total_pecas, totalProcessos: impacto.total_processos, teses: impacto.teses_consideradas }) });
       if (aviso) despacharEmSeguida(['acervo_vigilancia']);
     } catch (e) { console.warn('[AvisosAcervo] Não foi possível enfileirar o aviso da vigilância:', e.message); }
@@ -939,6 +950,7 @@ acervoRouter.get('/painel', async (req, res) => { try {
     db.query(`SELECT pa.argumento_id, pa.peca_id FROM acervo_pecas_argumentos pa JOIN acervo_pecas a ON a.id=pa.peca_id WHERE a.arquivada_em IS NULL${vis}`),
     db.query(`SELECT p.id, p.processo_numero, p.orgao, p.tribunal, p.data_julgamento, p.conferido FROM acervo_precedentes p WHERE p.arquivada_em IS NULL${escopoVisibilidade(req, 'p')}`),
     db.query(`SELECT v.id, v.referencia, v.ultima_situacao, v.verificado_em,
+        (SELECT MAX(a.enviado_em) FROM avisos_acervo a WHERE a.tipo='acervo_vigilancia' AND a.status='enviado' AND a.chave_evento LIKE 'vigilancia:' || v.id || ':%') AS ultimo_aviso_em,
         (SELECT h.mudou AND h.situacao_anterior IS NOT NULL FROM acervo_vigilancia_historico h WHERE h.vigilancia_id=v.id ORDER BY h.registrado_em DESC LIMIT 1) AS ultima_mudou,
         (SELECT MAX(h.registrado_em) FROM acervo_vigilancia_historico h WHERE h.vigilancia_id=v.id AND h.mudou AND h.situacao_anterior IS NOT NULL) AS mudou_em,
         ARRAY(SELECT t.slug FROM acervo_vigilancia_teses vt JOIN teses_acervo t ON t.id=vt.tese_id WHERE vt.vigilancia_id=v.id ORDER BY t.slug) teses
