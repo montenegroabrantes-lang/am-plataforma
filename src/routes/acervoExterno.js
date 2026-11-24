@@ -30,6 +30,7 @@ const EDICAO = {
     new RegExp('^/(pecas|precedentes|teses|argumentos|vigilancia|orgaos)$'),
     new RegExp(`^/(pecas|precedentes)/${ID}/arquivar$`),
     new RegExp(`^/pecas/${ID}/decisao$`),
+    new RegExp('^/decisoes-publicacoes/reprocessar$'),
   ],
   PATCH: [
     new RegExp(`^/(pecas|precedentes|argumentos|vigilancia|orgaos)/${ID}$`),
