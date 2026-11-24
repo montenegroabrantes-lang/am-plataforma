@@ -4,21 +4,28 @@ import { acervoRouter } from './acervo.js';
 // Acervo jurídico pela chave de integração externa (X-AM-API-Key), 23/11/2026.
 // Montado em /api/integracoes/v1/acervo, DEPOIS de autenticarChaveExterna.
 //
-// - acervo_leitura: listar/buscar, ler peça ou precedente, catálogo de teses.
-// - acervo_edicao: criar e editar teses, peças e precedentes; registrar resultado; conferir precedente.
-// Fica de fora de propósito: Drive, prazos, protocolos, contexto do processo, arquivar/restaurar
-// e qualquer registro de processo restrito (a chave nunca vê "restrito").
+// - acervo_leitura: listar/buscar, ler peça, precedente ou argumento, catálogo de teses, impacto de
+//   uma tese (peças e processos).
+// - acervo_edicao: criar e editar teses, peças, precedentes e argumentos; registrar resultado;
+//   conferir precedente; arquivar peça ou precedente (desde a camada de conhecimento).
+// Fica de fora de propósito: Drive, prazos, protocolos, contexto do processo, restaurar arquivados
+// (só na tela) e qualquer registro de processo restrito (a chave nunca vê "restrito").
 const ID = '[0-9a-fA-F-]{36}';
 const SLUG = '[a-z0-9-]{1,80}';
 const LEITURA = [
   new RegExp('^/$'),
   new RegExp('^/teses$'),
-  new RegExp(`^/(pecas|precedentes)/${ID}$`),
+  new RegExp('^/argumentos$'),
+  new RegExp('^/impacto$'),
+  new RegExp(`^/(pecas|precedentes|argumentos)/${ID}$`),
 ];
 const EDICAO = {
-  POST: [new RegExp('^/(pecas|precedentes|teses)$')],
+  POST: [
+    new RegExp('^/(pecas|precedentes|teses|argumentos)$'),
+    new RegExp(`^/(pecas|precedentes)/${ID}/arquivar$`),
+  ],
   PATCH: [
-    new RegExp(`^/(pecas|precedentes)/${ID}$`),
+    new RegExp(`^/(pecas|precedentes|argumentos)/${ID}$`),
     new RegExp(`^/pecas/${ID}/resultado$`),
     new RegExp(`^/precedentes/${ID}/conferir$`),
     new RegExp(`^/teses/${SLUG}$`),

@@ -16,13 +16,18 @@ const TIPOS = new Set(['inicial','emenda-inicial','impugnacao-contestacao','espe
 const RESULTADOS = new Set(['pendente','procedente','parcialmente-procedente','improcedente','provido','parcialmente-provido','desprovido','nao-conhecido','extinto-sem-merito','acordo','desistencia']);
 const ENTES = new Set(['municipio-joao-pessoa','estado-paraiba','municipio-outro-pb','estado-pernambuco','estado-espirito-santo','uniao','inss','alpb','particular','outro']);
 const INSTANCIAS = new Set(['1grau','2grau','turma-recursal','stj','stf','tre-pb','tse','administrativo']);
+// Camada de conhecimento (23/11/2026): situação da tese, argumentos e resultado de cada pedido da peça.
+const STATUS_TESE = new Set(['ativa','em_risco','suspensa','superada']);
+const TIPOS_ARGUMENTO = new Set(['fundamento','defesa_fazenda','resposta','preliminar','calculo']);
+const STATUS_ARGUMENTO = new Set(['em_teste','aprovado','abandonado']);
+const RESULTADOS_PEDIDO = new Set(['pendente','a-confirmar','deferido','parcialmente-deferido','indeferido','prejudicado','nao-apreciado']);
 const page = (v, fallback = 1, max = 200) => Math.max(1, Math.min(max, Number.parseInt(v, 10) || fallback));
 
 function podeVerRestrito(req) { return Boolean(req.user?.pode_marcar_restrito); }
 function escopoVisibilidade(req, alias = 'a') { return podeVerRestrito(req) ? '' : ` AND ${alias}.visibilidade_snapshot = 'normal'`; }
 function validarEnum(valor, conjunto, campo, obrigatorio = false) {
   if ((valor === undefined || valor === null || valor === '') && !obrigatorio) return null;
-  if (!conjunto.has(valor)) { const e = new Error(`${campo} inválido.`); e.status = 422; throw e; }
+  if (!conjunto.has(valor)) { const e = new Error(`${campo} inválido. Valores aceitos: ${[...conjunto].join(', ')}.`); e.status = 422; throw e; }
   return valor;
 }
 // S-23: os links do acervo (Drive e fonte primária) viram botão "Abrir fonte" — só aceitam https://.
@@ -77,7 +82,7 @@ async function gravarTeses(tipo, id, slugs) {
 }
 function erro(res, err) { if (err.status) return res.status(err.status).json({ ok: false, erro: 'validacao', mensagem: err.message }); res.status(500).json({ ok: false, erro: 'interno', mensagem: mensagemErroInterno(registrarErroInterno(err, res.req)) }); }
 
-acervoRouter.get('/teses', async (_req, res) => res.json({ ok:true, teses: await db.query('SELECT slug,label,drive_folder_id FROM teses_acervo WHERE ativo=true ORDER BY label') }));
+acervoRouter.get('/teses', async (_req, res) => res.json({ ok:true, teses: await db.query(`SELECT t.slug, t.label, t.drive_folder_id, m.slug AS tese_mae, t.status, t.status_motivo, t.skill_slug FROM teses_acervo t LEFT JOIN teses_acervo m ON m.id=t.tese_mae_id WHERE t.ativo=true ORDER BY t.label`) }));
 
 acervoRouter.get('/', async (req, res) => {
   const { q='', tese, ente, tribunal, tipo, instancia, resultado, aba='todos', arquivados='false' } = req.query;
@@ -110,7 +115,8 @@ acervoRouter.get('/', async (req, res) => {
 
 acervoRouter.post('/pecas', apenasMaster, async (req,res) => { try {
   const b=req.body||{}; const teses=normalizarTeses(b.teses); await validarTeses(teses); validarEnum(b.tipo_peca,TIPOS,'tipo_peca',true); validarEnum(b.ente,ENTES,'ente',true); validarEnum(b.instancia,INSTANCIAS,'instancia',true); validarEnum(b.resultado||'pendente',RESULTADOS,'resultado'); if (b.ente==='municipio-outro-pb'&&!String(b.ente_detalhe||'').trim()) { const e=new Error('Informe o município.');e.status=422;throw e; }
-  const ctx=await processoContexto(b.processo_id,b.processo_numero,b.instancia); const [nova]=await db.query(`INSERT INTO acervo_pecas (processo_id,processo_numero,cliente_id,cliente_nome,titulo,tipo_peca,ente,ente_detalhe,tribunal,instancia,orgao_julgador,relator,data_protocolo,drive_file_id,drive_url,resultado,resumo,modelo_aprovado,visibilidade_snapshot,criado_por) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,[ctx.processoId,ctx.numero||b.processo_numero||null,ctx.clienteId||b.cliente_id||null,ctx.clienteNome||b.cliente_nome||'Sem cliente vinculado',String(b.titulo||b.tipo_peca).trim(),b.tipo_peca,b.ente,b.ente_detalhe||null,b.tribunal||null,b.instancia,b.orgao_julgador||null,b.relator||null,b.data_protocolo||null,b.drive_file_id||null,urlHttps(b.drive_url,'drive_url'),b.resultado||'pendente',b.resumo||null,Boolean(b.modelo_aprovado),ctx.visibilidade,req.user.id]); await gravarTeses('acervo_pecas',nova.id,teses); await registrarAuditoria({usuarioId:req.user.id,acao:'criar',entidade:'acervo_peca',entidadeId:nova.id,valorDepois:{teses,tipo:b.tipo_peca},ip:req._ip}); res.status(201).json({ok:true,peca:nova});
+  const ligacoes=await lerLigacoes(b,LIGACOES_PECA,req);
+  const ctx=await processoContexto(b.processo_id,b.processo_numero,b.instancia); const [nova]=await db.query(`INSERT INTO acervo_pecas (processo_id,processo_numero,cliente_id,cliente_nome,titulo,tipo_peca,ente,ente_detalhe,tribunal,instancia,orgao_julgador,relator,data_protocolo,drive_file_id,drive_url,resultado,resumo,modelo_aprovado,visibilidade_snapshot,criado_por) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) RETURNING *`,[ctx.processoId,ctx.numero||b.processo_numero||null,ctx.clienteId||b.cliente_id||null,ctx.clienteNome||b.cliente_nome||'Sem cliente vinculado',String(b.titulo||b.tipo_peca).trim(),b.tipo_peca,b.ente,b.ente_detalhe||null,b.tribunal||null,b.instancia,b.orgao_julgador||null,b.relator||null,b.data_protocolo||null,b.drive_file_id||null,urlHttps(b.drive_url,'drive_url'),b.resultado||'pendente',b.resumo||null,Boolean(b.modelo_aprovado),ctx.visibilidade,req.user.id]); await gravarTeses('acervo_pecas',nova.id,teses); await trocarLigacoes(LIGACOES_PECA,nova.id,ligacoes,req); await registrarAuditoria({usuarioId:req.user.id,acao:'criar',entidade:'acervo_peca',entidadeId:nova.id,valorDepois:{teses,tipo:b.tipo_peca,...ligacoes,...marcaChave(req)},ip:req._ip}); res.status(201).json({ok:true,peca:{...nova,...ligacoes}});
 }catch(e){erro(res,e);} });
 
 acervoRouter.post('/precedentes', apenasMaster, async (req,res) => { try {
@@ -123,8 +129,8 @@ acervoRouter.patch('/precedentes/:id/conferir', apenasMaster, async (req,res)=>{
 acervoRouter.patch('/pecas/:id/resultado', apenasMaster, async (req,res)=>{ try { if(!uuidValido(req.params.id)) return res.status(400).json({ok:false,erro:'validacao',mensagem:'ID inv\u00e1lido.'}); const b=req.body||{}; validarEnum(b.resultado,RESULTADOS,'resultado',true); const [p]=await db.query(`UPDATE acervo_pecas SET resultado=$1,resumo=COALESCE($2,resumo),atualizado_em=NOW() WHERE id=$3${escopoVisibilidade(req,'acervo_pecas')} RETURNING *`,[b.resultado,b.resumo||null,req.params.id]); if(!p) return res.status(404).json({ok:false,erro:'N\u00e3o encontrado.'}); await registrarAuditoria({usuarioId:req.user.id,acao:'atualizar',entidade:'acervo_peca',entidadeId:p.id,valorDepois:{resultado:b.resultado},ip:req._ip}); res.json({ok:true,peca:p}); }catch(e){erro(res,e);} });
 
 for (const [tipo,tabela] of [['pecas','acervo_pecas'],['precedentes','acervo_precedentes']]) {
-  acervoRouter.post(`/${tipo}/:id/arquivar`, apenasMaster, async(req,res)=>{if(!uuidValido(req.params.id))return res.status(400).json({ok:false,erro:'ID inválido.'});const [r]=await db.query(`UPDATE ${tabela} SET arquivada_em=NOW(),arquivada_por=$1 WHERE id=$2${escopoVisibilidade(req,tabela)} AND arquivada_em IS NULL RETURNING id`,[req.user.id,req.params.id]);if(!r)return res.status(404).json({ok:false,erro:'Registro não encontrado.'});await registrarAuditoria({usuarioId:req.user.id,acao:'arquivar',entidade:tabela,entidadeId:r.id,ip:req._ip});res.json({ok:true});});
-  acervoRouter.post(`/${tipo}/:id/restaurar`, apenasMaster, async(req,res)=>{if(!uuidValido(req.params.id))return res.status(400).json({ok:false,erro:'ID inválido.'});const [r]=await db.query(`UPDATE ${tabela} SET arquivada_em=NULL,arquivada_por=NULL WHERE id=$1${escopoVisibilidade(req,tabela)} AND arquivada_em IS NOT NULL RETURNING id`,[req.params.id]);if(!r)return res.status(404).json({ok:false,erro:'Registro não encontrado.'});await registrarAuditoria({usuarioId:req.user.id,acao:'restaurar',entidade:tabela,entidadeId:r.id,ip:req._ip});res.json({ok:true});});
+  acervoRouter.post(`/${tipo}/:id/arquivar`, apenasMaster, async(req,res)=>{if(!uuidValido(req.params.id))return res.status(400).json({ok:false,erro:'ID inválido.'});const [r]=await db.query(`UPDATE ${tabela} SET arquivada_em=NOW(),arquivada_por=$1 WHERE id=$2${escopoVisibilidade(req,tabela)} AND arquivada_em IS NULL RETURNING id,arquivada_em`,[req.user.id,req.params.id]);if(!r)return res.status(404).json({ok:false,erro:'Registro não encontrado.'});await registrarAuditoria({usuarioId:req.user.id,acao:'arquivar',entidade:tabela,entidadeId:r.id,valorAntes:{arquivada_em:null},valorDepois:{arquivada_em:r.arquivada_em,...marcaChave(req)},ip:req._ip});res.json({ok:true});});
+  acervoRouter.post(`/${tipo}/:id/restaurar`, apenasMaster, async(req,res)=>{if(!uuidValido(req.params.id))return res.status(400).json({ok:false,erro:'ID inválido.'});const [r]=await db.query(`UPDATE ${tabela} SET arquivada_em=NULL,arquivada_por=NULL WHERE id=$1${escopoVisibilidade(req,tabela)} AND arquivada_em IS NOT NULL RETURNING id`,[req.params.id]);if(!r)return res.status(404).json({ok:false,erro:'Registro não encontrado.'});await registrarAuditoria({usuarioId:req.user.id,acao:'restaurar',entidade:tabela,entidadeId:r.id,valorDepois:{arquivada_em:null,...marcaChave(req)},ip:req._ip});res.json({ok:true});});
 }
 
 // ── Leitura individual e edição geral (23/11/2026) ─────────────────────────────────────────
@@ -157,6 +163,8 @@ const CAMPOS_PECA = {
   resultado: v => validarEnum(v, RESULTADOS, 'resultado', true),
   resumo: v => texto(v, 'resumo'),
   modelo_aprovado: v => Boolean(v),
+  data_decisao: v => dataOuNulo(v, 'data_decisao'),
+  resultado_por_pedido: v => resultadoPorPedido(v),
 };
 const CAMPOS_PRECEDENTE = {
   orgao: v => texto(v, 'orgao', { obrigatorio: true, max: 300 }),
@@ -185,13 +193,93 @@ function montarAlteracoes(corpo, campos) {
 }
 const marcaChave = req => (req.user?.via_chave ? { via_chave: req.user.via_chave } : {});
 
-for (const [tipo, tabela, rel, coluna, campos, chave] of [
-  ['pecas', 'acervo_pecas', 'acervo_pecas_teses', 'peca_id', CAMPOS_PECA, 'peca'],
-  ['precedentes', 'acervo_precedentes', 'acervo_precedentes_teses', 'precedente_id', CAMPOS_PRECEDENTE, 'precedente'],
+// ── Camada de conhecimento (23/11/2026) ──────────────────────────────────────────────────────
+// Spec "AM - Estrutura Avancada do Acervo.md", §4.1 a §4.3: árvore e situação da tese, argumentos
+// (fundamento, defesa da Fazenda × resposta, preliminar, cálculo) e o que cada peça usou e obteve.
+function invalido(mensagem) { const e = new Error(mensagem); e.status = 422; return e; }
+function listaIds(valor, campo, max = 200) {
+  if (!Array.isArray(valor)) throw invalido(`${campo} deve ser uma lista de IDs.`);
+  const unicos = [...new Set(valor.map(v => String(v).toLowerCase()))];
+  if (unicos.length > max) throw invalido(`${campo}: no máximo ${max} itens.`);
+  if (unicos.some(id => !uuidValido(id))) throw invalido(`${campo}: ID inválido.`);
+  return unicos;
+}
+// Precedente de processo restrito não aparece para quem não pode vê-lo (a chave externa nunca pode).
+function filtroLigacaoVisivel(l, req, alias) {
+  return l.alvo === 'precedente_id' && !podeVerRestrito(req)
+    ? ` AND ${alias}.precedente_id IN (SELECT id FROM acervo_precedentes WHERE visibilidade_snapshot = 'normal')` : '';
+}
+async function validarPrecedentes(ids, req) {
+  if (!ids.length) return;
+  const rows = await db.query(`SELECT p.id FROM acervo_precedentes p WHERE p.id = ANY($1::uuid[]) AND p.arquivada_em IS NULL${escopoVisibilidade(req, 'p')}`, [ids]);
+  if (rows.length !== ids.length) throw invalido('Um ou mais precedentes não existem no acervo ou estão arquivados.');
+}
+async function validarArgumentos(ids) {
+  if (!ids.length) return;
+  const rows = await db.query('SELECT id FROM acervo_argumentos WHERE id = ANY($1::uuid[])', [ids]);
+  if (rows.length !== ids.length) throw invalido('Um ou mais argumentos não existem no acervo.');
+}
+// Ligações N:N. A lista enviada substitui a anterior, mas só no que quem edita enxerga: um precedente
+// restrito ligado por quem pode vê-lo continua ligado quando a chave externa troca a lista.
+const LIGACOES_PECA = [
+  { campo: 'argumentos', tabela: 'acervo_pecas_argumentos', dono: 'peca_id', alvo: 'argumento_id', validar: validarArgumentos },
+  { campo: 'precedentes', tabela: 'acervo_pecas_precedentes', dono: 'peca_id', alvo: 'precedente_id', validar: validarPrecedentes },
+];
+const LIGACOES_ARGUMENTO = [
+  { campo: 'precedentes', tabela: 'acervo_argumentos_precedentes', dono: 'argumento_id', alvo: 'precedente_id', validar: validarPrecedentes },
+];
+async function lerLigacoes(corpo, ligacoes, req) {
+  const r = {};
+  for (const l of ligacoes) {
+    if (!Object.hasOwn(corpo, l.campo)) continue;
+    r[l.campo] = listaIds(corpo[l.campo], l.campo);
+    await l.validar(r[l.campo], req);
+  }
+  return r;
+}
+// Grava as ligações informadas e devolve as anteriores (para a auditoria).
+async function trocarLigacoes(ligacoes, id, novas, req) {
+  const antes = {};
+  for (const l of ligacoes) {
+    if (!novas[l.campo]) continue;
+    const filtro = filtroLigacaoVisivel(l, req, l.tabela);
+    antes[l.campo] = (await db.query(`SELECT ${l.alvo} AS id FROM ${l.tabela} WHERE ${l.dono}=$1${filtro}`, [id])).map(x => x.id);
+    await db.execute(`DELETE FROM ${l.tabela} WHERE ${l.dono}=$1${filtro}`, [id]);
+    if (novas[l.campo].length) await db.execute(`INSERT INTO ${l.tabela} (${l.dono}, ${l.alvo}) SELECT $1, unnest($2::uuid[]) ON CONFLICT DO NOTHING`, [id, novas[l.campo]]);
+  }
+  return antes;
+}
+// resultado_por_pedido: [{ pedido, resultado, observacao? }], um item por pedido da peça.
+function resultadoPorPedido(valor) {
+  if (valor === null) return [];
+  if (!Array.isArray(valor)) throw invalido('resultado_por_pedido deve ser uma lista de { pedido, resultado }.');
+  if (valor.length > 50) throw invalido('resultado_por_pedido: no máximo 50 pedidos.');
+  const vistos = new Set();
+  return valor.map((item, i) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw invalido(`resultado_por_pedido[${i}] deve ser { pedido, resultado }.`);
+    const pedido = texto(item.pedido, `resultado_por_pedido[${i}].pedido`, { obrigatorio: true, max: 200 });
+    if (vistos.has(pedido.toLowerCase())) throw invalido(`Pedido repetido em resultado_por_pedido: "${pedido}".`);
+    vistos.add(pedido.toLowerCase());
+    const resultado = validarEnum(item.resultado, RESULTADOS_PEDIDO, `resultado_por_pedido[${i}].resultado`, true);
+    const observacao = texto(item.observacao, `resultado_por_pedido[${i}].observacao`, { max: 1000 });
+    return observacao ? { pedido, resultado, observacao } : { pedido, resultado };
+  });
+}
+// Árvore de teses: 'acima' devolve a própria tese e as mães; 'abaixo', a própria e as variantes.
+// UNION (e não UNION ALL) encerra a recursão mesmo se um ciclo escapasse da validação.
+function linhagem(teseId, sentido) {
+  const junta = sentido === 'acima' ? 't.id=a.tese_mae_id' : 't.tese_mae_id=a.id';
+  return db.query(`WITH RECURSIVE arvore AS (SELECT id, slug, tese_mae_id FROM teses_acervo WHERE id=$1 UNION SELECT t.id, t.slug, t.tese_mae_id FROM teses_acervo t JOIN arvore a ON ${junta}) SELECT id, slug FROM arvore`, [teseId]);
+}
+
+for (const [tipo, tabela, rel, coluna, campos, chave, ligacoesTipo] of [
+  ['pecas', 'acervo_pecas', 'acervo_pecas_teses', 'peca_id', CAMPOS_PECA, 'peca', LIGACOES_PECA],
+  ['precedentes', 'acervo_precedentes', 'acervo_precedentes_teses', 'precedente_id', CAMPOS_PRECEDENTE, 'precedente', []],
 ]) {
   acervoRouter.get(`/${tipo}/:id`, async (req, res) => { try {
     if (!uuidValido(req.params.id)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'ID inválido.' });
-    const r = await db.queryOne(`SELECT x.*, ARRAY(SELECT t.slug FROM ${rel} r JOIN teses_acervo t ON t.id=r.tese_id WHERE r.${coluna}=x.id ORDER BY t.label) teses FROM ${tabela} x WHERE x.id=$1${escopoVisibilidade(req, 'x')}`, [req.params.id]);
+    const extras = ligacoesTipo.map(l => `, ARRAY(SELECT lg.${l.alvo} FROM ${l.tabela} lg WHERE lg.${l.dono}=x.id${filtroLigacaoVisivel(l, req, 'lg')}) ${l.campo}`).join('');
+    const r = await db.queryOne(`SELECT x.*, ARRAY(SELECT t.slug FROM ${rel} r JOIN teses_acervo t ON t.id=r.tese_id WHERE r.${coluna}=x.id ORDER BY t.label) teses${extras} FROM ${tabela} x WHERE x.id=$1${escopoVisibilidade(req, 'x')}`, [req.params.id]);
     if (!r) return res.status(404).json({ ok:false, erro:'Não encontrado.' });
     res.json({ ok:true, [chave]: r });
   } catch (e) { erro(res, e); } });
@@ -202,54 +290,253 @@ for (const [tipo, tabela, rel, coluna, campos, chave] of [
     const alteracoes = montarAlteracoes(b, campos);
     const teses = Object.hasOwn(b, 'teses') ? normalizarTeses(b.teses) : null;
     if (teses) await validarTeses(teses);
-    if (!Object.keys(alteracoes).length && !teses) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Nenhum campo editável informado.' });
+    const ligacoes = await lerLigacoes(b, ligacoesTipo, req);
+    if (!Object.keys(alteracoes).length && !teses && !Object.keys(ligacoes).length) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Nenhum campo editável informado.' });
     const anterior = await db.queryOne(`SELECT * FROM ${tabela} x WHERE x.id=$1${escopoVisibilidade(req, 'x')}`, [req.params.id]);
     if (!anterior) return res.status(404).json({ ok:false, erro:'Não encontrado.' });
     if (alteracoes.ente === 'municipio-outro-pb' && !(alteracoes.ente_detalhe ?? anterior.ente_detalhe)) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Informe o município.' });
     const sets = []; const params = [];
-    for (const [campo, valor] of Object.entries(alteracoes)) { params.push(valor); sets.push(`${campo}=$${params.length}`); }
+    // Objeto/lista (resultado_por_pedido) vai como JSON: o pg converteria array JS em array do Postgres.
+    for (const [campo, valor] of Object.entries(alteracoes)) { params.push(valor !== null && typeof valor === 'object' ? JSON.stringify(valor) : valor); sets.push(`${campo}=$${params.length}`); }
     const perdeConferencia = tabela === 'acervo_precedentes' && anterior.conferido
       && CAMPOS_PRECEDENTE_MATERIAIS.some(c => c in alteracoes && comoTexto(alteracoes[c]) !== comoTexto(anterior[c]));
     if (perdeConferencia) sets.push('conferido=false', 'conferido_por=NULL', 'conferido_em=NULL');
     sets.push('atualizado_em=NOW()');
     params.push(req.params.id);
+    const tesesAntes = teses ? (await db.query(`SELECT t.slug FROM ${rel} r JOIN teses_acervo t ON t.id=r.tese_id WHERE r.${coluna}=$1 ORDER BY t.slug`, [req.params.id])).map(t => t.slug) : null;
     const [r] = await db.query(`UPDATE ${tabela} SET ${sets.join(', ')} WHERE id=$${params.length} RETURNING *`, params);
     if (teses) await gravarTeses(tabela, r.id, teses);
-    const antes = Object.fromEntries(Object.keys(alteracoes).map(c => [c, anterior[c]]));
-    await registrarAuditoria({ usuarioId:req.user.id, acao:'editar', entidade:chave === 'peca' ? 'acervo_peca' : 'acervo_precedente', entidadeId:r.id, valorAntes:antes, valorDepois:{ ...alteracoes, ...(teses ? { teses } : {}), ...(perdeConferencia ? { conferido:false } : {}), ...marcaChave(req) }, ip:req._ip });
-    res.json({ ok:true, [chave]: { ...r, ...(teses ? { teses } : {}) }, ...(perdeConferencia ? { aviso:'O conteúdo mudou: o precedente voltou a "não conferido" até nova conferência com fonte primária.' } : {}) });
+    const ligacoesAntes = await trocarLigacoes(ligacoesTipo, r.id, ligacoes, req);
+    const antes = { ...Object.fromEntries(Object.keys(alteracoes).map(c => [c, anterior[c]])), ...(teses ? { teses: tesesAntes } : {}), ...ligacoesAntes };
+    await registrarAuditoria({ usuarioId:req.user.id, acao:'editar', entidade:chave === 'peca' ? 'acervo_peca' : 'acervo_precedente', entidadeId:r.id, valorAntes:antes, valorDepois:{ ...alteracoes, ...(teses ? { teses } : {}), ...ligacoes, ...(perdeConferencia ? { conferido:false } : {}), ...marcaChave(req) }, ip:req._ip });
+    res.json({ ok:true, [chave]: { ...r, ...(teses ? { teses } : {}), ...ligacoes }, ...(perdeConferencia ? { aviso:'O conteúdo mudou: o precedente voltou a "não conferido" até nova conferência com fonte primária.' } : {}) });
   } catch (e) { erro(res, e); } });
 }
 
-// Catálogo de teses: criar e editar (rótulo, pasta do Drive, ativo). O slug é a identidade e não muda.
+// Catálogo de teses: criar e editar. O slug é a identidade e não muda.
+// Desde 23/11/2026 a tese tem tese-mãe (variante → mãe, por slug), situação (ativa, em_risco, suspensa,
+// superada; fora de "ativa" exige status_motivo) e a skill que redige a peça (skill_slug).
+const COLUNAS_TESE = 't.id, t.slug, t.label, t.drive_folder_id, t.ativo, m.slug AS tese_mae, t.status, t.status_motivo, t.skill_slug';
+const lerTese = slug => db.queryOne(`SELECT ${COLUNAS_TESE} FROM teses_acervo t LEFT JOIN teses_acervo m ON m.id=t.tese_mae_id WHERE t.slug=$1`, [String(slug ?? '').trim().toLowerCase()]);
+const semId = ({ id, ...resto }) => resto;
+const SKILL_RE = /^[a-z0-9]+([:_-][a-z0-9]+)*$/;
+const CAMPOS_TESE = {
+  label: v => texto(v, 'label', { obrigatorio: true, max: 200 }),
+  drive_folder_id: v => texto(v, 'drive_folder_id', { max: 200 }),
+  ativo: v => Boolean(v),
+  status: v => validarEnum(v, STATUS_TESE, 'status', true),
+  status_motivo: v => texto(v, 'status_motivo', { max: 2000 }),
+  skill_slug: v => {
+    const t = texto(v, 'skill_slug', { max: 120 });
+    if (t && !SKILL_RE.test(t)) throw invalido('skill_slug inválido: use o nome da skill (minúsculas, números e hífen; ex.: magisterio-direito-v01).');
+    return t;
+  },
+};
+// Tese-mãe por slug. Recusa ciclo: a mãe não pode ser a própria tese nem uma variante dela.
+async function resolverTeseMae(valor, teseId = null) {
+  if (valor === null || valor === undefined || String(valor).trim() === '') return null;
+  const mae = await lerTese(valor);
+  if (!mae || !mae.ativo) throw invalido('A tese-mãe não existe no catálogo (ou está inativa).');
+  if (teseId && (await linhagem(mae.id, 'acima')).some(t => t.id === teseId)) throw invalido('Ciclo na árvore: a tese-mãe indicada é a própria tese ou uma variante dela.');
+  return mae;
+}
+function conferirStatus(status, motivo) {
+  if (status !== 'ativa' && !motivo) throw invalido(`Informe status_motivo: a tese "${status}" precisa dizer por quê (ex.: "Tema 1308 modulado em 26/10/2026").`);
+}
+
 acervoRouter.post('/teses', apenasMaster, async (req, res) => { try {
   const b = req.body || {};
   const slug = String(b.slug || '').trim().toLowerCase();
   if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug) || slug.length > 80) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'slug inválido: use letras minúsculas, números e hífen (até 80).' });
-  const label = texto(b.label, 'label', { obrigatorio: true, max: 200 });
-  const pasta = texto(b.drive_folder_id, 'drive_folder_id', { max: 200 });
-  const [t] = await db.query('INSERT INTO teses_acervo (slug,label,drive_folder_id) VALUES ($1,$2,$3) ON CONFLICT (slug) DO NOTHING RETURNING slug,label,drive_folder_id,ativo', [slug, label, pasta]);
+  const label = CAMPOS_TESE.label(b.label);
+  const pasta = CAMPOS_TESE.drive_folder_id(b.drive_folder_id);
+  const status = CAMPOS_TESE.status(b.status ?? 'ativa');
+  const motivo = CAMPOS_TESE.status_motivo(b.status_motivo);
+  const skill = CAMPOS_TESE.skill_slug(b.skill_slug);
+  conferirStatus(status, motivo);
+  const mae = await resolverTeseMae(b.tese_mae);
+  const [t] = await db.query('INSERT INTO teses_acervo (slug,label,drive_folder_id,tese_mae_id,status,status_motivo,skill_slug) VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (slug) DO NOTHING RETURNING id,slug,label,drive_folder_id,ativo,status,status_motivo,skill_slug', [slug, label, pasta, mae?.id ?? null, status, motivo, skill]);
   if (!t) return res.status(409).json({ ok:false, erro:'validacao', mensagem:'Já existe tese com esse slug.' });
-  await registrarAuditoria({ usuarioId:req.user.id, acao:'criar', entidade:'tese_acervo', entidadeId:null, valorDepois:{ ...t, ...marcaChave(req) }, ip:req._ip });
-  res.status(201).json({ ok:true, tese:t });
+  const tese = { ...semId(t), tese_mae: mae?.slug ?? null };
+  await registrarAuditoria({ usuarioId:req.user.id, acao:'criar', entidade:'tese_acervo', entidadeId:t.id, valorDepois:{ ...tese, ...marcaChave(req) }, ip:req._ip });
+  res.status(201).json({ ok:true, tese });
 } catch (e) { erro(res, e); } });
 
 acervoRouter.patch('/teses/:slug', apenasMaster, async (req, res) => { try {
   const b = req.body || {};
-  const alteracoes = montarAlteracoes(b, {
-    label: v => texto(v, 'label', { obrigatorio: true, max: 200 }),
-    drive_folder_id: v => texto(v, 'drive_folder_id', { max: 200 }),
-    ativo: v => Boolean(v),
-  });
-  if (!Object.keys(alteracoes).length) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Nenhum campo editável informado (label, drive_folder_id, ativo).' });
-  const anterior = await db.queryOne('SELECT slug,label,drive_folder_id,ativo FROM teses_acervo WHERE slug=$1', [String(req.params.slug)]);
+  const colunas = montarAlteracoes(b, CAMPOS_TESE);
+  const mudaMae = Object.hasOwn(b, 'tese_mae');
+  if (!Object.keys(colunas).length && !mudaMae) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Nenhum campo editável informado (label, drive_folder_id, ativo, tese_mae, status, status_motivo, skill_slug).' });
+  const anterior = await lerTese(req.params.slug);
   if (!anterior) return res.status(404).json({ ok:false, erro:'Tese não encontrada.' });
+  if (mudaMae) colunas.tese_mae_id = (await resolverTeseMae(b.tese_mae, anterior.id))?.id ?? null;
+  // De volta a "ativa": o motivo explicava a situação anterior e deixa de valer.
+  if (colunas.status === 'ativa' && !Object.hasOwn(colunas, 'status_motivo')) colunas.status_motivo = null;
+  conferirStatus(colunas.status ?? anterior.status, Object.hasOwn(colunas, 'status_motivo') ? colunas.status_motivo : anterior.status_motivo);
   const sets = []; const params = [];
-  for (const [campo, valor] of Object.entries(alteracoes)) { params.push(valor); sets.push(`${campo}=$${params.length}`); }
-  params.push(anterior.slug);
-  const [t] = await db.query(`UPDATE teses_acervo SET ${sets.join(', ')} WHERE slug=$${params.length} RETURNING slug,label,drive_folder_id,ativo`, params);
-  await registrarAuditoria({ usuarioId:req.user.id, acao:'editar', entidade:'tese_acervo', entidadeId:null, valorAntes:anterior, valorDepois:{ ...t, ...marcaChave(req) }, ip:req._ip });
-  res.json({ ok:true, tese:t });
+  for (const [campo, valor] of Object.entries(colunas)) { params.push(valor); sets.push(`${campo}=$${params.length}`); }
+  sets.push('atualizado_em=NOW()');
+  params.push(anterior.id);
+  await db.execute(`UPDATE teses_acervo SET ${sets.join(', ')} WHERE id=$${params.length}`, params);
+  const tese = semId(await lerTese(anterior.slug));
+  await registrarAuditoria({ usuarioId:req.user.id, acao:'editar', entidade:'tese_acervo', entidadeId:anterior.id, valorAntes:semId(anterior), valorDepois:{ ...tese, ...marcaChave(req) }, ip:req._ip });
+  res.json({ ok:true, tese });
+} catch (e) { erro(res, e); } });
+
+// ── Argumentos (§4.2): fundamento | defesa_fazenda | resposta | preliminar | calculo ─────────
+// A resposta aponta (responde_a_id) para a defesa da Fazenda que rebate, da mesma tese ou de uma
+// tese-mãe. É o mapa de objeções: cada defesa tem uma ou mais respostas.
+const CAMPOS_ARGUMENTO = {
+  tipo: v => validarEnum(v, TIPOS_ARGUMENTO, 'tipo', true),
+  titulo: v => texto(v, 'titulo', { obrigatorio: true, max: 300 }),
+  texto_modelo: v => texto(v, 'texto_modelo', { max: 50_000 }),
+  status: v => validarEnum(v, STATUS_ARGUMENTO, 'status', true),
+  observacoes: v => texto(v, 'observacoes', { max: 5_000 }),
+};
+const ORDEM_TIPO_ARGUMENTO = `CASE g.tipo WHEN 'fundamento' THEN 1 WHEN 'preliminar' THEN 2 WHEN 'defesa_fazenda' THEN 3 WHEN 'resposta' THEN 4 ELSE 5 END`;
+const selectArgumento = req => `SELECT g.*, t.slug AS tese, ARRAY(SELECT ap.precedente_id FROM acervo_argumentos_precedentes ap WHERE ap.argumento_id=g.id${filtroLigacaoVisivel(LIGACOES_ARGUMENTO[0], req, 'ap')}) precedentes FROM acervo_argumentos g JOIN teses_acervo t ON t.id=g.tese_id`;
+async function teseDoArgumento(slug) {
+  if (!String(slug ?? '').trim()) throw invalido('Informe a tese (slug do catálogo, ver GET /teses).');
+  const t = await lerTese(slug);
+  if (!t || !t.ativo) throw invalido('A tese não existe no catálogo (ou está inativa).');
+  return t;
+}
+async function conferirRespondeA(respondeAId, { tipo, teseId, argumentoId = null }) {
+  if (!respondeAId) return;
+  if (tipo !== 'resposta') throw invalido('Só argumento do tipo "resposta" aponta para a defesa que rebate (responde_a_id); envie responde_a_id: null.');
+  if (!uuidValido(String(respondeAId))) throw invalido('responde_a_id inválido.');
+  if (respondeAId === argumentoId) throw invalido('Um argumento não responde a si mesmo.');
+  const alvo = await db.queryOne('SELECT id, tipo, tese_id FROM acervo_argumentos WHERE id=$1', [respondeAId]);
+  if (!alvo) throw invalido('A defesa indicada em responde_a_id não existe.');
+  if (alvo.tipo !== 'defesa_fazenda') throw invalido('responde_a_id deve apontar para um argumento do tipo "defesa_fazenda".');
+  if (!(await linhagem(teseId, 'acima')).some(t => t.id === alvo.tese_id)) throw invalido('A defesa rebatida deve ser da mesma tese da resposta ou de uma tese-mãe dela.');
+}
+
+// GET /argumentos?tese=&incluir_maes=true&tipo=&status=&responde_a=&q= — sem status, o abandonado fica de fora.
+acervoRouter.get('/argumentos', async (req, res) => { try {
+  const { tese, tipo, status, responde_a } = req.query;
+  const q = String(req.query.q ?? '').trim();
+  const limite = page(req.query.limite, 100); const offset = (page(req.query.page) - 1) * limite;
+  const params = []; const where = [];
+  if (tese) {
+    const t = await lerTese(tese);
+    if (!t) return res.status(404).json({ ok:false, erro:'Tese não encontrada.' });
+    const ids = req.query.incluir_maes === 'true' ? (await linhagem(t.id, 'acima')).map(x => x.id) : [t.id];
+    params.push(ids); where.push(`g.tese_id = ANY($${params.length}::uuid[])`);
+  }
+  if (tipo) { params.push(validarEnum(tipo, TIPOS_ARGUMENTO, 'tipo')); where.push(`g.tipo=$${params.length}`); }
+  if (status) { params.push(validarEnum(status, STATUS_ARGUMENTO, 'status')); where.push(`g.status=$${params.length}`); }
+  else where.push(`g.status <> 'abandonado'`);
+  if (responde_a) {
+    if (!uuidValido(responde_a)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'responde_a inválido.' });
+    params.push(responde_a); where.push(`g.responde_a_id=$${params.length}`);
+  }
+  if (q) { params.push(`%${q}%`); const n = params.length; where.push(`(g.titulo ILIKE $${n} OR COALESCE(g.texto_modelo,'') ILIKE $${n} OR COALESCE(g.observacoes,'') ILIKE $${n})`); }
+  const argumentos = await db.query(`${selectArgumento(req)} WHERE ${where.join(' AND ')} ORDER BY t.label, ${ORDEM_TIPO_ARGUMENTO}, g.titulo LIMIT $${params.length + 1} OFFSET $${params.length + 2}`, [...params, limite, offset]);
+  res.json({ ok:true, argumentos });
+} catch (e) { erro(res, e); } });
+
+acervoRouter.get('/argumentos/:id', async (req, res) => { try {
+  if (!uuidValido(req.params.id)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'ID inválido.' });
+  const g = await db.queryOne(`${selectArgumento(req)} WHERE g.id=$1`, [req.params.id]);
+  if (!g) return res.status(404).json({ ok:false, erro:'Argumento não encontrado.' });
+  const [precedentes, respostas, respondeA, uso] = await Promise.all([
+    g.precedentes.length ? db.query('SELECT p.id, p.processo_numero, p.orgao, p.tribunal, p.data_julgamento, p.ratio, p.vinculante, p.favoravel, p.conferido, p.fonte_primaria_url, p.arquivada_em FROM acervo_precedentes p WHERE p.id = ANY($1::uuid[]) ORDER BY p.vinculante DESC, p.data_julgamento DESC', [g.precedentes]) : [],
+    g.tipo === 'defesa_fazenda' ? db.query('SELECT r.id, r.titulo, r.status, t.slug AS tese FROM acervo_argumentos r JOIN teses_acervo t ON t.id=r.tese_id WHERE r.responde_a_id=$1 ORDER BY r.status, r.titulo', [g.id]) : [],
+    g.responde_a_id ? db.queryOne('SELECT id, titulo, status FROM acervo_argumentos WHERE id=$1', [g.responde_a_id]) : null,
+    db.queryOne(`SELECT COUNT(*)::int AS n FROM acervo_pecas_argumentos pa JOIN acervo_pecas a ON a.id=pa.peca_id WHERE pa.argumento_id=$1 AND a.arquivada_em IS NULL${escopoVisibilidade(req)}`, [g.id]),
+  ]);
+  res.json({ ok:true, argumento: { ...g, precedentes_detalhe: precedentes, responde_a: respondeA, respostas, pecas_que_usam: uso?.n ?? 0 } });
+} catch (e) { erro(res, e); } });
+
+acervoRouter.post('/argumentos', apenasMaster, async (req, res) => { try {
+  const b = req.body || {};
+  const tese = await teseDoArgumento(b.tese);
+  const c = montarAlteracoes(b, CAMPOS_ARGUMENTO);
+  c.tipo = CAMPOS_ARGUMENTO.tipo(b.tipo);
+  c.titulo = CAMPOS_ARGUMENTO.titulo(b.titulo);
+  c.status ??= 'em_teste';
+  const respondeA = b.responde_a_id ? String(b.responde_a_id).toLowerCase() : null;
+  await conferirRespondeA(respondeA, { tipo: c.tipo, teseId: tese.id });
+  const ligacoes = await lerLigacoes(b, LIGACOES_ARGUMENTO, req);
+  const [novo] = await db.query('INSERT INTO acervo_argumentos (tese_id,tipo,titulo,responde_a_id,texto_modelo,status,observacoes,criado_por) VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id', [tese.id, c.tipo, c.titulo, respondeA, c.texto_modelo ?? null, c.status, c.observacoes ?? null, req.user.id]);
+  await trocarLigacoes(LIGACOES_ARGUMENTO, novo.id, ligacoes, req);
+  await registrarAuditoria({ usuarioId:req.user.id, acao:'criar', entidade:'acervo_argumento', entidadeId:novo.id, valorDepois:{ tese:tese.slug, tipo:c.tipo, titulo:c.titulo, status:c.status, responde_a_id:respondeA, ...ligacoes, ...marcaChave(req) }, ip:req._ip });
+  res.status(201).json({ ok:true, argumento: await db.queryOne(`${selectArgumento(req)} WHERE g.id=$1`, [novo.id]) });
+} catch (e) { erro(res, e); } });
+
+acervoRouter.patch('/argumentos/:id', apenasMaster, async (req, res) => { try {
+  if (!uuidValido(req.params.id)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'ID inválido.' });
+  const b = req.body || {};
+  const colunas = montarAlteracoes(b, CAMPOS_ARGUMENTO);
+  const ligacoes = await lerLigacoes(b, LIGACOES_ARGUMENTO, req);
+  const mudaTese = Object.hasOwn(b, 'tese'); const mudaResposta = Object.hasOwn(b, 'responde_a_id');
+  if (!Object.keys(colunas).length && !Object.keys(ligacoes).length && !mudaTese && !mudaResposta) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Nenhum campo editável informado (tese, tipo, titulo, responde_a_id, texto_modelo, status, observacoes, precedentes).' });
+  const anterior = await db.queryOne('SELECT g.*, t.slug AS tese FROM acervo_argumentos g JOIN teses_acervo t ON t.id=g.tese_id WHERE g.id=$1', [req.params.id]);
+  if (!anterior) return res.status(404).json({ ok:false, erro:'Argumento não encontrado.' });
+  let tese = { id: anterior.tese_id, slug: anterior.tese };
+  if (mudaTese) { tese = await teseDoArgumento(b.tese); if (tese.id !== anterior.tese_id) colunas.tese_id = tese.id; }
+  if (mudaResposta) colunas.responde_a_id = b.responde_a_id ? String(b.responde_a_id).toLowerCase() : null;
+  if (['tipo', 'tese_id', 'responde_a_id'].some(c => Object.hasOwn(colunas, c))) {
+    const tipo = colunas.tipo ?? anterior.tipo;
+    await conferirRespondeA(Object.hasOwn(colunas, 'responde_a_id') ? colunas.responde_a_id : anterior.responde_a_id, { tipo, teseId: tese.id, argumentoId: anterior.id });
+    // Defesa com respostas ligadas não muda de tipo nem de tese: as respostas ficariam soltas.
+    if (anterior.tipo === 'defesa_fazenda' && (tipo !== 'defesa_fazenda' || colunas.tese_id)) {
+      const ligadas = await db.queryOne('SELECT COUNT(*)::int AS n FROM acervo_argumentos WHERE responde_a_id=$1', [anterior.id]);
+      if (ligadas?.n) throw invalido(`Esta defesa tem ${ligadas.n} resposta(s) ligada(s): mude ou desligue as respostas antes de trocar o tipo ou a tese.`);
+    }
+  }
+  const sets = []; const params = [];
+  for (const [campo, valor] of Object.entries(colunas)) { params.push(valor); sets.push(`${campo}=$${params.length}`); }
+  sets.push('atualizado_em=NOW()');
+  params.push(anterior.id);
+  await db.execute(`UPDATE acervo_argumentos SET ${sets.join(', ')} WHERE id=$${params.length}`, params);
+  const ligacoesAntes = await trocarLigacoes(LIGACOES_ARGUMENTO, anterior.id, ligacoes, req);
+  // Na auditoria a tese aparece pelo slug, não pelo id.
+  const legivel = (campo, valor) => (campo === 'tese_id' ? ['tese', valor] : [campo, valor]);
+  const antes = Object.fromEntries(Object.keys(colunas).map(c => legivel(c, c === 'tese_id' ? anterior.tese : anterior[c])));
+  const depois = Object.fromEntries(Object.entries(colunas).map(([c, v]) => legivel(c, c === 'tese_id' ? tese.slug : v)));
+  await registrarAuditoria({ usuarioId:req.user.id, acao:'editar', entidade:'acervo_argumento', entidadeId:anterior.id, valorAntes:{ ...antes, ...ligacoesAntes }, valorDepois:{ ...depois, ...ligacoes, ...marcaChave(req) }, ip:req._ip });
+  res.json({ ok:true, argumento: await db.queryOne(`${selectArgumento(req)} WHERE g.id=$1`, [anterior.id]) });
+} catch (e) { erro(res, e); } });
+
+// ── Impacto (§2 e §7): GET /impacto?tese=slug[&variantes=false][&protocolo_desde=&protocolo_ate=][&ente=] ──
+// Peças e processos de uma tese e das variantes dela, para saber o que revisar quando a tese muda de
+// situação. Ex.: Tema 1308 modulado → peças de piso protocoladas depois de 16/04/2026. Só leitura.
+const LIMITE_IMPACTO = 1000;
+acervoRouter.get('/impacto', apenasMaster, async (req, res) => { try {
+  if (!String(req.query.tese ?? '').trim()) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Informe a tese: /impacto?tese=slug.' });
+  const tese = await lerTese(req.query.tese);
+  if (!tese) return res.status(404).json({ ok:false, erro:'Tese não encontrada.' });
+  const teses = req.query.variantes === 'false' ? [{ id: tese.id, slug: tese.slug }] : await linhagem(tese.id, 'abaixo');
+  const params = [teses.map(t => t.id)];
+  const where = ['a.arquivada_em IS NULL', 'EXISTS (SELECT 1 FROM acervo_pecas_teses apt WHERE apt.peca_id=a.id AND apt.tese_id = ANY($1::uuid[]))'];
+  const desde = dataOuNulo(req.query.protocolo_desde, 'protocolo_desde');
+  if (desde) { params.push(desde); where.push(`a.data_protocolo >= $${params.length}`); }
+  const ate = dataOuNulo(req.query.protocolo_ate, 'protocolo_ate');
+  if (ate) { params.push(ate); where.push(`a.data_protocolo <= $${params.length}`); }
+  if (req.query.ente) { params.push(validarEnum(req.query.ente, ENTES, 'ente')); where.push(`a.ente=$${params.length}`); }
+  const pecas = await db.query(`SELECT a.id, a.titulo, a.tipo_peca, a.processo_id, a.processo_numero, a.cliente_nome, a.ente, a.ente_detalhe, a.tribunal, a.instancia, a.orgao_julgador, a.data_protocolo, a.resultado, a.data_decisao, a.resultado_por_pedido, a.drive_url,
+      ARRAY(SELECT t.slug FROM acervo_pecas_teses apt JOIN teses_acervo t ON t.id=apt.tese_id WHERE apt.peca_id=a.id ORDER BY t.label) teses
+    FROM acervo_pecas a WHERE ${where.join(' AND ')}${escopoVisibilidade(req)} ORDER BY a.data_protocolo DESC NULLS LAST, a.criado_em DESC LIMIT ${LIMITE_IMPACTO + 1}`, params);
+  const truncado = pecas.length > LIMITE_IMPACTO;
+  if (truncado) pecas.length = LIMITE_IMPACTO;
+  const idsProcesso = [...new Set(pecas.map(p => p.processo_id).filter(Boolean))];
+  const noAm = idsProcesso.length ? await db.query(`SELECT p.id, p.numero, p.status, p.grau, p.tribunal, p.vara, c.nome AS cliente_nome FROM processos p LEFT JOIN clientes c ON c.id=p.cliente_id WHERE p.id = ANY($1::uuid[])${podeVerRestrito(req) ? '' : " AND p.visibilidade = 'normal'"}`, [idsProcesso]) : [];
+  const porId = new Map(noAm.map(p => [p.id, p]));
+  // Um item por processo: o cadastro do AM quando a peça está ligada a ele; senão, o número gravado na peça.
+  const processos = new Map();
+  for (const pc of pecas) {
+    const p = porId.get(pc.processo_id);
+    const digitos = String(pc.processo_numero || '').replace(/\D/g, '');
+    const chave = p ? p.id : digitos ? `cnj:${digitos}` : null;
+    if (!chave) continue;
+    if (!processos.has(chave)) processos.set(chave, p
+      ? { processo_id: p.id, numero: p.numero, cliente_nome: p.cliente_nome, status: p.status, grau: p.grau, tribunal: p.tribunal, vara: p.vara, vinculado: true, pecas: [] }
+      : { processo_id: null, numero: pc.processo_numero, cliente_nome: pc.cliente_nome, vinculado: false, pecas: [] });
+    processos.get(chave).pecas.push(pc.id);
+  }
+  res.json({ ok:true, tese: semId(tese), teses_consideradas: teses.map(t => t.slug), total_pecas: pecas.length, total_processos: processos.size, truncado, pecas, processos: [...processos.values()] });
 } catch (e) { erro(res, e); } });
 
 // Grava uma peça/planilha (HTML) como PDF e/ou Word na pasta do cliente no Drive (Master).
