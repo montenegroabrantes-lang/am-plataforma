@@ -71,7 +71,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.10.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.11.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -526,6 +526,26 @@ function construirServidor(token) {
     },
     annotations: leitura,
   }, async a => saidaCompacta(await chamar('GET', `/acervo/contexto-redacao${qs(a)}`, token)));
+
+  s.registerTool('registrar_decisao_peca', {
+    title: 'Registrar decisão detectada (sentença ou acórdão) numa peça',
+    description: 'Retroalimentação do resultado (§5.1), para a varredura do PJe: quando aparece sentença ou acórdão '
+      + 'depois de uma peça "pendente". Grava a data da decisão; com resultado (só caso inequívoco) grava o resultado, '
+      + 'sem ele deixa a peça pendente com o resultado por pedido "a-confirmar"; cria a decisão como precedente NÃO '
+      + 'conferido (ligado em decisao_id, com o link do documento) e uma tarefa para o Master conferir. Peça que já '
+      + 'tem resultado ou decisão registrada volta 409 sem alterar nada.',
+    inputSchema: {
+      id: z.string().uuid().describe('id da peça'),
+      data_decisao: z.string().describe('AAAA-MM-DD da sentença ou do acórdão'),
+      evidencia: z.string().min(1).max(1000).describe('o andamento lido (data e texto), para a conferência'),
+      resultado: z.enum(RESULTADOS.filter(r => r !== 'pendente')).optional().describe('só quando inequívoco; omitir deixa "a confirmar"'),
+      documento_url: urlHttpsOpcional,
+      orgao: z.string().max(300).optional().describe('órgão que decidiu, se diferente do da peça'),
+      instancia: z.enum(INSTANCIAS).optional(),
+      criar_tarefa: z.boolean().optional().describe('false = não criar a tarefa de conferência'),
+    },
+    annotations: escrita,
+  }, async ({ id, ...b }) => saida(await chamar('POST', `/acervo/pecas/${id}/decisao`, token, b)));
 
   s.registerTool('impacto_tese', {
     title: 'Impacto de uma tese (peças e processos)',

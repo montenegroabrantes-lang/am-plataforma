@@ -726,6 +726,63 @@ acervoRouter.patch('/vigilancia/:id', apenasMaster, async (req, res) => { try {
   res.json({ ok:true, vigilancia, ...(verifica ? { mudou } : {}), ...(impacto ? { impacto, ...(tarefa ? { tarefa } : {}), aviso:`A situação mudou: revise as peças e os processos listados em "impacto"${tarefa ? ' (tarefa criada para o Master)' : ''}. A decisão sobre cada ação é do advogado.` } : {}) });
 } catch (e) { erro(res, e); } });
 
+// ── Retroalimentação do resultado (§5.1): POST /pecas/:id/decisao ──────────────────────────
+// Usada pela varredura do PJe (rotina das 15h) quando aparece sentença ou acórdão depois da peça. Numa
+// transação: grava a data da decisão; com `resultado` (caso inequívoco) grava o resultado, sem ele deixa a
+// peça "pendente" com o resultado por pedido "a-confirmar"; cria a decisão como precedente NÃO conferido
+// (com o link do documento) e liga em decisao_id; e cria uma tarefa para o Master conferir. Só peça pendente.
+const TIPOS_PRIMEIRO_GRAU = new Set(['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','memorial']);
+acervoRouter.post('/pecas/:id/decisao', apenasMaster, async (req, res) => { try {
+  if (!uuidValido(req.params.id)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'ID inválido.' });
+  const b = req.body || {};
+  const data = dataOuNulo(b.data_decisao, 'data_decisao');
+  if (!data) throw invalido('Informe data_decisao (AAAA-MM-DD).');
+  const evidencia = texto(b.evidencia, 'evidencia', { obrigatorio: true, max: 1000 });
+  const resultado = b.resultado ? validarEnum(b.resultado, RESULTADOS, 'resultado') : null;
+  if (resultado === 'pendente') throw invalido('resultado "pendente" não é decisão; omita o campo para deixar a confirmar.');
+  const documento = urlHttps(b.documento_url, 'documento_url');
+  const instancia = b.instancia ? validarEnum(b.instancia, INSTANCIAS, 'instancia') : null;
+  const orgaoInformado = texto(b.orgao, 'orgao', { max: 300 });
+  const criarTarefa = b.criar_tarefa !== false;
+
+  const peca = await db.queryOne(`SELECT a.*, o.nome AS orgao_nome, ARRAY(SELECT apt.tese_id FROM acervo_pecas_teses apt WHERE apt.peca_id=a.id) tese_ids
+    FROM acervo_pecas a LEFT JOIN acervo_orgaos o ON o.id=a.orgao_julgador_id WHERE a.id=$1 AND a.arquivada_em IS NULL${escopoVisibilidade(req, 'a')}`, [req.params.id]);
+  if (!peca) return res.status(404).json({ ok:false, erro:'Peça não encontrada.' });
+  if (peca.resultado !== 'pendente') return res.status(409).json({ ok:false, erro:'conflito', mensagem:`A peça já tem resultado (${peca.resultado}); nada foi alterado.` });
+  if (peca.decisao_id) return res.status(409).json({ ok:false, erro:'conflito', mensagem:'A decisão desta peça já foi registrada (decisao_id); confira a tarefa aberta.' });
+  if (peca.data_protocolo && data < String(peca.data_protocolo instanceof Date ? peca.data_protocolo.toISOString() : peca.data_protocolo).slice(0, 10)) throw invalido('A decisão é anterior ao protocolo da peça.');
+
+  const sentido = resultado ? sentidoResultado(peca.tipo_peca, resultado) : null;
+  const tipoDecisao = TIPOS_PRIMEIRO_GRAU.has(peca.tipo_peca) ? 'Sentença' : 'Acórdão';
+  const porPedido = resultado ? null : [{ pedido: 'Resultado geral', resultado: 'a-confirmar', observacao: `Leitura automática do PJe: ${evidencia}`.slice(0, 1000) }];
+
+  const feito = await db.transaction(async t => {
+    const precedente = await t.queryOne(`INSERT INTO acervo_precedentes (processo_id,processo_numero,orgao,tribunal,instancia,data_julgamento,ente,ratio,resultado,favoravel,vinculante,conferido,fonte_primaria_url,drive_url,visibilidade_snapshot,criado_por)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,false,false,NULL,$11,$12,$13) RETURNING id`,
+      [peca.processo_id, peca.processo_numero, orgaoInformado || peca.orgao_nome || peca.orgao_julgador || 'A conferir', peca.tribunal, instancia || peca.instancia, data, peca.ente,
+        `A CONFERIR (${tipoDecisao.toLowerCase()} lida automaticamente no PJe): ${evidencia}`.slice(0, 2000), resultado || 'pendente', sentido === 'favoravel', documento, peca.visibilidade_snapshot, req.user.id]);
+    const precId = precedente.id;
+    if (peca.tese_ids.length) await t.query('INSERT INTO acervo_precedentes_teses (precedente_id, tese_id) SELECT $1, unnest($2::uuid[]) ON CONFLICT DO NOTHING', [precId, peca.tese_ids]);
+    await t.query(`UPDATE acervo_pecas SET data_decisao=$1, decisao_id=$2, ${resultado ? 'resultado=$3' : "resultado_por_pedido=CASE WHEN resultado_por_pedido IS NULL OR resultado_por_pedido='[]'::jsonb THEN $3::jsonb ELSE resultado_por_pedido END"}, atualizado_em=NOW() WHERE id=$4`,
+      [data, precId, resultado || JSON.stringify(porPedido), peca.id]);
+    let tarefa = null;
+    if (criarTarefa) {
+      const instrucao = [
+        `${tipoDecisao} de ${data.split('-').reverse().join('/')} lida automaticamente no PJe: ${evidencia}`,
+        resultado ? `Resultado gravado: ${resultado}${sentido ? ` (${sentido === 'favoravel' ? 'favorável' : 'desfavorável'} ao cliente)` : ''}. Confirme e preencha o resultado por pedido.` : 'Resultado não identificado com segurança: a peça ficou "pendente", com o resultado por pedido "a-confirmar".',
+        `No acervo: confirmar resultado e resultado por pedido da peça (atualizar_peca); conferir o precedente criado (ratio, ementa e fonte primária; conferir_precedente) ou arquivá-lo se não servir.${documento ? `\nDocumento: ${documento}` : ''}`,
+      ].join('\n\n');
+      tarefa = await t.queryOne(`INSERT INTO tarefas (processo_id, tipo, descricao, instrucao, atribuido_a, validado_por, urgencia, prazo_data) VALUES ($1,'geral',$2,$3,$4,$4,'MEDIO',$5::date) RETURNING id, descricao, prazo_data`,
+        [peca.processo_id, `Acervo: conferir ${tipoDecisao.toLowerCase()} — ${peca.processo_numero || peca.titulo}`, instrucao, req.user.id, new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10)]);
+    }
+    return { precedenteId: precId, tarefa };
+  });
+  await registrarAuditoria({ usuarioId:req.user.id, acao:'decisao_detectada', entidade:'acervo_peca', entidadeId:peca.id,
+    valorAntes:{ resultado: peca.resultado, data_decisao: peca.data_decisao, decisao_id: null },
+    valorDepois:{ data_decisao: data, resultado: resultado || 'pendente', a_confirmar: !resultado, decisao_id: feito.precedenteId, tarefa_id: feito.tarefa?.id ?? null, evidencia, ...marcaChave(req) }, ip:req._ip });
+  res.status(201).json({ ok:true, peca_id: peca.id, data_decisao: data, resultado: resultado || 'pendente', a_confirmar: !resultado, precedente_id: feito.precedenteId, ...(feito.tarefa ? { tarefa: feito.tarefa } : {}) });
+} catch (e) { erro(res, e); } });
+
 // ── Órgão julgador (§4.4) ─────────────────────────────────────────────────────────────────
 // Juízo como entidade, ligado às peças (acervo_pecas.orgao_julgador_id), com a estatística de êxito do
 // escritório naquele juízo por tese e por pedido. O texto livre acervo_pecas.orgao_julgador continua.
