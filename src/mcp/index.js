@@ -71,7 +71,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.9.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.10.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -81,7 +81,7 @@ function construirServidor(token) {
 
   s.registerTool('buscar_acervo', {
     title: 'Buscar no acervo',
-    description: 'Consulta peças e precedentes já produzidos pelo escritório, por tese, ente, tribunal, instância e resultado. Use ANTES de redigir qualquer peça, para aproveitar o que já venceu naquela tese.',
+    description: 'Consulta peças e precedentes já produzidos pelo escritório, por tese, ente, tribunal, instância e resultado. Para redigir, chame ANTES contexto_redacao (âncoras, argumentos aprovados e defesas da Fazenda naquele ente e juízo); use esta para procurar peças e precedentes específicos.',
     inputSchema: {
       q: z.string().optional().describe('Busca textual em título, processo, cliente, órgão e fundamento'),
       tese: z.string().optional(),
@@ -96,7 +96,10 @@ function construirServidor(token) {
 
   s.registerTool('criar_peca', {
     title: 'Registrar peça no acervo',
-    description: 'Registra uma peça processual protocolada. Use ao concluir e protocolar qualquer peça.',
+    description: 'Registra uma peça processual protocolada. Use ao concluir e protocolar qualquer peça. Em peça de '
+      + 'mérito (inicial, impugnação, recursos, contrarrazões, embargos, memorial) informe os argumentos usados e os '
+      + 'precedentes citados (ids de contexto_redacao ou listar_argumentos): sem argumentos a peça é registrada com '
+      + 'aviso e fica na curadoria do painel, fora da estatística de êxito por argumento.',
     inputSchema: {
       teses: z.array(z.string()).min(1).describe('Slugs de tese; ao menos um'),
       titulo: z.string(),
@@ -117,8 +120,12 @@ function construirServidor(token) {
       resultado: z.enum(RESULTADOS).optional(),
       resumo: z.string().optional(),
       modelo_aprovado: z.boolean().optional(),
+      argumentos: z.array(z.string().uuid()).max(200).optional().describe('ids dos argumentos usados (fundamentos e respostas às defesas da Fazenda)'),
+      precedentes: z.array(z.string().uuid()).max(200).optional().describe('ids dos precedentes citados'),
     },
   }, async a => saida(await chamar('POST', '/acervo/pecas', token, a)));
+
+
 
   s.registerTool('atualizar_resultado_peca', {
     title: 'Atualizar resultado da peça',
@@ -426,7 +433,9 @@ function construirServidor(token) {
     title: 'Registrar verificação ou editar vigilância',
     description: 'Envie ultima_situacao para registrar uma verificação na fonte oficial (mesmo sem mudança: atualiza '
       + 'a data). Se a situação mudou, a resposta traz as peças e os processos das teses afetadas — leve ao usuário; '
-      + 'a decisão sobre cada ação é do advogado. Também edita referência, teses, fonte, impacto e ativo.',
+      + 'a decisão sobre cada ação é do advogado. Na mudança o AM também cria uma tarefa para o Master com os processos '
+      + 'afetados (criar_tarefa=false evita). A primeira situação registrada não conta como mudança. Também edita '
+      + 'referência, teses, fonte, impacto e ativo.',
     inputSchema: {
       id: z.string().uuid(),
       ultima_situacao: z.string().min(1).max(2000).optional(),
@@ -436,6 +445,7 @@ function construirServidor(token) {
       url_fonte: urlHttpsOpcional.nullable(),
       impacto: z.string().max(5000).nullable().optional(),
       ativo: z.boolean().optional().describe('false encerra a vigilância (ex.: tema julgado e já refletido nas teses)'),
+      criar_tarefa: z.boolean().optional().describe('false = não criar a tarefa ao Master quando a situação mudar'),
     },
     annotations: escrita,
   }, async ({ id, ...b }) => saida(await chamar('PATCH', `/acervo/vigilancia/${id}`, token, b)));
@@ -494,10 +504,28 @@ function construirServidor(token) {
     description: 'Retrato do acervo: êxito por tese, ente, juízo (com tempo médio do protocolo à decisão) e por '
       + 'argumento (quais respostas vencem cada defesa da Fazenda), teses em risco, vigilância jurisprudencial e '
       + 'pendências de curadoria (precedentes não conferidos, peças decididas sem resultado, sem Drive, sem protocolo, '
-      + 'sem órgão). Contrarrazões invertem o sentido (recurso da parte contrária desprovido conta a favor).',
+      + 'sem órgão, peças de mérito sem argumentos). Contrarrazões invertem o sentido (recurso da parte contrária '
+      + 'desprovido conta a favor).',
     inputSchema: {},
     annotations: leitura,
   }, async () => saidaCompacta(await chamar('GET', '/acervo/painel', token)));
+
+  s.registerTool('contexto_redacao', {
+    title: 'Contexto antes de redigir (tese, ente e juízo)',
+    description: 'SÓ LEITURA. Chame ANTES de redigir inicial, impugnação, recurso, contrarrazões ou memorial. Devolve a '
+      + 'situação da tese (e da tese-mãe), avisos (tese em risco, precedentes não conferidos), vigilância, os '
+      + 'precedentes-âncora CONFERIDOS (vinculantes e favoráveis primeiro; desfavoráveis marcados, só para distinção), os '
+      + 'argumentos do escritório (aprovados primeiro, com texto_modelo) e as defesas que a Fazenda usa, ordenadas pelo '
+      + 'uso no ente e no juízo informados, cada uma com as respostas e o êxito delas (geral, no ente e no juízo). '
+      + 'Traz também as peças marcadas como modelo aprovado. Nunca cite precedente fora desta lista sem conferir.',
+    inputSchema: {
+      tese: z.string().describe('slug da tese (listar_teses)'),
+      ente: z.enum(ENTES).optional(),
+      orgao_julgador_id: z.string().uuid().optional().describe('id do órgão julgador (listar_orgaos)'),
+      tipo_peca: z.enum(TIPOS).optional().describe('filtra os modelos aprovados pelo tipo'),
+    },
+    annotations: leitura,
+  }, async a => saidaCompacta(await chamar('GET', `/acervo/contexto-redacao${qs(a)}`, token)));
 
   s.registerTool('impacto_tese', {
     title: 'Impacto de uma tese (peças e processos)',
@@ -513,6 +541,23 @@ function construirServidor(token) {
     },
     annotations: leitura,
   }, async ({ variantes, ...a }) => saidaCompacta(await chamar('GET', `/acervo/impacto${qs({ ...a, variantes: variantes === false ? 'false' : undefined })}`, token)));
+
+  s.registerTool('impacto_precedente', {
+    title: 'Impacto de um precedente ou tema vigiado (peças e processos)',
+    description: 'Dado um precedente do acervo (precedente_id; ache com buscar_acervo, ex.: q="Tema 1308") ou um item de '
+      + 'vigilância (vigilancia_id; listar_vigilancia), lista as peças e os processos afetados: as das teses ligadas e das '
+      + 'variantes delas e, no caso do precedente, também as que o citam ou cuja decisão é ele (cita_precedente=true). '
+      + 'Informe só um dos dois. Só aponta o impacto; a decisão sobre cada ação é do advogado.',
+    inputSchema: {
+      precedente_id: z.string().uuid().optional(),
+      vigilancia_id: z.string().uuid().optional(),
+      variantes: z.boolean().optional().describe('false = só as teses ligadas, sem as variantes'),
+      protocolo_desde: z.string().optional().describe('AAAA-MM-DD'),
+      protocolo_ate: z.string().optional().describe('AAAA-MM-DD'),
+      ente: z.enum(ENTES).optional(),
+    },
+    annotations: leitura,
+  }, async ({ precedente_id, vigilancia_id, variantes, ...a }) => saidaCompacta(await chamar('GET', `/acervo/impacto${qs({ ...a, precedente: precedente_id, vigilancia: vigilancia_id, variantes: variantes === false ? 'false' : undefined })}`, token)));
 
   // ── Drive: grava peça/planilha na pasta do cliente (PDF para o PJe). Master + escopo "acervo". ──
 
