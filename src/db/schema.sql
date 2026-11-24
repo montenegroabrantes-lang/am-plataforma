@@ -573,3 +573,8 @@ CREATE TABLE avisos_acervo (
 );
 CREATE INDEX idx_avisos_acervo_fila ON avisos_acervo (enviar_apos) WHERE status = 'pendente';
 ALTER TABLE usuarios ADD COLUMN avisos_acervo BOOLEAN NOT NULL DEFAULT true;
+-- Relatório mensal do acervo (24/11/2026): retrato gravado de cada mês fechado.
+CREATE TABLE acervo_relatorios_mensais (
+  mes TEXT PRIMARY KEY CHECK (mes ~ '^[0-9]{4}-(0[1-9]|1[0-2])$'),
+  dados JSONB NOT NULL, fechado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), fechado_por UUID REFERENCES usuarios(id)
+);

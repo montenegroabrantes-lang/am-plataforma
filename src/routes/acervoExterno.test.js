@@ -239,3 +239,9 @@ test('decisão detectada pela chave: só com edição', async () => {
   assert.equal(permissaoNecessaria('GET', `/pecas/${ID}/decisao`), null);
   assert.equal(permissaoNecessaria('PATCH', `/pecas/${ID}/decisao`), null);
 });
+
+test('relatório mensal pela chave: só leitura; fechar não', async () => {
+  const { permissaoNecessaria } = await import('./acervoExterno.js');
+  assert.equal(permissaoNecessaria('GET', '/relatorio'), 'acervo_leitura');
+  assert.equal(permissaoNecessaria('POST', '/relatorio/2026-10/fechar'), null);
+});

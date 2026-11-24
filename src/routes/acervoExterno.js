@@ -22,6 +22,7 @@ const LEITURA = [
   new RegExp('^/orgaos$'),
   new RegExp('^/painel$'),
   new RegExp('^/contexto-redacao$'),
+  new RegExp('^/relatorio$'),
   new RegExp(`^/(pecas|precedentes|argumentos|vigilancia|orgaos)/${ID}$`),
 ];
 const EDICAO = {
