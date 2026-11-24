@@ -8,7 +8,7 @@ import { salvarDocumentoHtml } from '../services/drive/documentos.js';
 import { salvarPecaPadrao } from '../services/drive/pecas.js';
 import { prepararProtocolo } from '../services/drive/protocolo.js';
 import { deletarEventoCalendar } from '../services/calendar/index.js';
-import { enfileirarAviso, montarAvisoVigilancia, despacharEmSeguida } from '../services/avisosAcervo.js';
+import { enfileirarAviso, montarAvisoVigilancia, despacharEmSeguida, montarLinhaDecisao, ESPERA_AGRUPAR_DECISOES_MIN } from '../services/avisosAcervo.js';
 import { concluirTarefaComNumero } from './tarefas.js';
 
 export const acervoRouter = Router();
@@ -790,7 +790,17 @@ acervoRouter.post('/pecas/:id/decisao', apenasMaster, async (req, res) => { try 
   await registrarAuditoria({ usuarioId:req.user.id, acao:'decisao_detectada', entidade:'acervo_peca', entidadeId:peca.id,
     valorAntes:{ resultado: peca.resultado, data_decisao: peca.data_decisao, decisao_id: null },
     valorDepois:{ data_decisao: data, resultado: resultado || 'pendente', a_confirmar: !resultado, decisao_id: feito.precedenteId, tarefa_id: feito.tarefa?.id ?? null, evidencia, ...marcaChave(req) }, ip:req._ip });
-  res.status(201).json({ ok:true, peca_id: peca.id, data_decisao: data, resultado: resultado || 'pendente', a_confirmar: !resultado, precedente_id: feito.precedenteId, ...(feito.tarefa ? { tarefa: feito.tarefa } : {}) });
+  // Aviso por WhatsApp ao Master da tarefa (spec dos avisos do acervo, etapa 2). Espera alguns minutos para
+  // as decisões da mesma rotina saírem juntas; quem despacha é o agendamento de 10 em 10 minutos.
+  let aviso = null;
+  if (feito.tarefa) {
+    try {
+      aviso = await enfileirarAviso(db, { tipo: 'acervo_decisao', chaveEvento: `decisao:${feito.tarefa.id}`, usuarioId: req.user.id, tarefaId: feito.tarefa.id,
+        texto: montarLinhaDecisao({ numero: peca.processo_numero, tipoPeca: peca.tipo_peca, tipoDecisao, data, resultado, sentido }),
+        enviarApos: new Date(Date.now() + ESPERA_AGRUPAR_DECISOES_MIN * 60000) });
+    } catch (e) { console.warn('[AvisosAcervo] Não foi possível enfileirar o aviso da decisão:', e.message); }
+  }
+  res.status(201).json({ ok:true, peca_id: peca.id, data_decisao: data, resultado: resultado || 'pendente', a_confirmar: !resultado, precedente_id: feito.precedenteId, ...(feito.tarefa ? { tarefa: feito.tarefa } : {}), ...(aviso ? { aviso_whatsapp: 'enfileirado' } : {}) });
 } catch (e) { erro(res, e); } });
 
 // ── Órgão julgador (§4.4) ─────────────────────────────────────────────────────────────────

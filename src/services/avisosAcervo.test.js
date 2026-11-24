@@ -46,3 +46,23 @@ test('interruptor geral', () => {
   assert.equal(avisosLigados({ ACERVO_AVISOS_WHATSAPP: ' FALSE ' }), false);
   assert.equal(avisosLigados({ ACERVO_AVISOS_WHATSAPP: 'true' }), true);
 });
+
+test('decisão: linha com CNJ, peça, data e sentido; nunca número que não seja CNJ', async () => {
+  const { montarLinhaDecisao } = await import('./avisosAcervo.js');
+  assert.equal(montarLinhaDecisao({ numero: '0859627-45.2025.8.15.2001', tipoPeca: 'memorial', tipoDecisao: 'Sentença', data: '2026-11-18' }),
+    '• 0859627-45.2025.8.15.2001 (memorial) — Sentença de 18/11/2026 — resultado a confirmar');
+  assert.equal(montarLinhaDecisao({ numero: '08596274520258152001', tipoPeca: 'recurso-inominado', tipoDecisao: 'Acórdão', data: '2026-11-20', resultado: 'parcialmente-provido', sentido: 'favoravel' }),
+    '• 0859627-45.2025.8.15.2001 (recurso inominado) — Acórdão de 20/11/2026 — favorável ao cliente: parcialmente provido');
+  assert.match(montarLinhaDecisao({ numero: 'MARIA DA SILVA 123', tipoPeca: 'inicial', tipoDecisao: 'Sentença', data: '2026-11-20', resultado: 'improcedente', sentido: 'desfavoravel' }),
+    /^• processo sem número CNJ \(inicial\) — Sentença de 20\/11\/2026 — desfavorável ao cliente: improcedente$/, 'texto livre no número não vai para o WhatsApp');
+});
+
+test('decisões agrupadas: título no singular ou plural, no máximo 10 linhas', async () => {
+  const { montarAvisoDecisoes } = await import('./avisosAcervo.js');
+  const um = montarAvisoDecisoes(['• a'], { baseUrl: BASE });
+  assert.match(um, /^📄 \*Acervo — decisão no PJe\*\n• a\nConferir nas tarefas do AM: https:\/\/am\.exemplo\.com\.br\/tarefas$/);
+  const muitos = montarAvisoDecisoes(Array.from({ length: 13 }, (_, i) => `• ${i}`), { baseUrl: '' });
+  assert.match(muitos, /^📄 \*Acervo — 13 decisões no PJe\*/);
+  assert.equal(muitos.split('\n').filter(l => l.startsWith('• ')).length, 10);
+  assert.match(muitos, /\ne mais 3 no AM\nConferir nas tarefas do AM\.$/);
+});
