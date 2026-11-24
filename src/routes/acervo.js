@@ -164,6 +164,7 @@ const CAMPOS_PECA = {
   resumo: v => texto(v, 'resumo'),
   modelo_aprovado: v => Boolean(v),
   data_decisao: v => dataOuNulo(v, 'data_decisao'),
+  decisao_id: v => { if (v === null || v === '') return null; if (!uuidValido(String(v))) throw invalido('decisao_id inválido.'); return String(v).toLowerCase(); },
   resultado_por_pedido: v => resultadoPorPedido(v),
 };
 const CAMPOS_PRECEDENTE = {
@@ -291,6 +292,8 @@ for (const [tipo, tabela, rel, coluna, campos, chave, ligacoesTipo] of [
     const teses = Object.hasOwn(b, 'teses') ? normalizarTeses(b.teses) : null;
     if (teses) await validarTeses(teses);
     const ligacoes = await lerLigacoes(b, ligacoesTipo, req);
+    // §4.3: a decisão da peça é um precedente do acervo, visível a quem edita.
+    if (alteracoes.decisao_id) await validarPrecedentes([alteracoes.decisao_id], req);
     if (!Object.keys(alteracoes).length && !teses && !Object.keys(ligacoes).length) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Nenhum campo editável informado.' });
     const anterior = await db.queryOne(`SELECT * FROM ${tabela} x WHERE x.id=$1${escopoVisibilidade(req, 'x')}`, [req.params.id]);
     if (!anterior) return res.status(404).json({ ok:false, erro:'Não encontrado.' });
@@ -504,18 +507,14 @@ acervoRouter.patch('/argumentos/:id', apenasMaster, async (req, res) => { try {
 // Peças e processos de uma tese e das variantes dela, para saber o que revisar quando a tese muda de
 // situação. Ex.: Tema 1308 modulado → peças de piso protocoladas depois de 16/04/2026. Só leitura.
 const LIMITE_IMPACTO = 1000;
-acervoRouter.get('/impacto', apenasMaster, async (req, res) => { try {
-  if (!String(req.query.tese ?? '').trim()) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Informe a tese: /impacto?tese=slug.' });
-  const tese = await lerTese(req.query.tese);
-  if (!tese) return res.status(404).json({ ok:false, erro:'Tese não encontrada.' });
-  const teses = req.query.variantes === 'false' ? [{ id: tese.id, slug: tese.slug }] : await linhagem(tese.id, 'abaixo');
-  const params = [teses.map(t => t.id)];
+// Peças (não arquivadas, visíveis) de um conjunto de teses e os processos delas. Usada pelo /impacto e
+// pela vigilância jurisprudencial (§4.5), que devolve o impacto quando a situação de um tema muda.
+async function calcularImpacto(req, teseIds, { desde = null, ate = null, ente = null } = {}) {
+  const params = [teseIds];
   const where = ['a.arquivada_em IS NULL', 'EXISTS (SELECT 1 FROM acervo_pecas_teses apt WHERE apt.peca_id=a.id AND apt.tese_id = ANY($1::uuid[]))'];
-  const desde = dataOuNulo(req.query.protocolo_desde, 'protocolo_desde');
   if (desde) { params.push(desde); where.push(`a.data_protocolo >= $${params.length}`); }
-  const ate = dataOuNulo(req.query.protocolo_ate, 'protocolo_ate');
   if (ate) { params.push(ate); where.push(`a.data_protocolo <= $${params.length}`); }
-  if (req.query.ente) { params.push(validarEnum(req.query.ente, ENTES, 'ente')); where.push(`a.ente=$${params.length}`); }
+  if (ente) { params.push(ente); where.push(`a.ente=$${params.length}`); }
   const pecas = await db.query(`SELECT a.id, a.titulo, a.tipo_peca, a.processo_id, a.processo_numero, a.cliente_nome, a.ente, a.ente_detalhe, a.tribunal, a.instancia, a.orgao_julgador, a.data_protocolo, a.resultado, a.data_decisao, a.resultado_por_pedido, a.drive_url,
       ARRAY(SELECT t.slug FROM acervo_pecas_teses apt JOIN teses_acervo t ON t.id=apt.tese_id WHERE apt.peca_id=a.id ORDER BY t.label) teses
     FROM acervo_pecas a WHERE ${where.join(' AND ')}${escopoVisibilidade(req)} ORDER BY a.data_protocolo DESC NULLS LAST, a.criado_em DESC LIMIT ${LIMITE_IMPACTO + 1}`, params);
@@ -536,7 +535,135 @@ acervoRouter.get('/impacto', apenasMaster, async (req, res) => { try {
       : { processo_id: null, numero: pc.processo_numero, cliente_nome: pc.cliente_nome, vinculado: false, pecas: [] });
     processos.get(chave).pecas.push(pc.id);
   }
-  res.json({ ok:true, tese: semId(tese), teses_consideradas: teses.map(t => t.slug), total_pecas: pecas.length, total_processos: processos.size, truncado, pecas, processos: [...processos.values()] });
+  return { total_pecas: pecas.length, total_processos: processos.size, truncado, pecas, processos: [...processos.values()] };
+}
+// As teses informadas e todas as variantes delas, sem repetição.
+async function tesesComVariantes(teseIds) {
+  const todas = new Map();
+  for (const id of teseIds) for (const t of await linhagem(id, 'abaixo')) todas.set(t.id, t);
+  return [...todas.values()];
+}
+
+acervoRouter.get('/impacto', apenasMaster, async (req, res) => { try {
+  if (!String(req.query.tese ?? '').trim()) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Informe a tese: /impacto?tese=slug.' });
+  const tese = await lerTese(req.query.tese);
+  if (!tese) return res.status(404).json({ ok:false, erro:'Tese não encontrada.' });
+  const teses = req.query.variantes === 'false' ? [{ id: tese.id, slug: tese.slug }] : await linhagem(tese.id, 'abaixo');
+  const filtros = {
+    desde: dataOuNulo(req.query.protocolo_desde, 'protocolo_desde'),
+    ate: dataOuNulo(req.query.protocolo_ate, 'protocolo_ate'),
+    ente: req.query.ente ? validarEnum(req.query.ente, ENTES, 'ente') : null,
+  };
+  const impacto = await calcularImpacto(req, teses.map(t => t.id), filtros);
+  // Itens vigiados que tocam a tese (ou uma variante dela).
+  const vigilancia = await db.query(`SELECT DISTINCT v.id, v.referencia, v.ultima_situacao, v.verificado_em FROM acervo_vigilancia v JOIN acervo_vigilancia_teses vt ON vt.vigilancia_id=v.id WHERE v.ativo=true AND vt.tese_id = ANY($1::uuid[]) ORDER BY v.referencia`, [teses.map(t => t.id)]);
+  res.json({ ok:true, tese: semId(tese), teses_consideradas: teses.map(t => t.slug), vigilancia, ...impacto });
+} catch (e) { erro(res, e); } });
+
+// ── Vigilância jurisprudencial (§4.5) ─────────────────────────────────────────────────────
+// Temas com repercussão geral pendentes, PUILs, ADIs e julgamentos que podem mudar teses do escritório.
+// Cada verificação grava a situação no histórico; se a situação mudou, a resposta já traz as peças e os
+// processos das teses afetadas (com as variantes), para o advogado decidir o que revisar.
+const CAMPOS_VIGILANCIA = {
+  referencia: v => texto(v, 'referencia', { obrigatorio: true, max: 200 }),
+  descricao: v => texto(v, 'descricao', { max: 2000 }),
+  url_fonte: v => urlHttps(v, 'url_fonte'),
+  impacto: v => texto(v, 'impacto', { max: 5000 }),
+  ativo: v => Boolean(v),
+};
+const selectVigilancia = `SELECT v.*, ARRAY(SELECT t.slug FROM acervo_vigilancia_teses vt JOIN teses_acervo t ON t.id=vt.tese_id WHERE vt.vigilancia_id=v.id ORDER BY t.slug) teses FROM acervo_vigilancia v`;
+async function tesesDaVigilancia(valor) {
+  const slugs = normalizarTeses(valor);
+  const rows = await db.query('SELECT id, slug FROM teses_acervo WHERE ativo=true AND slug = ANY($1::text[])', [slugs]);
+  if (rows.length !== slugs.length) throw invalido('Uma ou mais teses não existem no catálogo (ou estão inativas).');
+  return rows;
+}
+async function gravarTesesVigilancia(id, teses) {
+  await db.execute('DELETE FROM acervo_vigilancia_teses WHERE vigilancia_id=$1', [id]);
+  await db.execute('INSERT INTO acervo_vigilancia_teses (vigilancia_id, tese_id) SELECT $1, unnest($2::uuid[])', [id, teses.map(t => t.id)]);
+}
+// Registra uma verificação. Devolve se a situação mudou em relação à anterior.
+async function registrarVerificacao(id, anterior, nova, req) {
+  const mudou = (anterior ?? '') !== (nova ?? '');
+  await db.execute('INSERT INTO acervo_vigilancia_historico (vigilancia_id, situacao_anterior, situacao_nova, mudou, registrado_por) VALUES ($1,$2,$3,$4,$5)', [id, anterior ?? null, nova, mudou, req.user.id]);
+  return mudou;
+}
+
+acervoRouter.get('/vigilancia', async (req, res) => { try {
+  const params = []; const where = [];
+  if (req.query.ativo !== 'todos') where.push(req.query.ativo === 'false' ? 'v.ativo=false' : 'v.ativo=true');
+  if (req.query.tese) {
+    const t = await lerTese(req.query.tese);
+    if (!t) return res.status(404).json({ ok:false, erro:'Tese não encontrada.' });
+    // Vigilância da própria tese ou de uma tese-mãe dela também alcança a variante.
+    params.push((await linhagem(t.id, 'acima')).map(x => x.id));
+    where.push(`EXISTS (SELECT 1 FROM acervo_vigilancia_teses vt WHERE vt.vigilancia_id=v.id AND vt.tese_id = ANY($${params.length}::uuid[]))`);
+  }
+  const vigilancia = await db.query(`${selectVigilancia}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY v.verificado_em ASC NULLS FIRST, v.referencia`, params);
+  res.json({ ok:true, vigilancia });
+} catch (e) { erro(res, e); } });
+
+acervoRouter.get('/vigilancia/:id', async (req, res) => { try {
+  if (!uuidValido(req.params.id)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'ID inválido.' });
+  const v = await db.queryOne(`${selectVigilancia} WHERE v.id=$1`, [req.params.id]);
+  if (!v) return res.status(404).json({ ok:false, erro:'Item de vigilância não encontrado.' });
+  const historico = await db.query('SELECT situacao_anterior, situacao_nova, mudou, registrado_em FROM acervo_vigilancia_historico WHERE vigilancia_id=$1 ORDER BY registrado_em DESC LIMIT 20', [v.id]);
+  res.json({ ok:true, vigilancia: { ...v, historico } });
+} catch (e) { erro(res, e); } });
+
+acervoRouter.post('/vigilancia', apenasMaster, async (req, res) => { try {
+  const b = req.body || {};
+  const c = montarAlteracoes(b, CAMPOS_VIGILANCIA);
+  c.referencia = CAMPOS_VIGILANCIA.referencia(b.referencia);
+  const teses = await tesesDaVigilancia(b.teses);
+  const situacao = texto(b.ultima_situacao, 'ultima_situacao', { max: 2000 });
+  const [v] = await db.query(`INSERT INTO acervo_vigilancia (referencia, descricao, url_fonte, ultima_situacao, verificado_em, impacto, ativo, criado_por)
+    VALUES ($1,$2,$3,$4,${situacao ? 'NOW()' : 'NULL'},$5,$6,$7) ON CONFLICT (referencia) DO NOTHING RETURNING id`,
+    [c.referencia, c.descricao ?? null, c.url_fonte ?? null, situacao, c.impacto ?? null, c.ativo ?? true, req.user.id]);
+  if (!v) return res.status(409).json({ ok:false, erro:'validacao', mensagem:'Já existe item de vigilância com essa referência.' });
+  await gravarTesesVigilancia(v.id, teses);
+  if (situacao) await registrarVerificacao(v.id, null, situacao, req);
+  await registrarAuditoria({ usuarioId:req.user.id, acao:'criar', entidade:'acervo_vigilancia', entidadeId:v.id, valorDepois:{ ...c, teses: teses.map(t => t.slug), ultima_situacao: situacao, ...marcaChave(req) }, ip:req._ip });
+  res.status(201).json({ ok:true, vigilancia: await db.queryOne(`${selectVigilancia} WHERE v.id=$1`, [v.id]) });
+} catch (e) { erro(res, e); } });
+
+// PATCH /vigilancia/:id — campos, teses e/ou ultima_situacao. Enviar ultima_situacao é registrar uma
+// verificação (mesmo que repetida): atualiza verificado_em e grava o histórico. Se mudou, a resposta traz
+// o impacto nas peças e processos das teses vigiadas.
+acervoRouter.patch('/vigilancia/:id', apenasMaster, async (req, res) => { try {
+  if (!uuidValido(req.params.id)) return res.status(400).json({ ok:false, erro:'validacao', mensagem:'ID inválido.' });
+  const b = req.body || {};
+  const colunas = montarAlteracoes(b, CAMPOS_VIGILANCIA);
+  const teses = Object.hasOwn(b, 'teses') ? await tesesDaVigilancia(b.teses) : null;
+  const verifica = Object.hasOwn(b, 'ultima_situacao');
+  const situacao = verifica ? texto(b.ultima_situacao, 'ultima_situacao', { obrigatorio: true, max: 2000 }) : null;
+  if (!Object.keys(colunas).length && !teses && !verifica) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'Nenhum campo editável informado (referencia, descricao, url_fonte, impacto, ativo, teses, ultima_situacao).' });
+  const anterior = await db.queryOne(`${selectVigilancia} WHERE v.id=$1`, [req.params.id]);
+  if (!anterior) return res.status(404).json({ ok:false, erro:'Item de vigilância não encontrado.' });
+  const sets = []; const params = [];
+  for (const [campo, valor] of Object.entries(colunas)) { params.push(valor); sets.push(`${campo}=$${params.length}`); }
+  if (verifica) { params.push(situacao); sets.push(`ultima_situacao=$${params.length}`, 'verificado_em=NOW()'); }
+  sets.push('atualizado_em=NOW()');
+  params.push(anterior.id);
+  try {
+    await db.execute(`UPDATE acervo_vigilancia SET ${sets.join(', ')} WHERE id=$${params.length}`, params);
+  } catch (e) {
+    if (e.code === '23505') throw invalido('Já existe item de vigilância com essa referência.');
+    throw e;
+  }
+  if (teses) await gravarTesesVigilancia(anterior.id, teses);
+  const mudou = verifica ? await registrarVerificacao(anterior.id, anterior.ultima_situacao, situacao, req) : false;
+  const antes = Object.fromEntries([...Object.keys(colunas), ...(teses ? ['teses'] : []), ...(verifica ? ['ultima_situacao'] : [])].map(c => [c, anterior[c]]));
+  const depois = { ...colunas, ...(teses ? { teses: teses.map(t => t.slug) } : {}), ...(verifica ? { ultima_situacao: situacao, mudou } : {}) };
+  await registrarAuditoria({ usuarioId:req.user.id, acao: mudou ? 'vigilancia_mudou' : 'editar', entidade:'acervo_vigilancia', entidadeId:anterior.id, valorAntes:antes, valorDepois:{ ...depois, ...marcaChave(req) }, ip:req._ip });
+  const vigilancia = await db.queryOne(`${selectVigilancia} WHERE v.id=$1`, [anterior.id]);
+  let impacto;
+  if (mudou) {
+    const ids = (await db.query('SELECT tese_id FROM acervo_vigilancia_teses WHERE vigilancia_id=$1', [anterior.id])).map(r => r.tese_id);
+    const consideradas = await tesesComVariantes(ids);
+    impacto = { teses_consideradas: consideradas.map(t => t.slug), ...(await calcularImpacto(req, consideradas.map(t => t.id))) };
+  }
+  res.json({ ok:true, vigilancia, ...(verifica ? { mudou } : {}), ...(impacto ? { impacto, aviso:'A situação mudou: revise as peças e os processos listados em "impacto". A decisão sobre cada ação é do advogado.' } : {}) });
 } catch (e) { erro(res, e); } });
 
 // Grava uma peça/planilha (HTML) como PDF e/ou Word na pasta do cliente no Drive (Master).

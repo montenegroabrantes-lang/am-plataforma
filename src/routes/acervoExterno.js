@@ -5,8 +5,8 @@ import { acervoRouter } from './acervo.js';
 // Montado em /api/integracoes/v1/acervo, DEPOIS de autenticarChaveExterna.
 //
 // - acervo_leitura: listar/buscar, ler peça, precedente ou argumento, catálogo de teses, impacto de
-//   uma tese (peças e processos).
-// - acervo_edicao: criar e editar teses, peças, precedentes e argumentos; registrar resultado;
+//   uma tese (peças e processos) e vigilância jurisprudencial.
+// - acervo_edicao: criar e editar teses, peças, precedentes, argumentos e itens de vigilância; registrar resultado;
 //   conferir precedente; arquivar peça ou precedente (desde a camada de conhecimento).
 // Fica de fora de propósito: Drive, prazos, protocolos, contexto do processo, restaurar arquivados
 // (só na tela) e qualquer registro de processo restrito (a chave nunca vê "restrito").
@@ -17,15 +17,16 @@ const LEITURA = [
   new RegExp('^/teses$'),
   new RegExp('^/argumentos$'),
   new RegExp('^/impacto$'),
-  new RegExp(`^/(pecas|precedentes|argumentos)/${ID}$`),
+  new RegExp('^/vigilancia$'),
+  new RegExp(`^/(pecas|precedentes|argumentos|vigilancia)/${ID}$`),
 ];
 const EDICAO = {
   POST: [
-    new RegExp('^/(pecas|precedentes|teses|argumentos)$'),
+    new RegExp('^/(pecas|precedentes|teses|argumentos|vigilancia)$'),
     new RegExp(`^/(pecas|precedentes)/${ID}/arquivar$`),
   ],
   PATCH: [
-    new RegExp(`^/(pecas|precedentes|argumentos)/${ID}$`),
+    new RegExp(`^/(pecas|precedentes|argumentos|vigilancia)/${ID}$`),
     new RegExp(`^/pecas/${ID}/resultado$`),
     new RegExp(`^/precedentes/${ID}/conferir$`),
     new RegExp(`^/teses/${SLUG}$`),

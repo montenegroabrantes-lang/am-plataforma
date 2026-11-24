@@ -537,3 +537,17 @@ CREATE TABLE acervo_pecas_argumentos (peca_id UUID NOT NULL REFERENCES acervo_pe
 CREATE INDEX idx_acervo_pecas_argumentos_arg ON acervo_pecas_argumentos (argumento_id);
 CREATE TABLE acervo_pecas_precedentes (peca_id UUID NOT NULL REFERENCES acervo_pecas(id) ON DELETE CASCADE, precedente_id UUID NOT NULL REFERENCES acervo_precedentes(id) ON DELETE CASCADE, PRIMARY KEY(peca_id,precedente_id));
 CREATE INDEX idx_acervo_pecas_precedentes_prec ON acervo_pecas_precedentes (precedente_id);
+-- Fase 2 (24/11/2026): decisão da peça e vigilância jurisprudencial.
+ALTER TABLE acervo_pecas ADD COLUMN decisao_id UUID REFERENCES acervo_precedentes(id) ON DELETE SET NULL;
+CREATE TABLE acervo_vigilancia (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), referencia TEXT NOT NULL UNIQUE, descricao TEXT, url_fonte TEXT,
+  ultima_situacao TEXT, verificado_em TIMESTAMPTZ, impacto TEXT, ativo BOOLEAN NOT NULL DEFAULT true,
+  criado_por UUID REFERENCES usuarios(id), criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), atualizado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE acervo_vigilancia_teses (vigilancia_id UUID NOT NULL REFERENCES acervo_vigilancia(id) ON DELETE CASCADE, tese_id UUID NOT NULL REFERENCES teses_acervo(id), PRIMARY KEY(vigilancia_id,tese_id));
+CREATE INDEX idx_acervo_vigilancia_teses_tese ON acervo_vigilancia_teses (tese_id);
+CREATE TABLE acervo_vigilancia_historico (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(), vigilancia_id UUID NOT NULL REFERENCES acervo_vigilancia(id) ON DELETE CASCADE,
+  situacao_anterior TEXT, situacao_nova TEXT, mudou BOOLEAN NOT NULL, registrado_por UUID REFERENCES usuarios(id), registrado_em TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_acervo_vigilancia_historico ON acervo_vigilancia_historico (vigilancia_id, registrado_em DESC);

@@ -71,7 +71,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.6.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.7.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -342,6 +342,7 @@ function construirServidor(token) {
       argumentos: z.array(z.string().uuid()).max(200).optional().describe('ids dos argumentos usados na peça'),
       precedentes: z.array(z.string().uuid()).max(200).optional().describe('ids dos precedentes citados'),
       data_decisao: z.string().nullable().optional().describe('AAAA-MM-DD da sentença/acórdão'),
+      decisao_id: z.string().uuid().nullable().optional().describe('id do precedente do acervo gerado pelo julgamento desta peça (registre antes com criar_precedente)'),
       resultado_por_pedido: z.array(z.object({
         pedido: z.string().min(1).max(200),
         resultado: z.enum(RESULTADOS_PEDIDO),
@@ -385,6 +386,58 @@ function construirServidor(token) {
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     }, async ({ id }) => saida(await chamar('POST', `/acervo/${tipo}/${id}/arquivar`, token)));
   }
+
+  s.registerTool('listar_vigilancia', {
+    title: 'Listar vigilância jurisprudencial',
+    description: 'Temas com repercussão geral pendentes, PUILs, ADIs e julgamentos que podem mudar teses do escritório, '
+      + 'com a última situação conhecida e quando foi verificada (os mais antigos primeiro). Com tese, traz os itens '
+      + 'dela e das teses-mãe. Consulte antes de redigir peça de tese vigiada.',
+    inputSchema: {
+      tese: z.string().optional().describe('slug da tese'),
+      ativo: z.enum(['true', 'false', 'todos']).optional(),
+    },
+    annotations: leitura,
+  }, async a => saidaCompacta(await chamar('GET', `/acervo/vigilancia${qs(a)}`, token)));
+
+  s.registerTool('ler_vigilancia', {
+    title: 'Ler item de vigilância',
+    description: 'Um item de vigilância com as teses afetadas e o histórico das verificações (situação anterior → nova).',
+    inputSchema: { id: z.string().uuid() },
+    annotations: leitura,
+  }, async ({ id }) => saidaCompacta(await chamar('GET', `/acervo/vigilancia/${id}`, token)));
+
+  s.registerTool('criar_vigilancia', {
+    title: 'Criar item de vigilância',
+    description: 'Passa a vigiar um tema, PUIL, ADI ou julgamento que pode afetar teses do escritório. Informe a '
+      + 'referência (ex.: "Tema 1218"), as teses afetadas, a fonte oficial e a situação atual conferida na fonte.',
+    inputSchema: {
+      referencia: z.string().min(1).max(200).describe('Ex.: "Tema 1218", "PUIL 0801549-46.2026.8.15.9010"'),
+      teses: z.array(z.string()).min(1).describe('slugs das teses afetadas'),
+      descricao: z.string().max(2000).optional(),
+      url_fonte: urlHttpsOpcional,
+      ultima_situacao: z.string().max(2000).optional().describe('Situação conferida na fonte oficial hoje'),
+      impacto: z.string().max(5000).optional().describe('O que muda para o escritório se for julgado'),
+    },
+    annotations: escrita,
+  }, async a => saida(await chamar('POST', '/acervo/vigilancia', token, a)));
+
+  s.registerTool('atualizar_vigilancia', {
+    title: 'Registrar verificação ou editar vigilância',
+    description: 'Envie ultima_situacao para registrar uma verificação na fonte oficial (mesmo sem mudança: atualiza '
+      + 'a data). Se a situação mudou, a resposta traz as peças e os processos das teses afetadas — leve ao usuário; '
+      + 'a decisão sobre cada ação é do advogado. Também edita referência, teses, fonte, impacto e ativo.',
+    inputSchema: {
+      id: z.string().uuid(),
+      ultima_situacao: z.string().min(1).max(2000).optional(),
+      referencia: z.string().min(1).max(200).optional(),
+      teses: z.array(z.string()).min(1).optional(),
+      descricao: z.string().max(2000).nullable().optional(),
+      url_fonte: urlHttpsOpcional.nullable(),
+      impacto: z.string().max(5000).nullable().optional(),
+      ativo: z.boolean().optional().describe('false encerra a vigilância (ex.: tema julgado e já refletido nas teses)'),
+    },
+    annotations: escrita,
+  }, async ({ id, ...b }) => saida(await chamar('PATCH', `/acervo/vigilancia/${id}`, token, b)));
 
   s.registerTool('impacto_tese', {
     title: 'Impacto de uma tese (peças e processos)',
