@@ -71,11 +71,11 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.5.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.6.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
-    description: 'Lista os slugs de tese válidos do acervo do escritório. Consulte antes de criar peça ou precedente para não usar slug inexistente.',
+    description: 'Lista os slugs de tese válidos do acervo do escritório, com a tese-mãe (variante → mãe), a situação (ativa, em_risco, suspensa, superada, com o motivo) e a skill da tese. Consulte antes de criar peça ou precedente para não usar slug inexistente, e antes de redigir para ver se a tese está em risco.',
     inputSchema: {},
   }, async () => saida(await chamar('GET', '/acervo/teses', token)));
 
@@ -210,6 +210,196 @@ function construirServidor(token) {
       fonte_primaria_url: urlHttpsObrigatoria,
     },
   }, async ({ id, fonte_primaria_url }) => saida(await chamar('PATCH', `/acervo/precedentes/${id}/conferir`, token, { fonte_primaria_url })));
+
+  // ── Camada de conhecimento (24/11/2026): teses em árvore, argumentos (defesa da Fazenda × resposta),
+  // edição de peça e precedente, arquivamento e impacto. Mesmas rotas da chave externa do acervo. ──
+
+  const STATUS_TESE = ['ativa', 'em_risco', 'suspensa', 'superada'];
+  const TIPOS_ARGUMENTO = ['fundamento', 'defesa_fazenda', 'resposta', 'preliminar', 'calculo'];
+  const STATUS_ARGUMENTO = ['em_teste', 'aprovado', 'abandonado'];
+  const RESULTADOS_PEDIDO = ['pendente', 'a-confirmar', 'deferido', 'parcialmente-deferido', 'indeferido', 'prejudicado', 'nao-apreciado'];
+  const escrita = { readOnlyHint: false, destructiveHint: false, openWorldHint: false };
+  const leitura = { readOnlyHint: true, openWorldHint: false };
+
+  s.registerTool('criar_tese', {
+    title: 'Criar tese no catálogo do acervo',
+    description: 'Cria uma tese nova no catálogo. O slug é a identidade e não muda depois. Para variante (ex.: FGTS de um '
+      + 'Estado), informe tese_mae; peça de variante deve levar também a tese-mãe. Confira em listar_teses se já não existe.',
+    inputSchema: {
+      slug: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/).max(80).describe('minúsculas, números e hífen'),
+      label: z.string().min(1).max(200),
+      tese_mae: z.string().optional().describe('slug da tese-mãe'),
+      status: z.enum(STATUS_TESE).optional(),
+      status_motivo: z.string().max(2000).optional().describe('Obrigatório se status ≠ ativa'),
+      skill_slug: z.string().max(120).optional().describe('Skill que redige a peça desta tese'),
+      drive_folder_id: z.string().optional(),
+    },
+    annotations: escrita,
+  }, async a => saida(await chamar('POST', '/acervo/teses', token, a)));
+
+  s.registerTool('atualizar_tese', {
+    title: 'Atualizar tese (árvore, situação, skill, pasta)',
+    description: 'Edita uma tese pelo slug: rótulo, tese-mãe (null tira da árvore), situação (ativa, em_risco, suspensa, '
+      + 'superada — fora de "ativa" exige status_motivo; voltar a "ativa" limpa o motivo), skill e pasta do Drive. '
+      + 'Mudar a situação NÃO altera peças: use impacto_tese para listar o que revisar. Fica na auditoria.',
+    inputSchema: {
+      slug: z.string(),
+      label: z.string().min(1).max(200).optional(),
+      tese_mae: z.string().nullable().optional(),
+      status: z.enum(STATUS_TESE).optional(),
+      status_motivo: z.string().max(2000).nullable().optional(),
+      skill_slug: z.string().max(120).nullable().optional(),
+      drive_folder_id: z.string().nullable().optional(),
+      ativo: z.boolean().optional().describe('false oculta a tese do catálogo, sem apagar'),
+    },
+    annotations: escrita,
+  }, async ({ slug, ...b }) => saida(await chamar('PATCH', `/acervo/teses/${encodeURIComponent(slug)}`, token, b)));
+
+  s.registerTool('listar_argumentos', {
+    title: 'Listar argumentos de uma tese',
+    description: 'Mapa de objeções do escritório: fundamentos, defesas que a Fazenda costuma usar e as respostas a cada '
+      + 'uma (responde_a_id), com precedentes ligados e texto_modelo pronto. Use ANTES de redigir inicial, impugnação ou '
+      + 'recurso. Em variante (ex.: fgts-pernambuco), use incluir_maes=true para trazer também os da tese-mãe. Sem '
+      + 'status, os abandonados ficam de fora; status "em_teste" ainda não tem resultado — não apresentar como pacífico.',
+    inputSchema: {
+      tese: z.string().optional().describe('slug da tese'),
+      incluir_maes: z.boolean().optional(),
+      tipo: z.enum(TIPOS_ARGUMENTO).optional(),
+      status: z.enum(STATUS_ARGUMENTO).optional(),
+      responde_a: z.string().uuid().optional().describe('id de uma defesa: lista as respostas a ela'),
+      q: z.string().max(200).optional(),
+      limite: z.number().int().min(1).max(200).optional(),
+    },
+    annotations: leitura,
+  }, async a => saidaCompacta(await chamar('GET', `/acervo/argumentos${qs(a)}`, token)));
+
+  s.registerTool('ler_argumento', {
+    title: 'Ler argumento',
+    description: 'Um argumento com os precedentes (conferido ou não), a defesa que responde ou as respostas que recebe, '
+      + 'e quantas peças o usaram.',
+    inputSchema: { id: z.string().uuid() },
+    annotations: leitura,
+  }, async ({ id }) => saidaCompacta(await chamar('GET', `/acervo/argumentos/${id}`, token)));
+
+  s.registerTool('criar_argumento', {
+    title: 'Criar argumento',
+    description: 'Registra fundamento, defesa da Fazenda, resposta, preliminar ou cálculo de uma tese. Resposta aponta '
+      + '(responde_a_id) para uma defesa_fazenda da mesma tese ou de uma tese-mãe. Nasce "em_teste"; só marque '
+      + '"aprovado" com decisão do advogado. Precedentes: ids do acervo (prefira os conferidos).',
+    inputSchema: {
+      tese: z.string().describe('slug da tese'),
+      tipo: z.enum(TIPOS_ARGUMENTO),
+      titulo: z.string().min(1).max(300),
+      responde_a_id: z.string().uuid().optional(),
+      texto_modelo: z.string().max(50000).optional().describe('Bloco pronto para colar na peça'),
+      status: z.enum(STATUS_ARGUMENTO).optional(),
+      observacoes: z.string().max(5000).optional().describe('Ex.: fonte, juízo que não aceita, riscos'),
+      precedentes: z.array(z.string().uuid()).max(200).optional(),
+    },
+    annotations: escrita,
+  }, async a => saida(await chamar('POST', '/acervo/argumentos', token, a)));
+
+  s.registerTool('atualizar_argumento', {
+    title: 'Atualizar argumento',
+    description: 'Edita um argumento: situação (em_teste, aprovado, abandonado), título, texto_modelo, observações, tese, '
+      + 'tipo, defesa respondida e precedentes (a lista enviada substitui a anterior). Fica na auditoria.',
+    inputSchema: {
+      id: z.string().uuid(),
+      tese: z.string().optional(),
+      tipo: z.enum(TIPOS_ARGUMENTO).optional(),
+      titulo: z.string().min(1).max(300).optional(),
+      responde_a_id: z.string().uuid().nullable().optional(),
+      texto_modelo: z.string().max(50000).nullable().optional(),
+      status: z.enum(STATUS_ARGUMENTO).optional(),
+      observacoes: z.string().max(5000).nullable().optional(),
+      precedentes: z.array(z.string().uuid()).max(200).optional(),
+    },
+    annotations: escrita,
+  }, async ({ id, ...b }) => saida(await chamar('PATCH', `/acervo/argumentos/${id}`, token, b)));
+
+  s.registerTool('atualizar_peca', {
+    title: 'Atualizar peça do acervo',
+    description: 'Corrige ou completa uma peça: teses (lista substitui), data de protocolo, Drive, modelo aprovado, '
+      + 'argumentos usados e precedentes citados (listas substituem), data da decisão e resultado por pedido. '
+      + 'Para só o resultado geral, use atualizar_resultado_peca. Fica na auditoria com o valor anterior.',
+    inputSchema: {
+      id: z.string().uuid(),
+      teses: z.array(z.string()).min(1).optional(),
+      titulo: z.string().max(300).optional(),
+      tipo_peca: z.enum(TIPOS).optional(),
+      ente: z.enum(ENTES).optional(),
+      ente_detalhe: z.string().nullable().optional(),
+      instancia: z.enum(INSTANCIAS).optional(),
+      tribunal: z.string().nullable().optional(),
+      orgao_julgador: z.string().nullable().optional(),
+      relator: z.string().nullable().optional(),
+      data_protocolo: z.string().nullable().optional().describe('AAAA-MM-DD'),
+      drive_file_id: z.string().nullable().optional(),
+      drive_url: urlHttpsOpcional.nullable(),
+      resultado: z.enum(RESULTADOS).optional(),
+      resumo: z.string().nullable().optional(),
+      modelo_aprovado: z.boolean().optional(),
+      argumentos: z.array(z.string().uuid()).max(200).optional().describe('ids dos argumentos usados na peça'),
+      precedentes: z.array(z.string().uuid()).max(200).optional().describe('ids dos precedentes citados'),
+      data_decisao: z.string().nullable().optional().describe('AAAA-MM-DD da sentença/acórdão'),
+      resultado_por_pedido: z.array(z.object({
+        pedido: z.string().min(1).max(200),
+        resultado: z.enum(RESULTADOS_PEDIDO),
+        observacao: z.string().max(1000).optional(),
+      })).max(50).optional().describe('Um item por pedido, ex.: {pedido:"FGTS", resultado:"deferido"}; "a-confirmar" quando lido automaticamente'),
+    },
+    annotations: escrita,
+  }, async ({ id, ...b }) => saida(await chamar('PATCH', `/acervo/pecas/${id}`, token, b)));
+
+  s.registerTool('atualizar_precedente', {
+    title: 'Atualizar precedente',
+    description: 'Corrige um precedente. Mudar conteúdo material (órgão, tribunal, instância, data, ratio, ementa, '
+      + 'resultado, vinculante, fonte) tira o selo de conferido até nova conferência com a fonte primária.',
+    inputSchema: {
+      id: z.string().uuid(),
+      teses: z.array(z.string()).min(1).optional(),
+      orgao: z.string().max(300).optional(),
+      tribunal: z.string().nullable().optional(),
+      instancia: z.enum(INSTANCIAS).optional(),
+      relator: z.string().nullable().optional(),
+      data_julgamento: z.string().optional().describe('AAAA-MM-DD'),
+      ente: z.enum(ENTES).nullable().optional(),
+      ratio: z.string().optional(),
+      ementa: z.string().nullable().optional(),
+      resultado: z.enum(RESULTADOS).optional(),
+      favoravel: z.boolean().optional(),
+      vinculante: z.boolean().optional(),
+      fonte_primaria_url: urlHttpsOpcional.nullable(),
+      drive_file_id: z.string().nullable().optional(),
+      drive_url: urlHttpsOpcional.nullable(),
+    },
+    annotations: escrita,
+  }, async ({ id, ...b }) => saida(await chamar('PATCH', `/acervo/precedentes/${id}`, token, b)));
+
+  for (const [nome, tipo, titulo] of [['arquivar_peca', 'pecas', 'peça'], ['arquivar_precedente', 'precedentes', 'precedente']]) {
+    s.registerTool(nome, {
+      title: `Arquivar ${titulo}`,
+      description: `Tira a ${titulo} da busca do acervo (registro errado ou duplicado), sem apagar. Restaurar só pela tela `
+        + 'do AM. Confirme com o usuário antes. Fica na auditoria.',
+      inputSchema: { id: z.string().uuid() },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    }, async ({ id }) => saida(await chamar('POST', `/acervo/${tipo}/${id}/arquivar`, token)));
+  }
+
+  s.registerTool('impacto_tese', {
+    title: 'Impacto de uma tese (peças e processos)',
+    description: 'Lista as peças e os processos de uma tese e das variantes dela, para saber o que revisar quando a tese '
+      + 'muda de situação (ex.: modulação do Tema 1308 → piso-salarial-magisterio-pb com protocolo_desde=2026-04-17). '
+      + 'Só aponta o impacto; a decisão sobre cada ação é do advogado.',
+    inputSchema: {
+      tese: z.string().describe('slug da tese'),
+      variantes: z.boolean().optional().describe('false = só a própria tese (padrão inclui as variantes)'),
+      protocolo_desde: z.string().optional().describe('AAAA-MM-DD'),
+      protocolo_ate: z.string().optional().describe('AAAA-MM-DD'),
+      ente: z.enum(ENTES).optional(),
+    },
+    annotations: leitura,
+  }, async ({ variantes, ...a }) => saidaCompacta(await chamar('GET', `/acervo/impacto${qs({ ...a, variantes: variantes === false ? 'false' : undefined })}`, token)));
 
   // ── Drive: grava peça/planilha na pasta do cliente (PDF para o PJe). Master + escopo "acervo". ──
 
