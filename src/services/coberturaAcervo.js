@@ -55,6 +55,8 @@ export function sugerirTese(nomeProduto, teses) {
 const TIPOS_DECISAO_SQL = `(COALESCE(pu.tipo_documento,'') = '' OR pu.tipo_documento ~* '(senten|ac[oó]rd|ementa|decis)')`;
 
 // Processos sem peça. Filtros: tese (slug), ente, com_decisao (só os que têm decisão publicada), limite.
+// "Pronto" = tem tese e ente. A data de distribuição não bloqueia: o cadastro busca no DataJud (decisão do usuário
+// em 24/11/2026, D3 revista: nenhum processo tinha a data, por um erro de leitura do formato do DataJud).
 export async function listarCobertura({ tese = null, ente = null, comDecisao = false, limite = 500 } = {}, banco = db) {
   const procs = await banco.query(
     `SELECT pr.id, pr.numero, pr.tribunal, pr.grau, pr.vara, pr.polo_passivo, pr.data_distribuicao::date::text AS data_distribuicao,
@@ -80,7 +82,6 @@ export async function listarCobertura({ tese = null, ente = null, comDecisao = f
     const pendencias = [];
     if (!p.tese) pendencias.push(p.produto ? 'produto sem tese ligada' : 'processo sem produto');
     if (!e.ente) pendencias.push(e.motivo);
-    if (!p.data_distribuicao) pendencias.push('sem data de distribuição');
     return {
       processo_id: p.id, processo_numero: p.numero, tribunal: p.tribunal, grau: p.grau, vara: p.vara,
       produto: p.produto, tese: p.tese, ente: e.ente, ente_detalhe: e.detalhe, data_distribuicao: p.data_distribuicao, tem_drive: Boolean(p.tem_drive),
@@ -114,4 +115,97 @@ export async function listarProdutos(banco = db) {
     banco.query(`SELECT t.slug, t.label, m.slug AS tese_mae FROM teses_acervo t LEFT JOIN teses_acervo m ON m.id = t.tese_mae_id WHERE t.ativo = true`),
   ]);
   return produtos.map(p => ({ ...p, sugestao: p.tese ? null : sugerirTese(p.nome, teses) }));
+}
+
+// ── Etapa 2: cadastro retroativo (spec §3.3). Simulação por padrão. ─────────────────────────────────────────
+// Para cada processo pronto (tese e ente), cria a peça inicial mínima: título "Inicial (cadastro retroativo)",
+// tese do produto (e as mães dela), ente e detalhe pelo polo passivo, tribunal e vara do processo, protocolo = data
+// de distribuição (do AM ou, sem ela, do DataJud — e o processo ganha a data), pasta do cliente no Drive,
+// retroativa=true. Depois lê as decisões já publicadas desses processos (processarPublicacoes), em ordem de data.
+// Sem data no AM nem no DataJud, a peça entra sem data (fica na curadoria "sem data de protocolo").
+export const TITULO_RETROATIVA = 'Inicial (cadastro retroativo)';
+export const MAX_LOTE_RETROATIVAS = 300;
+
+// Datas de ajuizamento no DataJud, uma consulta por tribunal e lote. Falha de um lote não interrompe: os números
+// dele ficam sem data. Devolve Map(numero só com dígitos → 'AAAA-MM-DD') e quantos lotes falharam.
+export async function datasNoDataJud(porTribunal) {
+  const { consultarPorNumeros, dividirEmLotes, INDICE } = await import('./tribunal/datajud.js');
+  const datas = new Map(); let falhas = 0;
+  for (const [tribunal, numeros] of porTribunal) {
+    if (!INDICE[tribunal]) { falhas++; continue; }
+    for (const lote of dividirEmLotes(numeros)) {
+      try {
+        const r = await consultarPorNumeros(tribunal, lote);
+        for (const [n, x] of r.encontrados) if (x?.dados?.data_ajuizamento) datas.set(n, x.dados.data_ajuizamento);
+        if (r.falharam?.size) falhas++;
+      } catch (e) { falhas++; console.warn(`[Cobertura] DataJud ${tribunal}:`, e.message); }
+    }
+  }
+  return { datas, falhas };
+}
+
+export async function cadastrarRetroativas({ processos = null, comDecisao = false, tese = null, limite = 100, simular = true, usuarioId = null,
+  banco = db, buscarDatas = datasNoDataJud, processar = null } = {}) {
+  const cob = await listarCobertura({ tese, comDecisao, limite: 100000 }, banco);
+  let escolhidos = cob.processos;
+  if (processos?.length) { const q = new Set(processos.map(String)); escolhidos = escolhidos.filter(x => q.has(String(x.processo_id))); }
+  escolhidos = escolhidos.slice(0, Math.min(limite, MAX_LOTE_RETROATIVAS));
+  const prontos = escolhidos.filter(x => x.pronto);
+  const precisaDeVoce = escolhidos.filter(x => !x.pronto).map(x => ({ processo_numero: x.processo_numero, produto: x.produto, pendencias: x.pendencias }));
+
+  // Datas que faltam: DataJud, por tribunal.
+  const semData = prontos.filter(x => !x.data_distribuicao);
+  const porTribunal = new Map();
+  for (const x of semData) { const l = porTribunal.get(x.tribunal) ?? []; l.push(x.processo_numero.replace(/\D/g, '')); porTribunal.set(x.tribunal, l); }
+  const { datas, falhas } = semData.length ? await buscarDatas(porTribunal) : { datas: new Map(), falhas: 0 };
+
+  const itens = prontos.map(x => {
+    const doDataJud = !x.data_distribuicao ? datas.get(x.processo_numero.replace(/\D/g, '')) ?? null : null;
+    return { processo_id: x.processo_id, processo_numero: x.processo_numero, tese: x.tese, ente: x.ente, ente_detalhe: x.ente_detalhe,
+      data_protocolo: x.data_distribuicao || doDataJud, fonte_data: x.data_distribuicao ? 'AM' : doDataJud ? 'DataJud' : null, decisao: x.decisao };
+  });
+  const resumo = {
+    simular, selecionados: escolhidos.length, criaria: itens.length, precisa_de_voce: precisaDeVoce.length,
+    datas_do_am: itens.filter(i => i.fonte_data === 'AM').length, datas_do_datajud: itens.filter(i => i.fonte_data === 'DataJud').length,
+    sem_data: itens.filter(i => !i.data_protocolo).length, lotes_datajud_com_falha: falhas, com_decisao_publicada: itens.filter(i => i.decisao).length,
+  };
+  if (simular) return { ...resumo, itens, precisa_de_voce_itens: precisaDeVoce };
+
+  // Gravação: uma transação por processo; confere de novo que ainda não há peça (duas cargas ao mesmo tempo).
+  const criadas = [];
+  for (const it of itens) {
+    const r = await banco.transaction(async tx => {
+      const ja = await tx.queryOne(`SELECT 1 AS x FROM acervo_pecas a, processos pr WHERE pr.id=$1 AND a.arquivada_em IS NULL
+          AND (a.processo_id=pr.id OR REGEXP_REPLACE(COALESCE(a.processo_numero,''),'[^0-9]','','g')=REGEXP_REPLACE(pr.numero,'[^0-9]','','g')) LIMIT 1`, [it.processo_id]);
+      if (ja) return null;
+      if (it.fonte_data === 'DataJud') await tx.execute(`UPDATE processos SET data_distribuicao = COALESCE(data_distribuicao, $1::date + TIME '12:00') WHERE id=$2`, [it.data_protocolo, it.processo_id]);
+      const p = await tx.queryOne(`SELECT pr.id, pr.numero, pr.tribunal, pr.vara, pr.cliente_id, COALESCE(c.nome,'Sem cliente vinculado') AS cliente_nome, c.drive_pasta_url
+          FROM processos pr LEFT JOIN clientes c ON c.id=pr.cliente_id WHERE pr.id=$1 AND pr.visibilidade='normal' AND pr.status='ativo'`, [it.processo_id]);
+      if (!p) return null;
+      const drive = /^https:\/\//.test(String(p.drive_pasta_url ?? '')) ? p.drive_pasta_url : null;
+      const peca = await tx.queryOne(`INSERT INTO acervo_pecas (processo_id, processo_numero, cliente_id, cliente_nome, titulo, tipo_peca, ente, ente_detalhe, tribunal, instancia,
+            orgao_julgador, data_protocolo, drive_url, resultado, modelo_aprovado, visibilidade_snapshot, criado_por, retroativa)
+          VALUES ($1,$2,$3,$4,$5,'inicial',$6,$7,$8,'1grau',$9,$10,$11,'pendente',false,'normal',$12,true) RETURNING id`,
+        [p.id, p.numero, p.cliente_id, p.cliente_nome, TITULO_RETROATIVA, it.ente, it.ente_detalhe, p.tribunal, p.vara, it.data_protocolo, drive, usuarioId]);
+      // A tese do produto e as mães dela (a variante sempre leva a mãe).
+      await tx.execute(`WITH RECURSIVE acima AS (SELECT id, tese_mae_id FROM teses_acervo WHERE slug=$2
+            UNION SELECT t.id, t.tese_mae_id FROM teses_acervo t JOIN acima a ON t.id=a.tese_mae_id)
+          INSERT INTO acervo_pecas_teses (peca_id, tese_id) SELECT $1, id FROM acima ON CONFLICT DO NOTHING`, [peca.id, it.tese]);
+      return { ...it, peca_id: peca.id };
+    });
+    if (r) criadas.push(r);
+  }
+  // Decisões já publicadas nesses processos, em ordem de data (sentença antes do acórdão).
+  let decisoes = null;
+  if (criadas.length) {
+    const ids = (await banco.query(`SELECT pu.id::text AS id FROM publicacoes pu JOIN processos pr ON pr.id = ANY($1::uuid[])
+        AND (pu.processo_id = pr.id OR pu.numero_processo_raw = REGEXP_REPLACE(pr.numero,'[^0-9]','','g'))
+      WHERE NOT COALESCE(pu.cancelada,false) AND ${TIPOS_DECISAO_SQL} ORDER BY pu.data_disponibilizacao, pu.id`, [criadas.map(c => c.processo_id)])).map(x => x.id);
+    if (ids.length) {
+      const proc = processar ?? (await import('./processarDecisoesPublicacoes.js')).processarPublicacoes;
+      const d = await proc(ids, { usuarioImportacao: usuarioId, banco });
+      decisoes = { analisadas: d.analisadas, registradas: d.registradas, ja_registradas: d.ja_registradas, sem_peca: d.sem_peca, erros: d.erros };
+    }
+  }
+  return { ...resumo, criadas: criadas.length, decisoes, itens: criadas, precisa_de_voce_itens: precisaDeVoce };
 }

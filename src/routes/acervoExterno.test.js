@@ -202,6 +202,7 @@ test('vigilância e decisão da peça pela chave: leitura lê, edição escreve,
   assert.equal(permissaoNecessaria('GET', '/produtos'), 'acervo_leitura');
   assert.equal(permissaoNecessaria('PATCH', `/produtos/${ID}/tese`), 'acervo_edicao');
   assert.equal(permissaoNecessaria('PATCH', `/produtos/${ID}`), null);
+  assert.equal(permissaoNecessaria('POST', '/cobertura/cadastrar'), 'acervo_edicao');
   assert.equal((await chamar('am_live_leitura', 'POST', '/vigilancia', { referencia: 'Tema 1', teses: ['fgts-nulidade'] })).status, 403);
   assert.equal((await chamar('am_live_edicao', 'PATCH', `/pecas/${ID}`, { decisao_id: 'nao-e-uuid' })).status, 422);
 });

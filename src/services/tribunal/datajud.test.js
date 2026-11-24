@@ -7,6 +7,7 @@ import {
   ErroDataJud,
   dividirEmLotes,
   instanteDataJud,
+  diaDataJud,
   lerTamanhoLote,
   TAMANHO_LOTE,
 } from './datajud.js';
@@ -259,4 +260,14 @@ test('consultarProcesso (sync individual): 429 sem dados e depois o processo —
   assert.equal(r.atualizadoEm.toISOString(), '2026-09-29T10:00:00.000Z');
   assert.deepEqual(esperas, [5_000]);
   assert.deepEqual(chamadas[0].body.query, { match: { numeroProcesso: numero(1) } });
+});
+
+test('diaDataJud: formato compacto do TJPB, ISO e lixo (data de ajuizamento)', () => {
+  assert.equal(diaDataJud('20250711120411'), '2025-07-11');
+  assert.equal(diaDataJud('2024-03-15T00:00:00.000Z'), '2024-03-15');
+  assert.equal(diaDataJud('2024-03-15'), '2024-03-15');
+  assert.equal(diaDataJud('20251306000000'), null);
+  assert.equal(diaDataJud(''), null);
+  assert.equal(diaDataJud(null), null);
+  assert.equal(diaDataJud('15/03/2024'), null);
 });

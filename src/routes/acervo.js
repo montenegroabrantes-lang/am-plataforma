@@ -1078,6 +1078,20 @@ acervoRouter.get('/cobertura', async (req, res) => { try {
   const { listarCobertura } = await import('../services/coberturaAcervo.js');
   res.json({ ok:true, ...(await listarCobertura({ tese: tese || null, ente: ente || null, comDecisao: com_decisao === 'true' || com_decisao === '1', limite: lim })) });
 } catch (e) { erro(res, e); } });
+// Etapa 2: cadastro retroativo em lote. Simulação por padrão (D1: começar pelos processos com decisão publicada).
+acervoRouter.post('/cobertura/cadastrar', apenasMaster, async (req, res) => { try {
+  const b = { ...req.query, ...(req.body || {}) };
+  const limite = b.limite === undefined || b.limite === '' ? 100 : Number(b.limite);
+  if (!Number.isInteger(limite) || limite < 1 || limite > 300) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'limite deve ser um inteiro de 1 a 300.' });
+  const processos = b.processos === undefined ? null : b.processos;
+  if (processos !== null && (!Array.isArray(processos) || processos.length > 300 || processos.some(id => !uuidValido(id)))) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'processos deve ser uma lista de até 300 ids.' });
+  const simular = !(b.simular === false || b.simular === 'false');
+  const comDecisao = b.com_decisao === true || b.com_decisao === 'true';
+  const { cadastrarRetroativas } = await import('../services/coberturaAcervo.js');
+  const r = await cadastrarRetroativas({ processos, comDecisao, tese: b.tese || null, limite, simular, usuarioId: req.user.id });
+  if (!simular) await registrarAuditoria({ usuarioId:req.user.id, acao:'cadastro_retroativo', entidade:'acervo_peca', entidadeId:null, valorDepois:{ criadas:r.criadas, com_decisao:comDecisao, tese:b.tese || null, decisoes:r.decisoes, ...marcaChave(req) }, ip:req._ip });
+  res.json({ ok:true, ...r });
+} catch (e) { erro(res, e); } });
 acervoRouter.get('/produtos', async (req, res) => { try {
   const { listarProdutos } = await import('../services/coberturaAcervo.js');
   res.json({ ok:true, produtos: await listarProdutos() });

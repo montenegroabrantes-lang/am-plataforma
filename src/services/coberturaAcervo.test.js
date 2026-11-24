@@ -56,8 +56,27 @@ test('cobertura: pendências, decisão lida e filtros', async () => {
   const r = await listarCobertura({}, banco);
   assert.equal(r.total, 2); assert.equal(r.com_decisao, 1); assert.equal(r.prontos, 1); assert.equal(r.sem_tese, 1);
   assert.deepEqual(r.processos[0].decisao, { publicacao_id: '10', tipo: 'Sentença', data: '2026-11-03', resultado: 'procedente' });
-  assert.deepEqual(r.processos[1].pendencias, ['produto sem tese ligada', 'ente não reconhecido', 'sem data de distribuição']);
+  assert.deepEqual(r.processos[1].pendencias, ['produto sem tese ligada', 'ente não reconhecido'], 'data não bloqueia (vem do DataJud)');
   assert.equal((await listarCobertura({ comDecisao: true }, banco)).filtrados, 1);
   assert.equal((await listarCobertura({ tese: 'fgts-nulidade' }, banco)).processos[0].processo_id, 'P1');
   assert.ok(!('cliente_nome' in r.processos[0]), 'sem nome de cliente');
+});
+
+test('cadastro retroativo em simulação: data do AM ou do DataJud, pendentes à parte, nada gravado', async () => {
+  const { cadastrarRetroativas } = await import('./coberturaAcervo.js');
+  const linhas = [
+    { id: 'P1', numero: '0000001-00.2025.8.15.2001', tribunal: 'TJPB', polo_passivo: 'ESTADO DA PARAIBA', data_distribuicao: null, produto: 'FGTS', tese: 'fgts-nulidade', tem_drive: true },
+    { id: 'P2', numero: '0000002-00.2025.8.15.2001', tribunal: 'TJPB', polo_passivo: 'MUNICIPIO DE JOAO PESSOA', data_distribuicao: '2024-02-01', produto: 'FGTS', tese: 'fgts-nulidade', tem_drive: false },
+    { id: 'P3', numero: '0000003-00.2025.8.15.2001', tribunal: 'TJPB', polo_passivo: 'BANCO X', data_distribuicao: null, produto: 'FGTS', tese: 'fgts-nulidade', tem_drive: false },
+  ];
+  const banco = { query: async () => linhas, transaction: () => { throw new Error('não devia gravar'); } };
+  const pedidos = [];
+  const buscarDatas = async porTribunal => { pedidos.push([...porTribunal]); return { datas: new Map([['00000010020258152001', '2025-01-10']]), falhas: 0 }; };
+  const r = await cadastrarRetroativas({ banco, buscarDatas });
+  assert.deepEqual(pedidos, [[['TJPB', ['00000010020258152001']]]], 'só os sem data vão ao DataJud');
+  assert.equal(r.criaria, 2); assert.equal(r.precisa_de_voce, 1); assert.equal(r.datas_do_datajud, 1); assert.equal(r.datas_do_am, 1);
+  assert.deepEqual(r.itens.map(i => [i.processo_numero, i.data_protocolo, i.fonte_data]), [['0000001-00.2025.8.15.2001', '2025-01-10', 'DataJud'], ['0000002-00.2025.8.15.2001', '2024-02-01', 'AM']]);
+  assert.deepEqual(r.precisa_de_voce_itens[0].pendencias, ['ente não reconhecido']);
+  const lim = await cadastrarRetroativas({ banco, buscarDatas, limite: 1 });
+  assert.equal(lim.selecionados, 1);
 });

@@ -71,7 +71,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.14.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.15.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -578,6 +578,23 @@ function construirServidor(token) {
     },
     annotations: leitura,
   }, async ({ com_decisao, ...a }) => saidaCompacta(await chamar('GET', `/acervo/cobertura${qs({ ...a, com_decisao: com_decisao ? 'true' : undefined })}`, token)));
+
+  s.registerTool('cadastrar_retroativas', {
+    title: 'Cadastrar no acervo as peças que faltam (retroativas)',
+    description: 'Para processos sem peça no acervo (cobertura_acervo) com tese e ente definidos, cria a peça inicial mínima '
+      + '"Inicial (cadastro retroativo)" com a tese do produto, o ente, o tribunal, a pasta do cliente no Drive e a data de '
+      + 'distribuição (do AM ou do DataJud) como protocolo; depois registra as decisões já publicadas (precedente não '
+      + 'conferido, tarefa e aviso ao Master). SIMULAÇÃO POR PADRÃO: só lista o que criaria. Só passe simular=false '
+      + 'depois que o advogado aprovar a lista. Até 300 processos por chamada.',
+    inputSchema: {
+      com_decisao: z.boolean().optional().describe('true = só processos com decisão publicada (por onde a carga começa)'),
+      tese: z.string().optional().describe('slug da tese, para carregar em lotes por tese'),
+      processos: z.array(z.string().uuid()).max(300).optional().describe('ids de processos (cobertura_acervo) em vez dos filtros'),
+      limite: z.number().int().min(1).max(300).optional().describe('padrão 100'),
+      simular: z.boolean().optional().describe('padrão true; false grava (só com aprovação)'),
+    },
+    annotations: escrita,
+  }, async ({ simular, ...a }) => saidaCompacta(await chamar('POST', '/acervo/cobertura/cadastrar', token, { ...a, simular: simular !== false })));
 
   s.registerTool('produtos_acervo', {
     title: 'Produtos e a tese do acervo de cada um',
