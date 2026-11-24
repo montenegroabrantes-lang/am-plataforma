@@ -96,6 +96,32 @@ export function montarAvisoTese({ label, slug, de, para, motivo = null, totalPec
   ].join('\n');
 }
 
+// Relatório mensal: resumo de cinco linhas e o link da página. Sem processo nem cliente.
+const pctBR = v => (v === null || v === undefined ? '—' : `${String(v).replace('.', ',')}%`);
+export function nomeMesBR(mes) {
+  const [a, m] = String(mes).split('-').map(Number);
+  return `${new Date(Date.UTC(a, m - 1, 15)).toLocaleDateString('pt-BR', { month: 'long', timeZone: 'UTC' })}/${a}`;
+}
+export function montarAvisoRelatorio({ mes, resumo, anterior = null, atencao = {}, baseUrl = process.env.FRONTEND_URL }) {
+  const link = linkAM(`/acervo/relatorio?mes=${mes}`, baseUrl);
+  const d = resumo.decisoes ?? {};
+  const decisoes = d.total
+    ? `${plural(d.total, 'decisão', 'decisões')} (${plural(d.favoraveis ?? 0, 'favorável', 'favoráveis')}, ${plural(d.desfavoraveis ?? 0, 'desfavorável', 'desfavoráveis')}, ${d.a_confirmar ?? 0} a confirmar)`
+    : 'nenhuma decisão';
+  const atencaoItens = [
+    atencao.teses_em_risco?.length ? plural(atencao.teses_em_risco.length, 'tese em risco', 'teses em risco') : null,
+    atencao.decisoes_a_confirmar ? plural(atencao.decisoes_a_confirmar, 'decisão a conferir', 'decisões a conferir') : null,
+    atencao.vigilancia_mudou?.length ? plural(atencao.vigilancia_mudou.length, 'tema vigiado mudou', 'temas vigiados mudaram') : null,
+  ].filter(Boolean);
+  return [
+    `📊 *Acervo — relatório de ${nomeMesBR(mes)}*`,
+    `${plural(resumo.pecas_protocoladas ?? 0, 'peça protocolada', 'peças protocoladas')} · ${decisoes}`,
+    `Êxito do mês: ${pctBR(resumo.taxa_exito_mes)}${anterior ? ` (${nomeMesBR(anterior.mes).split('/')[0]}: ${pctBR(anterior.resumo?.taxa_exito_mes)})` : ''}`,
+    `Atenção: ${atencaoItens.length ? atencaoItens.join(' · ') : 'nada pendente'}`,
+    `Relatório completo${link ? `: ${link}` : ' no AM.'}`,
+  ].join('\n');
+}
+
 // Põe um aviso na fila. Devolve { id } ou null (desligado, usuário saiu dos avisos ou evento já avisado).
 // `conexao` pode ser o db ou a transação de quem chama.
 export async function enfileirarAviso(conexao, { tipo, chaveEvento, usuarioId, tarefaId = null, texto, enviarApos = null }, { env = process.env } = {}) {
