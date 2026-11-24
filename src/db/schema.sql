@@ -560,3 +560,16 @@ CREATE TABLE acervo_orgaos (
 );
 ALTER TABLE acervo_pecas ADD COLUMN orgao_julgador_id UUID REFERENCES acervo_orgaos(id) ON DELETE SET NULL;
 CREATE INDEX idx_acervo_pecas_orgao ON acervo_pecas (orgao_julgador_id) WHERE orgao_julgador_id IS NOT NULL;
+-- Avisos do acervo por WhatsApp (24/11/2026): fila, um aviso por evento, despachada em dia útil das 08h às 20h.
+CREATE TABLE avisos_acervo (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  tipo TEXT NOT NULL CHECK (tipo IN ('acervo_vigilancia','acervo_decisao','acervo_tese')),
+  chave_evento TEXT NOT NULL, usuario_id UUID NOT NULL REFERENCES usuarios(id), tarefa_id UUID REFERENCES tarefas(id) ON DELETE SET NULL,
+  texto TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente','enviando','enviado','falhou','incerto','descartado')),
+  tentativas INTEGER NOT NULL DEFAULT 0, ultimo_erro TEXT, enviar_apos TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  criado_em TIMESTAMPTZ NOT NULL DEFAULT NOW(), enviado_em TIMESTAMPTZ,
+  CONSTRAINT avisos_acervo_evento_unico UNIQUE (chave_evento)
+);
+CREATE INDEX idx_avisos_acervo_fila ON avisos_acervo (enviar_apos) WHERE status = 'pendente';
+ALTER TABLE usuarios ADD COLUMN avisos_acervo BOOLEAN NOT NULL DEFAULT true;

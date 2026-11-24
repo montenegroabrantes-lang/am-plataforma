@@ -8,6 +8,7 @@ import { salvarDocumentoHtml } from '../services/drive/documentos.js';
 import { salvarPecaPadrao } from '../services/drive/pecas.js';
 import { prepararProtocolo } from '../services/drive/protocolo.js';
 import { deletarEventoCalendar } from '../services/calendar/index.js';
+import { enfileirarAviso, montarAvisoVigilancia, despacharEmSeguida } from '../services/avisosAcervo.js';
 import { concluirTarefaComNumero } from './tarefas.js';
 
 export const acervoRouter = Router();
@@ -722,8 +723,17 @@ acervoRouter.patch('/vigilancia/:id', apenasMaster, async (req, res) => { try {
     impacto = { teses_consideradas: consideradas.map(t => t.slug), ...(await calcularImpacto(req, consideradas.map(t => t.id))) };
     if (b.criar_tarefa !== false) tarefa = await tarefaVigilancia(req, vigilancia, anterior.ultima_situacao, situacao, impacto);
   }
+  // Aviso por WhatsApp ao Master da tarefa (spec dos avisos do acervo). Falha aqui não desfaz a verificação.
+  let aviso = null;
+  if (tarefa) {
+    try {
+      aviso = await enfileirarAviso(db, { tipo: 'acervo_vigilancia', chaveEvento: `vigilancia:${tarefa.id}`, usuarioId: req.user.id, tarefaId: tarefa.id,
+        texto: montarAvisoVigilancia({ referencia: vigilancia.referencia, situacao, totalPecas: impacto.total_pecas, totalProcessos: impacto.total_processos, teses: impacto.teses_consideradas }) });
+      if (aviso) despacharEmSeguida(['acervo_vigilancia']);
+    } catch (e) { console.warn('[AvisosAcervo] Não foi possível enfileirar o aviso da vigilância:', e.message); }
+  }
   await registrarAuditoria({ usuarioId:req.user.id, acao: mudou ? 'vigilancia_mudou' : 'editar', entidade:'acervo_vigilancia', entidadeId:anterior.id, valorAntes:antes, valorDepois:{ ...depois, ...(tarefa ? { tarefa_id: tarefa.id } : {}), ...marcaChave(req) }, ip:req._ip });
-  res.json({ ok:true, vigilancia, ...(verifica ? { mudou } : {}), ...(impacto ? { impacto, ...(tarefa ? { tarefa } : {}), aviso:`A situação mudou: revise as peças e os processos listados em "impacto"${tarefa ? ' (tarefa criada para o Master)' : ''}. A decisão sobre cada ação é do advogado.` } : {}) });
+  res.json({ ok:true, vigilancia, ...(verifica ? { mudou } : {}), ...(impacto ? { impacto, ...(tarefa ? { tarefa } : {}), ...(aviso ? { aviso_whatsapp: 'enfileirado' } : {}), aviso:`A situação mudou: revise as peças e os processos listados em "impacto"${tarefa ? ' (tarefa criada para o Master)' : ''}. A decisão sobre cada ação é do advogado.` } : {}) });
 } catch (e) { erro(res, e); } });
 
 // ── Retroalimentação do resultado (§5.1): POST /pecas/:id/decisao ──────────────────────────

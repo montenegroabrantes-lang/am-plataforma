@@ -7,6 +7,7 @@ import { reprocessarSincronizacaoCamila } from '../services/reprocessarSyncCamil
 import { reprocessarSincronizacaoDrive } from '../services/reprocessarSyncDrive.js';
 import { verificarTokenGoogle } from '../services/google/verificarToken.js';
 import { detectarProtocolosNoDrive } from '../services/drive/conciliacao.js';
+import { despacharAvisos } from '../services/avisosAcervo.js';
 
 export function criarAlertasWorker() {
   return new Worker('alertas', async job => {
@@ -20,6 +21,9 @@ export function criarAlertasWorker() {
     }
     if (job.name === 'escalonamento-vespera') {
       await enviarEscalonamentoVespera();
+    }
+    if (job.name === 'avisos-acervo') {
+      await despacharAvisos();
     }
     if (job.name === 'reprocessar-sync-camila') {
       const { tentadas, sincronizadas } = await reprocessarSincronizacaoCamila();

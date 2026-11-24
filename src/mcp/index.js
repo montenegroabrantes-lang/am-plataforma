@@ -434,7 +434,8 @@ function construirServidor(token) {
     description: 'Envie ultima_situacao para registrar uma verificação na fonte oficial (mesmo sem mudança: atualiza '
       + 'a data). Se a situação mudou, a resposta traz as peças e os processos das teses afetadas — leve ao usuário; '
       + 'a decisão sobre cada ação é do advogado. Na mudança o AM também cria uma tarefa para o Master com os processos '
-      + 'afetados (criar_tarefa=false evita). A primeira situação registrada não conta como mudança. Também edita '
+      + 'afetados (criar_tarefa=false evita) e manda aviso por WhatsApp ao Master (dia útil, 08h–20h). A primeira '
+      + 'situação registrada não conta como mudança. Também edita '
       + 'referência, teses, fonte, impacto e ativo.',
     inputSchema: {
       id: z.string().uuid(),

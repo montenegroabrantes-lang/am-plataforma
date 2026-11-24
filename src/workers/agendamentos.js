@@ -26,6 +26,9 @@ export const TZ_ESCRITORIO = 'America/Sao_Paulo';
 export const AGENDA = {
   'backup-diario':          { pattern: '0 2 * * *',       tz: TZ_ESCRITORIO },
   'lembretes-diarios':      { pattern: '0 8 * * 1-5',     tz: TZ_ESCRITORIO },
+  // Avisos do acervo (24/11/2026): fila despachada de 10 em 10 minutos no horário útil; a checagem de
+  // dia útil e da janela 08h–20h fica no próprio despacho (feriado o cron não conhece).
+  'avisos-acervo':          { pattern: '*/10 8-19 * * 1-5', tz: TZ_ESCRITORIO },
   'ciclos-recorrentes':     { pattern: '0 7 * * *',       tz: TZ_ESCRITORIO },
   'escalonamento-vespera':  { pattern: '30 8,16 * * 1-5', tz: TZ_ESCRITORIO },
   'verificar-token-google': { pattern: '0 8 * * *',       tz: TZ_ESCRITORIO },

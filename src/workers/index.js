@@ -112,6 +112,18 @@ export async function iniciarWorkers() {
     }
   );
 
+  // Avisos do acervo por WhatsApp (24/11/2026): despacha a fila de 10 em 10 minutos, dia útil, 08h–20h.
+  await alertasQueue.add(
+    'avisos-acervo',
+    {},
+    {
+      repeat:           { ...AGENDA['avisos-acervo'] },
+      jobId:            'avisos-acervo-recorrente',
+      removeOnComplete: 3,
+      removeOnFail:     3,
+    }
+  );
+
   // Verificação diária de ciclos recorrentes (FGTS Remanescente, etc.) às 07h de Brasília (antes: 04h)
   await alertasQueue.add(
     'ciclos-recorrentes',
@@ -200,10 +212,10 @@ export async function iniciarWorkers() {
   await removerAgendamentosAntigos(syncQueue, ['sincronizar-todos']);
   await removerAgendamentosAntigos(backupQueue, ['backup-diario']);
   await removerAgendamentosAntigos(alertasQueue, [
-    'lembretes-diarios', 'ciclos-recorrentes', 'escalonamento-vespera', 'verificar-token-google',
+    'lembretes-diarios', 'ciclos-recorrentes', 'escalonamento-vespera', 'verificar-token-google', 'avisos-acervo',
   ]);
 
-  console.log('[Workers] Sync DataJud (07h e 19h BRT, sem o TJPB), Backup (02h BRT), Alertas WhatsApp (08h BRT, seg-sex), Ciclos Recorrentes (07h BRT), Escalonamento de Véspera (08h30/16h30 BRT, seg-sex), Reprocessamento de Sync Camila (15/15min), Reprocessamento de Sync Drive (30/30min), Detector de protocolo no Drive (30/30min) e Teste do token Google (08h BRT) iniciados.');
+  console.log('[Workers] Sync DataJud (07h e 19h BRT, sem o TJPB), Backup (02h BRT), Alertas WhatsApp (08h BRT, seg-sex), Ciclos Recorrentes (07h BRT), Escalonamento de Véspera (08h30/16h30 BRT, seg-sex), Avisos do acervo (10/10min, 08h–20h BRT, seg-sex), Reprocessamento de Sync Camila (15/15min), Reprocessamento de Sync Drive (30/30min), Detector de protocolo no Drive (30/30min) e Teste do token Google (08h BRT) iniciados.');
   // Lista dos agendamentos vivos no Redis, com a próxima execução já em Brasília: se algum horário
   // estiver errado (ou sobrar um agendamento antigo), aparece aqui no primeiro deploy.
   for (const fila of [syncQueue, backupQueue, alertasQueue, sacQueue]) {
