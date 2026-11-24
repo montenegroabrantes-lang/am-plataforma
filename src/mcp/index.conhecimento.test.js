@@ -51,10 +51,10 @@ const ID = '66666666-6666-4666-8666-666666666666';
 test('lista as ferramentas novas; leitura marcada como somente leitura e arquivar como destrutiva', async () => {
   const { result } = await rpc('tools/list');
   const f = Object.fromEntries(result.tools.map(t => [t.name, t]));
-  for (const nome of ['criar_tese', 'atualizar_tese', 'listar_argumentos', 'ler_argumento', 'criar_argumento', 'atualizar_argumento', 'atualizar_peca', 'atualizar_precedente', 'arquivar_peca', 'arquivar_precedente', 'impacto_tese', 'listar_vigilancia', 'ler_vigilancia', 'criar_vigilancia', 'atualizar_vigilancia', 'listar_orgaos', 'ler_orgao', 'criar_orgao', 'atualizar_orgao', 'painel_acervo', 'contexto_redacao', 'impacto_precedente', 'registrar_decisao_peca']) {
+  for (const nome of ['criar_tese', 'atualizar_tese', 'listar_argumentos', 'ler_argumento', 'criar_argumento', 'atualizar_argumento', 'atualizar_peca', 'atualizar_precedente', 'arquivar_peca', 'arquivar_precedente', 'impacto_tese', 'listar_vigilancia', 'ler_vigilancia', 'criar_vigilancia', 'atualizar_vigilancia', 'listar_orgaos', 'ler_orgao', 'criar_orgao', 'atualizar_orgao', 'painel_acervo', 'contexto_redacao', 'impacto_precedente', 'registrar_decisao_peca', 'relatorio_acervo']) {
     assert.ok(f[nome], nome);
   }
-  for (const nome of ['listar_argumentos', 'ler_argumento', 'impacto_tese', 'listar_vigilancia', 'ler_vigilancia', 'listar_orgaos', 'ler_orgao', 'painel_acervo', 'contexto_redacao', 'impacto_precedente']) assert.equal(f[nome].annotations.readOnlyHint, true, nome);
+  for (const nome of ['listar_argumentos', 'ler_argumento', 'impacto_tese', 'listar_vigilancia', 'ler_vigilancia', 'listar_orgaos', 'ler_orgao', 'painel_acervo', 'contexto_redacao', 'impacto_precedente', 'relatorio_acervo']) assert.equal(f[nome].annotations.readOnlyHint, true, nome);
   for (const nome of ['arquivar_peca', 'arquivar_precedente']) assert.equal(f[nome].annotations.destructiveHint, true, nome);
   assert.deepEqual(f.criar_argumento.inputSchema.required.sort(), ['tese', 'tipo', 'titulo']);
 });
@@ -81,6 +81,7 @@ test('cada ferramenta chama a rota certa, com o mesmo token e só os campos envi
     ['ler_orgao', { id: ID }, 'GET', `/api/acervo/orgaos/${ID}`, null],
     ['listar_orgaos', { tribunal: 'TJPB' }, 'GET', '/api/acervo/orgaos', null],
     ['painel_acervo', {}, 'GET', '/api/acervo/painel', null],
+    ['relatorio_acervo', { mes: '2026-10' }, 'GET', '/api/acervo/relatorio', null],
     ['registrar_decisao_peca', { id: ID, data_decisao: '2026-11-20', evidencia: '20 nov 2026~JULGADO PROCEDENTE O PEDIDO', resultado: 'procedente' }, 'POST', `/api/acervo/pecas/${ID}/decisao`, { data_decisao: '2026-11-20', evidencia: '20 nov 2026~JULGADO PROCEDENTE O PEDIDO', resultado: 'procedente' }],
     ['contexto_redacao', { tese: 'fgts-nulidade' }, 'GET', '/api/acervo/contexto-redacao', null],
     ['impacto_precedente', { precedente_id: ID }, 'GET', '/api/acervo/impacto', null],

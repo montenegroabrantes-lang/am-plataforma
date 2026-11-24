@@ -71,7 +71,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.11.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.12.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -549,6 +549,20 @@ function construirServidor(token) {
     },
     annotations: escrita,
   }, async ({ id, ...b }) => saida(await chamar('POST', `/acervo/pecas/${id}/decisao`, token, b)));
+
+  s.registerTool('relatorio_acervo', {
+    title: 'Relatório mensal do acervo',
+    description: 'SÓ LEITURA. Relatório de um mês (padrão: o mês anterior): peças protocoladas, decisões (favoráveis, '
+      + 'desfavoráveis, a confirmar), êxito do mês e acumulado, tempo médio, precedentes e argumentos novos, comparação '
+      + 'com o mês anterior; decisões do mês (desfavoráveis primeiro); êxito por tese e juízo; respostas usadas contra '
+      + 'cada defesa da Fazenda; sugestões de situação de argumento (só sugestão: mudar é decisão do advogado, com '
+      + 'atualizar_argumento); e o que pede atenção (teses em risco, vigilância, decisões a confirmar, curadoria). Mês '
+      + 'fechado devolve o retrato gravado (retrato=true). Sem nome de cliente.',
+    inputSchema: {
+      mes: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional().describe('AAAA-MM; padrão: mês anterior'),
+    },
+    annotations: leitura,
+  }, async a => saidaCompacta(await chamar('GET', `/acervo/relatorio${qs(a)}`, token)));
 
   s.registerTool('impacto_tese', {
     title: 'Impacto de uma tese (peças e processos)',

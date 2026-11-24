@@ -10,6 +10,7 @@ import { prepararProtocolo } from '../services/drive/protocolo.js';
 import { deletarEventoCalendar } from '../services/calendar/index.js';
 import { enfileirarAviso, montarAvisoVigilancia, despacharEmSeguida, montarLinhaDecisao, montarAvisoTese, ESPERA_AGRUPAR_DECISOES_MIN } from '../services/avisosAcervo.js';
 import { concluirTarefaComNumero } from './tarefas.js';
+import { cnjParaMensagem } from '../services/mensagensAlerta.js';
 
 export const acervoRouter = Router();
 
@@ -938,7 +939,8 @@ function agregador() {
 }
 const diasEntre = (de, ate) => Math.round((Date.parse(ate) - Date.parse(de)) / 86_400_000);
 
-acervoRouter.get('/painel', async (req, res) => { try {
+// Retrato atual do acervo. Usado pela rota /painel e pelo relatório mensal (curadoria, teses, vigilância).
+export async function montarPainel(req) {
   const vis = escopoVisibilidade(req);
   const [pecas, teses, orgaos, argumentos, usoArgumentos, precedentes, vigilancia] = await Promise.all([
     db.query(`SELECT a.id, a.titulo, a.processo_numero, a.tipo_peca, a.ente, a.resultado, a.data_protocolo, a.data_decisao, a.drive_url, a.drive_file_id, a.orgao_julgador_id,
@@ -1014,7 +1016,7 @@ acervoRouter.get('/painel', async (req, res) => { try {
     pecas_sem_argumento: protocoladas.filter(p => TIPOS_COM_ARGUMENTO.has(p.tipo_peca) && !comArgumento.has(p.id)).map(p => ({ ...resumoPeca(p), tipo_peca: p.tipo_peca })),
   };
 
-  res.json({
+  return {
     ok: true,
     gerado_em: new Date().toISOString(),
     resumo: {
@@ -1029,8 +1031,9 @@ acervoRouter.get('/painel', async (req, res) => { try {
     teses_em_risco: teses.filter(t => t.status !== 'ativa').map(t => ({ ...t, pecas: porTese.lista().find(x => x.tese === t.slug)?.pecas ?? 0 })),
     vigilancia: vigilancia.map(v => ({ ...v, dias_sem_verificar: v.verificado_em ? diasEntre(String(v.verificado_em instanceof Date ? v.verificado_em.toISOString() : v.verificado_em).slice(0, 10), hoje) : null })),
     curadoria,
-  });
-} catch (e) { erro(res, e); } });
+  };
+}
+acervoRouter.get('/painel', async (req, res) => { try { res.json(await montarPainel(req)); } catch (e) { erro(res, e); } });
 
 // ── Contexto antes de redigir (§5.2): GET /contexto-redacao?tese=slug[&ente=][&orgao_julgador_id=][&tipo_peca=] ──
 // O que a skill da tese precisa antes de escrever: situação da tese, vigilância, precedentes-âncora conferidos,
@@ -1127,6 +1130,172 @@ acervoRouter.get('/contexto-redacao', async (req, res) => { try {
     modelos_aprovados: modelos,
     pecas_consideradas: pecas.length,
   });
+} catch (e) { erro(res, e); } });
+
+// ── Relatório mensal do acervo (spec "AM - Spec Relatorio Mensal do Acervo.md", Drive) ─────────────────
+// GET /relatorio?mes=AAAA-MM (padrão: mês anterior). Mês fechado com retrato gravado devolve o retrato;
+// sem retrato, calcula na hora. POST /relatorio/:mes/fechar (Master) grava o retrato. Sem processos
+// restritos (qualquer perfil vê o mesmo relatório) e sem nome de cliente: o processo sai pelo número CNJ.
+const MES_RE = /^(\d{4})-(0[1-9]|1[0-2])$/;
+const pad2 = n => String(n).padStart(2, '0');
+const mesAtualBR = (agora = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).format(agora).slice(0, 7);
+const mesAnterior = mes => { const [a, m] = mes.split('-').map(Number); return m === 1 ? `${a - 1}-12` : `${a}-${pad2(m - 1)}`; };
+const proximoMes = mes => { const [a, m] = mes.split('-').map(Number); return m === 12 ? `${a + 1}-01` : `${a}-${pad2(m + 1)}`; };
+const reqSemRestrito = req => ({ ...req, user: { ...req.user, pode_marcar_restrito: false } });
+export const ARG_SUGERIR_APROVAR = 3; // decisões favoráveis, nenhuma desfavorável
+export const ARG_SUGERIR_REVER = 2;   // decisões desfavoráveis, nenhuma favorável
+
+function lerMes(valor, { padrao }) {
+  const mes = String(valor ?? '').trim() || padrao;
+  if (!MES_RE.test(mes)) throw invalido('mes deve ser AAAA-MM.');
+  if (mes > mesAtualBR()) throw invalido('Mês futuro: ainda não há relatório.');
+  return mes;
+}
+
+export async function calcularRelatorio(reqOriginal, mes, { comAnterior = true } = {}) {
+  const req = reqSemRestrito(reqOriginal);
+  const ini = `${mes}-01`; const fim = `${proximoMes(mes)}-01`; // [ini, fim)
+  const noMes = d => Boolean(d) && d >= ini && d < fim;
+  const [pecas, argumentos, precedentes, argMudaram, vigMudou, tarefasConf] = await Promise.all([
+    db.query(`SELECT a.id, a.processo_numero, a.tipo_peca, a.resultado, a.data_protocolo::text AS dp, a.data_decisao::text AS dd, a.resultado_por_pedido, a.orgao_julgador_id, o.nome AS orgao, o.tribunal,
+        ARRAY(SELECT t.slug FROM acervo_pecas_teses apt JOIN teses_acervo t ON t.id=apt.tese_id WHERE apt.peca_id=a.id ORDER BY t.slug) teses,
+        ARRAY(SELECT pa.argumento_id FROM acervo_pecas_argumentos pa WHERE pa.peca_id=a.id) argumentos
+      FROM acervo_pecas a LEFT JOIN acervo_orgaos o ON o.id=a.orgao_julgador_id WHERE a.arquivada_em IS NULL${escopoVisibilidade(req)}`),
+    db.query(`SELECT g.id, g.tipo, g.titulo, g.status, g.responde_a_id, t.slug AS tese, (g.criado_em AT TIME ZONE 'America/Sao_Paulo')::date::text AS criado
+      FROM acervo_argumentos g JOIN teses_acervo t ON t.id=g.tese_id`),
+    db.queryOne(`SELECT COUNT(*) FILTER (WHERE (p.criado_em AT TIME ZONE 'America/Sao_Paulo')::date >= $1::date AND (p.criado_em AT TIME ZONE 'America/Sao_Paulo')::date < $2::date)::int AS novos,
+        COUNT(*) FILTER (WHERE p.conferido AND (p.conferido_em AT TIME ZONE 'America/Sao_Paulo')::date >= $1::date AND (p.conferido_em AT TIME ZONE 'America/Sao_Paulo')::date < $2::date)::int AS conferidos
+      FROM acervo_precedentes p WHERE p.arquivada_em IS NULL${escopoVisibilidade(req, 'p')}`, [ini, fim]),
+    db.query(`SELECT l.entidade_id AS id, l.valor_antes->>'status' AS de, l.valor_depois->>'status' AS para, (l.criado_em AT TIME ZONE 'America/Sao_Paulo')::date::text AS em
+      FROM logs_auditoria l WHERE l.entidade='acervo_argumento' AND l.acao='editar' AND l.valor_depois ? 'status'
+        AND l.valor_antes->>'status' IS DISTINCT FROM l.valor_depois->>'status'
+        AND (l.criado_em AT TIME ZONE 'America/Sao_Paulo')::date >= $1::date AND (l.criado_em AT TIME ZONE 'America/Sao_Paulo')::date < $2::date ORDER BY l.criado_em`, [ini, fim]),
+    db.query(`SELECT v.referencia, h.situacao_anterior, h.situacao_nova, (h.registrado_em AT TIME ZONE 'America/Sao_Paulo')::date::text AS em
+      FROM acervo_vigilancia_historico h JOIN acervo_vigilancia v ON v.id=h.vigilancia_id
+      WHERE h.mudou AND h.situacao_anterior IS NOT NULL AND (h.registrado_em AT TIME ZONE 'America/Sao_Paulo')::date >= $1::date AND (h.registrado_em AT TIME ZONE 'America/Sao_Paulo')::date < $2::date ORDER BY h.registrado_em`, [ini, fim]),
+    db.queryOne(`SELECT COUNT(*)::int AS n FROM tarefas WHERE descricao LIKE 'Acervo: conferir %' AND status NOT IN ('concluida','cancelada')`),
+  ]);
+  const sentidoDe = p => (p.resultado === 'pendente' ? null : sentidoResultado(p.tipo_peca, p.resultado));
+  const contar = (lista, chave) => lista.reduce((acc, x) => { for (const k of [].concat(chave(x))) acc[k] = (acc[k] || 0) + 1; return acc; }, {});
+
+  // Resumo do mês
+  const protocoladas = pecas.filter(p => noMes(p.dp));
+  const decididasMes = pecas.filter(p => noMes(p.dd));
+  const dec = { total: decididasMes.length, favoraveis: 0, desfavoraveis: 0, a_confirmar: 0, outras: 0 };
+  for (const p of decididasMes) {
+    if (p.resultado === 'pendente') { dec.a_confirmar++; continue; }
+    const s = sentidoDe(p); if (s === 'favoravel') dec.favoraveis++; else if (s === 'desfavoravel') dec.desfavoraveis++; else dec.outras++;
+  }
+  const acumuladas = pecas.filter(p => p.dd && p.dd < fim && sentidoDe(p));
+  const favAcum = acumuladas.filter(p => sentidoDe(p) === 'favoravel').length;
+  const tempos = decididasMes.filter(p => p.dp && p.dd >= p.dp).map(p => diasEntre(p.dp, p.dd));
+  const novosArgs = argumentos.filter(g => noMes(g.criado));
+  const resumo = {
+    pecas_protocoladas: protocoladas.length,
+    por_tese: contar(protocoladas, p => p.teses), por_tipo: contar(protocoladas, p => p.tipo_peca),
+    decisoes: dec,
+    taxa_exito_mes: taxa(dec.favoraveis, dec.favoraveis + dec.desfavoraveis),
+    taxa_exito_acumulada: taxa(favAcum, acumuladas.length), decididas_acumuladas: acumuladas.length,
+    tempo_medio_dias: tempos.length ? Math.round(tempos.reduce((s, x) => s + x, 0) / tempos.length) : null,
+    precedentes_novos: precedentes?.novos ?? 0, precedentes_conferidos: precedentes?.conferidos ?? 0,
+    argumentos_novos: novosArgs.length, argumentos_mudaram: argMudaram.length,
+  };
+
+  // Decisões do mês: desfavoráveis primeiro, depois a confirmar, depois as demais
+  const ordem = { desfavoravel: 0, a_confirmar: 1, favoravel: 2 };
+  const decisoes = decididasMes.map(p => {
+    const s = sentidoDe(p);
+    return { processo: cnjParaMensagem(p.processo_numero), teses: p.teses, tipo_peca: p.tipo_peca, orgao: p.orgao ?? null, data_decisao: p.dd, resultado: p.resultado, sentido: s, a_confirmar: p.resultado === 'pendente' };
+  }).sort((a, b) => (ordem[a.a_confirmar ? 'a_confirmar' : a.sentido] ?? 3) - (ordem[b.a_confirmar ? 'a_confirmar' : b.sentido] ?? 3) || a.data_decisao.localeCompare(b.data_decisao));
+
+  // O que está funcionando: êxito por tese e juízo (do mês e acumulado, só com decisões) e argumentos
+  const exito = (lista, chave, base) => {
+    const ag = agregador();
+    for (const p of lista) { const s = sentidoDe(p); if (!s) continue; for (const k of [].concat(chave(p))) if (k) ag.somar(k, base(p, k), s); }
+    return ag.lista();
+  };
+  const porTese = l => exito(l, p => p.teses, (_p, k) => ({ tese: k }));
+  const porOrgao = l => exito(l, p => p.orgao_julgador_id, p => ({ id: p.orgao_julgador_id, nome: p.orgao, tribunal: p.tribunal }));
+  const argPorId = new Map(argumentos.map(g => [g.id, g]));
+  const defesasMes = new Map();
+  for (const p of decididasMes) {
+    const s = sentidoDe(p); if (!s) continue;
+    const usados = p.argumentos.map(id => argPorId.get(id)).filter(Boolean);
+    for (const d of usados.filter(g => g.tipo === 'defesa_fazenda')) {
+      const item = defesasMes.get(d.id) ?? { id: d.id, titulo: d.titulo, tese: d.tese, respostas: new Map() };
+      for (const r of usados.filter(g => g.responde_a_id === d.id)) {
+        const x = item.respostas.get(r.id) ?? { id: r.id, titulo: r.titulo, status: r.status, favoraveis: 0, desfavoraveis: 0 };
+        if (s === 'favoravel') x.favoraveis++; else x.desfavoraveis++;
+        item.respostas.set(r.id, x);
+      }
+      defesasMes.set(d.id, item);
+    }
+  }
+  const sugestoes = [];
+  for (const g of argumentos.filter(x => x.status === 'em_teste' && x.tipo !== 'defesa_fazenda')) {
+    let fav = 0; let desf = 0;
+    for (const p of acumuladas) if (p.argumentos.includes(g.id)) { if (sentidoDe(p) === 'favoravel') fav++; else desf++; }
+    if (fav >= ARG_SUGERIR_APROVAR && desf === 0) sugestoes.push({ id: g.id, titulo: g.titulo, tese: g.tese, favoraveis: fav, desfavoraveis: desf, sugestao: 'aprovar' });
+    else if (desf >= ARG_SUGERIR_REVER && fav === 0) sugestoes.push({ id: g.id, titulo: g.titulo, tese: g.tese, favoraveis: fav, desfavoraveis: desf, sugestao: 'rever' });
+  }
+
+  // O que pede atenção (situação no momento do cálculo)
+  const painel = await montarPainel(req);
+  const relatorio = {
+    ok: true, mes, parcial: mes === mesAtualBR(), gerado_em: new Date().toISOString(), retrato: false,
+    resumo,
+    decisoes,
+    funcionando: {
+      por_tese_mes: porTese(decididasMes), por_tese_acumulado: porTese(acumuladas),
+      por_orgao_mes: porOrgao(decididasMes), por_orgao_acumulado: porOrgao(acumuladas),
+      defesas_mes: [...defesasMes.values()].map(d => ({ ...d, respostas: [...d.respostas.values()] })),
+      sugestoes_argumentos: sugestoes,
+    },
+    argumentos_novos: novosArgs.map(g => ({ id: g.id, titulo: g.titulo, tese: g.tese, tipo: g.tipo })),
+    argumentos_mudaram: argMudaram.map(x => ({ ...x, titulo: argPorId.get(x.id)?.titulo ?? null })),
+    atencao: {
+      teses_em_risco: painel.teses_em_risco.map(t => ({ slug: t.slug, label: t.label, status: t.status, motivo: t.status_motivo, pecas: t.pecas })),
+      vigilancia_mudou: vigMudou,
+      vigilancia_sem_verificacao: painel.vigilancia.filter(v => v.dias_sem_verificar === null || v.dias_sem_verificar > DIAS_CURADORIA).map(v => ({ referencia: v.referencia, dias_sem_verificar: v.dias_sem_verificar })),
+      decisoes_a_confirmar: pecas.filter(p => p.resultado === 'pendente' && (p.resultado_por_pedido || []).some(x => x.resultado === 'a-confirmar')).length,
+      tarefas_conferencia_abertas: tarefasConf?.n ?? 0,
+      curadoria: Object.fromEntries(Object.entries(painel.curadoria).map(([k, v]) => [k, v.length])),
+    },
+  };
+  if (comAnterior) {
+    const ant = mesAnterior(mes);
+    const ret = await db.queryOne('SELECT dados FROM acervo_relatorios_mensais WHERE mes=$1', [ant]);
+    relatorio.anterior = ret
+      ? { mes: ant, fonte: 'retrato', resumo: ret.dados.resumo, curadoria: ret.dados.atencao?.curadoria ?? null }
+      : { mes: ant, fonte: 'calculado', resumo: (await calcularRelatorio(reqOriginal, ant, { comAnterior: false })).resumo, curadoria: null };
+  }
+  return relatorio;
+}
+
+acervoRouter.get('/relatorio', async (req, res) => { try {
+  const mes = lerMes(req.query.mes, { padrao: mesAnterior(mesAtualBR()) });
+  const recalcular = req.query.recalcular === 'true';
+  if (recalcular && req.user?.perfil !== 'master') return res.status(403).json({ ok:false, erro:'Só o Master pode recalcular um mês fechado.' });
+  if (!recalcular) {
+    const ret = await db.queryOne('SELECT dados, fechado_em FROM acervo_relatorios_mensais WHERE mes=$1', [mes]);
+    if (ret) return res.json({ ...ret.dados, retrato: true, fechado_em: ret.fechado_em });
+  }
+  res.json(await calcularRelatorio(req, mes));
+} catch (e) { erro(res, e); } });
+
+// Fecha um mês: calcula e grava o retrato (substitui o anterior, se houver). Só mês já encerrado.
+export async function fecharRelatorio(req, mes) {
+  if (mes >= mesAtualBR()) throw invalido('Só um mês já encerrado pode ser fechado.');
+  const dados = await calcularRelatorio(req, mes);
+  await db.execute(`INSERT INTO acervo_relatorios_mensais (mes, dados, fechado_por) VALUES ($1,$2::jsonb,$3)
+    ON CONFLICT (mes) DO UPDATE SET dados=EXCLUDED.dados, fechado_em=NOW(), fechado_por=EXCLUDED.fechado_por`, [mes, JSON.stringify(dados), req.user?.id ?? null]);
+  await registrarAuditoria({ usuarioId: req.user?.id ?? null, acao: 'fechar', entidade: 'acervo_relatorio', entidadeId: null, valorDepois: { mes, resumo: dados.resumo, ...marcaChave(req) }, ip: req._ip });
+  return dados;
+}
+acervoRouter.post('/relatorio/:mes/fechar', apenasMaster, async (req, res) => { try {
+  const mes = lerMes(req.params.mes, { padrao: '' });
+  const dados = await fecharRelatorio(req, mes);
+  res.status(201).json({ ...dados, retrato: true });
 } catch (e) { erro(res, e); } });
 
 // Grava uma peça/planilha (HTML) como PDF e/ou Word na pasta do cliente no Drive (Master).
