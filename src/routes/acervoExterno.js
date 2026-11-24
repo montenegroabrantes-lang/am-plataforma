@@ -5,7 +5,8 @@ import { acervoRouter } from './acervo.js';
 // Montado em /api/integracoes/v1/acervo, DEPOIS de autenticarChaveExterna.
 //
 // - acervo_leitura: listar/buscar, ler peça, precedente ou argumento, catálogo de teses, impacto de
-//   uma tese (peças e processos), vigilância jurisprudencial e órgãos julgadores (com o êxito no juízo).
+//   uma tese (peças e processos), vigilância jurisprudencial, órgãos julgadores (com o êxito no juízo)
+//   e o painel de inteligência.
 // - acervo_edicao: criar e editar teses, peças, precedentes, argumentos, itens de vigilância e órgãos; registrar resultado;
 //   conferir precedente; arquivar peça ou precedente (desde a camada de conhecimento).
 // Fica de fora de propósito: Drive, prazos, protocolos, contexto do processo, restaurar arquivados
@@ -19,6 +20,7 @@ const LEITURA = [
   new RegExp('^/impacto$'),
   new RegExp('^/vigilancia$'),
   new RegExp('^/orgaos$'),
+  new RegExp('^/painel$'),
   new RegExp(`^/(pecas|precedentes|argumentos|vigilancia|orgaos)/${ID}$`),
 ];
 const EDICAO = {

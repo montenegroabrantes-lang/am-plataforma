@@ -71,7 +71,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.8.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.9.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -488,6 +488,16 @@ function construirServidor(token) {
     },
     annotations: escrita,
   }, async ({ id, ...b }) => saida(await chamar('PATCH', `/acervo/orgaos/${id}`, token, b)));
+
+  s.registerTool('painel_acervo', {
+    title: 'Painel de inteligência do acervo',
+    description: 'Retrato do acervo: êxito por tese, ente, juízo (com tempo médio do protocolo à decisão) e por '
+      + 'argumento (quais respostas vencem cada defesa da Fazenda), teses em risco, vigilância jurisprudencial e '
+      + 'pendências de curadoria (precedentes não conferidos, peças decididas sem resultado, sem Drive, sem protocolo, '
+      + 'sem órgão). Contrarrazões invertem o sentido (recurso da parte contrária desprovido conta a favor).',
+    inputSchema: {},
+    annotations: leitura,
+  }, async () => saidaCompacta(await chamar('GET', '/acervo/painel', token)));
 
   s.registerTool('impacto_tese', {
     title: 'Impacto de uma tese (peças e processos)',

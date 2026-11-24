@@ -769,6 +769,117 @@ acervoRouter.patch('/orgaos/:id', apenasMaster, async (req, res) => { try {
   res.json({ ok:true, orgao: await db.queryOne(`${selectOrgao(req)} WHERE o.id=$1`, [anterior.id]) });
 } catch (e) { erro(res, e); } });
 
+// ── Painel de inteligência (§6) ───────────────────────────────────────────────────────────
+// GET /painel — só leitura, respeita a visibilidade (quem não vê restrito não conta peça restrita).
+// Êxito por tese, ente, juízo e argumento; tempo do protocolo à decisão por juízo; teses em risco;
+// vigilância; pendências de curadoria. "Êxito" segue sentidoResultado (contrarrazões invertem).
+const DIAS_CURADORIA = 30;
+function agregador() {
+  const mapa = new Map();
+  return {
+    somar(chave, base, sentido) {
+      const x = mapa.get(chave) ?? { ...base, pecas: 0, sem_decisao: 0, favoraveis: 0, desfavoraveis: 0 };
+      x.pecas++;
+      if (!sentido) x.sem_decisao++; else if (sentido === 'favoravel') x.favoraveis++; else x.desfavoraveis++;
+      mapa.set(chave, x);
+      return x;
+    },
+    lista() {
+      return [...mapa.values()].map(x => ({ ...x, taxa_exito: taxa(x.favoraveis, x.favoraveis + x.desfavoraveis) }))
+        .sort((a, b) => b.pecas - a.pecas);
+    },
+  };
+}
+const diasEntre = (de, ate) => Math.round((Date.parse(ate) - Date.parse(de)) / 86_400_000);
+
+acervoRouter.get('/painel', async (req, res) => { try {
+  const vis = escopoVisibilidade(req);
+  const [pecas, teses, orgaos, argumentos, usoArgumentos, precedentes, vigilancia] = await Promise.all([
+    db.query(`SELECT a.id, a.titulo, a.processo_numero, a.tipo_peca, a.ente, a.resultado, a.data_protocolo, a.data_decisao, a.drive_url, a.drive_file_id, a.orgao_julgador_id,
+        ARRAY(SELECT t.slug FROM acervo_pecas_teses apt JOIN teses_acervo t ON t.id=apt.tese_id WHERE apt.peca_id=a.id ORDER BY t.slug) teses
+      FROM acervo_pecas a WHERE a.arquivada_em IS NULL${vis}`),
+    db.query(`SELECT t.slug, t.label, t.status, t.status_motivo, m.slug AS tese_mae FROM teses_acervo t LEFT JOIN teses_acervo m ON m.id=t.tese_mae_id WHERE t.ativo=true`),
+    db.query('SELECT id, nome, tribunal, instancia FROM acervo_orgaos WHERE ativo=true'),
+    db.query(`SELECT g.id, g.titulo, g.tipo, g.status, g.responde_a_id, t.slug AS tese FROM acervo_argumentos g JOIN teses_acervo t ON t.id=g.tese_id`),
+    db.query(`SELECT pa.argumento_id, pa.peca_id FROM acervo_pecas_argumentos pa JOIN acervo_pecas a ON a.id=pa.peca_id WHERE a.arquivada_em IS NULL${vis}`),
+    db.query(`SELECT p.id, p.processo_numero, p.orgao, p.tribunal, p.data_julgamento, p.conferido FROM acervo_precedentes p WHERE p.arquivada_em IS NULL${escopoVisibilidade(req, 'p')}`),
+    db.query(`SELECT v.id, v.referencia, v.ultima_situacao, v.verificado_em,
+        (SELECT h.mudou FROM acervo_vigilancia_historico h WHERE h.vigilancia_id=v.id ORDER BY h.registrado_em DESC LIMIT 1) AS ultima_mudou,
+        (SELECT MAX(h.registrado_em) FROM acervo_vigilancia_historico h WHERE h.vigilancia_id=v.id AND h.mudou) AS mudou_em,
+        ARRAY(SELECT t.slug FROM acervo_vigilancia_teses vt JOIN teses_acervo t ON t.id=vt.tese_id WHERE vt.vigilancia_id=v.id ORDER BY t.slug) teses
+      FROM acervo_vigilancia v WHERE v.ativo=true ORDER BY v.verificado_em ASC NULLS FIRST`),
+  ]);
+  const hoje = new Date().toISOString().slice(0, 10);
+  const nomeTese = new Map(teses.map(t => [t.slug, t.label]));
+  const nomeOrgao = new Map(orgaos.map(o => [o.id, o]));
+  const sentidoPeca = new Map();
+  const porTese = agregador(); const porEnte = agregador(); const porOrgao = agregador();
+  const tempos = new Map();
+  let decididas = 0; let favoraveis = 0;
+  for (const p of pecas) {
+    const sentido = sentidoResultado(p.tipo_peca, p.resultado);
+    sentidoPeca.set(p.id, sentido);
+    if (sentido) { decididas++; if (sentido === 'favoravel') favoraveis++; }
+    for (const slug of p.teses) porTese.somar(slug, { tese: slug, label: nomeTese.get(slug) ?? slug }, sentido);
+    porEnte.somar(p.ente, { ente: p.ente }, sentido);
+    if (p.orgao_julgador_id && nomeOrgao.has(p.orgao_julgador_id)) {
+      const o = nomeOrgao.get(p.orgao_julgador_id);
+      porOrgao.somar(o.id, { id: o.id, nome: o.nome, tribunal: o.tribunal, instancia: o.instancia }, sentido);
+      if (p.data_protocolo && p.data_decisao && p.data_decisao >= p.data_protocolo) {
+        const t = tempos.get(o.id) ?? []; t.push(diasEntre(p.data_protocolo, p.data_decisao)); tempos.set(o.id, t);
+      }
+    }
+  }
+  const media = v => (v.length ? Math.round(v.reduce((s, x) => s + x, 0) / v.length) : null);
+  const orgaosLista = porOrgao.lista().map(o => ({ ...o, tempo_medio_dias: media(tempos.get(o.id) ?? []), decisoes_com_tempo: (tempos.get(o.id) ?? []).length }));
+
+  // Êxito por argumento: peças que o usaram e o sentido do resultado delas; respostas agrupadas na defesa.
+  const pecasDoArgumento = new Map();
+  for (const u of usoArgumentos) { const l = pecasDoArgumento.get(u.argumento_id) ?? []; l.push(u.peca_id); pecasDoArgumento.set(u.argumento_id, l); }
+  const estatArg = g => {
+    const ids = pecasDoArgumento.get(g.id) ?? [];
+    const s = { pecas: ids.length, favoraveis: 0, desfavoraveis: 0, sem_decisao: 0 };
+    for (const id of ids) { const x = sentidoPeca.get(id); if (!x) s.sem_decisao++; else if (x === 'favoravel') s.favoraveis++; else s.desfavoraveis++; }
+    return { ...s, taxa_exito: taxa(s.favoraveis, s.favoraveis + s.desfavoraveis) };
+  };
+  const defesas = argumentos.filter(g => g.tipo === 'defesa_fazenda' && g.status !== 'abandonado').map(d => ({
+    id: d.id, titulo: d.titulo, tese: d.tese, status: d.status, ...estatArg(d),
+    respostas: argumentos.filter(r => r.responde_a_id === d.id && r.status !== 'abandonado')
+      .map(r => ({ id: r.id, titulo: r.titulo, tese: r.tese, status: r.status, ...estatArg(r) }))
+      .sort((a, b) => b.pecas - a.pecas),
+  })).sort((a, b) => (b.pecas + b.respostas.reduce((s, r) => s + r.pecas, 0)) - (a.pecas + a.respostas.reduce((s, r) => s + r.pecas, 0)));
+  const statusArgumentos = argumentos.reduce((acc, g) => ({ ...acc, [g.status]: (acc[g.status] || 0) + 1 }), {});
+
+  // Curadoria (§6): precedentes não conferidos, peças decididas sem resultado há mais de 30 dias, peças sem Drive,
+  // sem data de protocolo e sem órgão julgador.
+  const resumoPeca = p => ({ id: p.id, titulo: p.titulo, processo_numero: p.processo_numero });
+  const curadoria = {
+    precedentes_nao_conferidos: precedentes.filter(p => !p.conferido).map(p => ({ id: p.id, processo_numero: p.processo_numero, orgao: p.orgao, tribunal: p.tribunal, data_julgamento: p.data_julgamento })),
+    pecas_sem_resultado: pecas.filter(p => p.resultado === 'pendente' && p.data_decisao && diasEntre(p.data_decisao, hoje) > DIAS_CURADORIA)
+      .map(p => ({ ...resumoPeca(p), data_decisao: p.data_decisao, dias: diasEntre(p.data_decisao, hoje) })),
+    pecas_sem_drive: pecas.filter(p => !p.drive_url && !p.drive_file_id).map(resumoPeca),
+    pecas_sem_protocolo: pecas.filter(p => !p.data_protocolo).map(resumoPeca),
+    pecas_sem_orgao: pecas.filter(p => !p.orgao_julgador_id).map(resumoPeca),
+  };
+
+  res.json({
+    ok: true,
+    gerado_em: new Date().toISOString(),
+    resumo: {
+      pecas: pecas.length, decididas, favoraveis, taxa_exito: taxa(favoraveis, decididas), sem_decisao: pecas.length - decididas,
+      precedentes: precedentes.length, precedentes_conferidos: precedentes.filter(p => p.conferido).length,
+      teses_ativas: teses.length, teses_em_risco: teses.filter(t => t.status !== 'ativa').length,
+      argumentos: argumentos.length, argumentos_por_status: statusArgumentos,
+      vigilancia: vigilancia.length, orgaos: orgaos.length,
+    },
+    por_tese: porTese.lista(), por_ente: porEnte.lista(), por_orgao: orgaosLista,
+    por_argumento: defesas,
+    teses_em_risco: teses.filter(t => t.status !== 'ativa').map(t => ({ ...t, pecas: porTese.lista().find(x => x.tese === t.slug)?.pecas ?? 0 })),
+    vigilancia: vigilancia.map(v => ({ ...v, dias_sem_verificar: v.verificado_em ? diasEntre(String(v.verificado_em instanceof Date ? v.verificado_em.toISOString() : v.verificado_em).slice(0, 10), hoje) : null })),
+    curadoria,
+  });
+} catch (e) { erro(res, e); } });
+
 // Grava uma peça/planilha (HTML) como PDF e/ou Word na pasta do cliente no Drive (Master).
 // Usado pelo conector do Claude: o PJe exige PDF e o conector do Google Drive só grava texto.
 acervoRouter.post('/drive/documentos', apenasMaster, async (req, res) => {

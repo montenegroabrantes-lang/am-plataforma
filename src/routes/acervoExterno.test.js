@@ -218,3 +218,10 @@ test('órgão julgador pela chave e sentido do resultado (contrarrazões inverte
   assert.equal(sentidoResultado('inicial', 'pendente'), null);
   assert.equal(sentidoResultado('inicial', 'desistencia'), null);
 });
+
+test('painel pela chave: só leitura', async () => {
+  const { permissaoNecessaria } = await import('./acervoExterno.js');
+  assert.equal(permissaoNecessaria('GET', '/painel'), 'acervo_leitura');
+  assert.equal(permissaoNecessaria('POST', '/painel'), null);
+  assert.equal(permissaoNecessaria('PATCH', '/painel'), null);
+});
