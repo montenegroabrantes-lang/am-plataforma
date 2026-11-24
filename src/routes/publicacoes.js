@@ -1,3 +1,4 @@
+import { processarEmSeguida } from '../services/processarDecisoesPublicacoes.js';
 import { Router } from 'express';
 import { db }      from '../db/index.js';
 import { apenasMaster } from '../middleware/auth.js';
@@ -399,6 +400,7 @@ export async function importarPublicacoesHandler(req, res) {
   }
 
   let inseridas = 0, vinculadas = 0;
+  const novas = []; // ids inseridos agora e não cancelados: decisões do acervo (etapa 2)
   const validItems = [...new Map(items.filter(i => i.id).map(item => [String(item.id), item])).values()];
 
   // Busca todos os processos vinculáveis em 1 query (evita N+1)
@@ -454,10 +456,10 @@ export async function importarPublicacoesHandler(req, res) {
       if (cancelada) await cancelarPrazoDaPublicacao(item.id, 'Publicação cancelada na origem');
       else await criarTarefaDePublicacao(item, processoId);
 
-      return rows[0];
+      return { ...rows[0], id: String(item.id), cancelada };
     }));
     for (const r of results) {
-      if (r?.inserted) inseridas++;
+      if (r?.inserted) { inseridas++; if (!r.cancelada) novas.push(r.id); }
     }
   }
   vinculadas = processoMap.size; // processos únicos vinculados
@@ -476,6 +478,8 @@ export async function importarPublicacoesHandler(req, res) {
     valorDepois: { recebidas: items.length, inseridas, vinculadas }, ip: req._ip,
   });
   res.json({ ok: true, inseridas, vinculadas });
+  // Decisões do acervo lidas nas publicações novas (spec "AM - Spec Decisoes pelas Publicacoes.md"): depois de responder.
+  processarEmSeguida(novas, { usuarioImportacao: null });
 }
 
 // POST /api/publicacoes/importar-browser — recebe publicações coletadas pelo browser (IP do usuário)
@@ -484,6 +488,7 @@ publicacoesRouter.post('/importar-browser', apenasMaster, async (req, res) => {
   if (!Array.isArray(items) || items.length === 0) return res.json({ ok: true, inseridas: 0, vinculadas: 0 });
 
   let inseridas = 0;
+  const novas = []; // ids inseridos agora e não cancelados: decisões do acervo (etapa 2)
   const validItems2 = [...new Map(items.filter(i => i.id).map(item => [String(item.id), item])).values()];
 
   const numerosRaw2 = [...new Set(validItems2.map(i => i.numero_processo).filter(Boolean))];
@@ -537,9 +542,9 @@ publicacoesRouter.post('/importar-browser', apenasMaster, async (req, res) => {
       if (cancelada) await cancelarPrazoDaPublicacao(item.id, 'Publicação cancelada na origem');
       else await criarTarefaDePublicacao(item, processoId);
 
-      return rows[0];
+      return { ...rows[0], id: String(item.id), cancelada };
     }));
-    for (const r of results) { if (r?.inserted) inseridas++; }
+    for (const r of results) { if (r?.inserted) { inseridas++; if (!r.cancelada) novas.push(r.id); } }
   }
 
   await db.query(
@@ -552,6 +557,7 @@ publicacoesRouter.post('/importar-browser', apenasMaster, async (req, res) => {
     valorDepois: { recebidas: items.length, inseridas, vinculadas: processoMap2.size }, ip: req._ip,
   });
   res.json({ ok: true, inseridas, vinculadas: processoMap2.size });
+  processarEmSeguida(novas, { usuarioImportacao: req.user.id });
 });
 
 // POST /api/publicacoes/sincronizar — desativado (Comunica API bloqueia IPs de nuvem)
