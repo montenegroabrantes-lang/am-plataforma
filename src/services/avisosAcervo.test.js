@@ -66,3 +66,19 @@ test('decisões agrupadas: título no singular ou plural, no máximo 10 linhas',
   assert.equal(muitos.split('\n').filter(l => l.startsWith('• ')).length, 10);
   assert.match(muitos, /\ne mais 3 no AM\nConferir nas tarefas do AM\.$/);
 });
+
+test('tese que muda de situação: nome, de → para, motivo e alcance', async () => {
+  const { montarAvisoTese } = await import('./avisosAcervo.js');
+  const t = montarAvisoTese({ label: 'Piso salarial — magistério x PB', slug: 'piso-salarial-magisterio-pb', de: 'ativa', para: 'em_risco', motivo: 'Tema 1308 modulado em 26/10/2026', totalPecas: 7, totalProcessos: 6, baseUrl: BASE });
+  assert.equal(t, [
+    '🧭 *Acervo — tese mudou de situação*',
+    'Piso salarial — magistério x PB (piso-salarial-magisterio-pb)',
+    'Agora: em risco (antes: ativa)',
+    'Motivo: Tema 1308 modulado em 26/10/2026',
+    'Peças da tese e das variantes: 7 peças em 6 processos.',
+    'Ver o impacto no AM: https://am.exemplo.com.br/acervo/painel',
+  ].join('\n'));
+  const volta = montarAvisoTese({ label: 'X', slug: 'x', de: 'suspensa', para: 'ativa', totalPecas: 0, baseUrl: '' });
+  assert.match(volta, /Agora: ativa \(antes: suspensa\)\nNenhuma peça do acervo nessa tese\.\nVer o impacto no AM\.$/);
+  assert.doesNotMatch(volta, /Motivo/);
+});

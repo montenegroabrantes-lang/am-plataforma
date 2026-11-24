@@ -4,7 +4,7 @@
 // (Brasília), e o que acontecer fora disso espera a próxima janela, em mensagem própria; um aviso por
 // evento; cada Master pode desligar para si (usuarios.avisos_acervo, padrão ligado).
 // Etapa 1: aviso da vigilância que mudou. Etapa 2: decisão detectada, agrupada por Master numa só mensagem
-// (a rotina das 15h registra várias de uma vez). Etapa 3 (tese) usa a mesma fila.
+// (a rotina das 15h registra várias de uma vez). Etapa 3: tese que muda de situação (ex.: ativa → em risco).
 //
 // Privacidade (regra S-14 / A5-05, ver mensagensAlerta.js): nada de nome de cliente, CPF ou valor. A
 // vigilância leva o tema (informação pública), a nova situação, as contagens e o link para o AM; a lista
@@ -78,6 +78,21 @@ export function montarAvisoDecisoes(linhas, { baseUrl = process.env.FRONTEND_URL
     ...mostrar,
     ...(resto > 0 ? [`e mais ${resto} no AM`] : []),
     `Conferir nas tarefas do AM${link ? `: ${link}` : '.'}`,
+  ].join('\n');
+}
+
+const SITUACAO_TESE = { ativa: 'ativa', em_risco: 'em risco', suspensa: 'suspensa', superada: 'superada' };
+
+// Tese que muda de situação: nome e slug, de → para, motivo e o alcance no acervo (com as variantes).
+export function montarAvisoTese({ label, slug, de, para, motivo = null, totalPecas = 0, totalProcessos = 0, baseUrl = process.env.FRONTEND_URL }) {
+  const link = linkAM('/acervo/painel', baseUrl);
+  return [
+    '🧭 *Acervo — tese mudou de situação*',
+    `${umaLinha(label, 150)} (${umaLinha(slug, 80)})`,
+    `Agora: ${SITUACAO_TESE[para] ?? umaLinha(para, 30)} (antes: ${SITUACAO_TESE[de] ?? umaLinha(de, 30)})`,
+    ...(motivo ? [`Motivo: ${umaLinha(motivo, 300)}`] : []),
+    totalPecas ? `Peças da tese e das variantes: ${plural(totalPecas, 'peça', 'peças')} em ${plural(totalProcessos, 'processo', 'processos')}.` : 'Nenhuma peça do acervo nessa tese.',
+    `Ver o impacto no AM${link ? `: ${link}` : '.'}`,
   ].join('\n');
 }
 
