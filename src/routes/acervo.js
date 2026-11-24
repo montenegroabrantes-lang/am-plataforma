@@ -823,6 +823,20 @@ acervoRouter.post('/pecas/:id/decisao', apenasMaster, async (req, res) => { try 
   res.status(r.status).json(r.body);
 } catch (e) { erro(res, e); } });
 
+// Decisões pelas publicações, etapa 3 (spec "AM - Spec Decisoes pelas Publicacoes.md", D3): reprocessa as publicações
+// já importadas. Simulação por padrão (lista o que registraria); grava só com simular=false. Quem chama é o
+// responsável reserva (sem Master no processo). Import dinâmico: o serviço usa registrarDecisao deste arquivo.
+acervoRouter.post('/decisoes-publicacoes/reprocessar', apenasMaster, async (req, res) => { try {
+  const p = { ...req.query, ...(req.body || {}) };
+  const dias = p.dias === undefined || p.dias === '' ? 120 : Number(p.dias);
+  if (!Number.isInteger(dias) || dias < 1 || dias > 365) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'dias deve ser um inteiro de 1 a 365.' });
+  const simular = !(p.simular === false || p.simular === 'false');
+  const { reprocessarPublicacoes } = await import('../services/processarDecisoesPublicacoes.js');
+  const r = await reprocessarPublicacoes({ dias, simular, usuarioImportacao: req.user.id });
+  if (!simular) await registrarAuditoria({ usuarioId:req.user.id, acao:'reprocessar', entidade:'acervo_decisoes_publicacoes', entidadeId:null, valorDepois:{ dias, registradas:r.registradas, ja_registradas:r.ja_registradas, erros:r.erros, ...marcaChave(req) }, ip:req._ip });
+  res.json({ ok:true, ...r });
+} catch (e) { erro(res, e); } });
+
 // ── Órgão julgador (§4.4) ─────────────────────────────────────────────────────────────────
 // Juízo como entidade, ligado às peças (acervo_pecas.orgao_julgador_id), com a estatística de êxito do
 // escritório naquele juízo por tese e por pedido. O texto livre acervo_pecas.orgao_julgador continua.

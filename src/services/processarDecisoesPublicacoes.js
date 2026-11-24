@@ -20,8 +20,10 @@ export async function processarPublicacoes(ids, { usuarioImportacao = null, simu
     `SELECT p.id, p.processo_id, p.numero_processo_raw, p.numero_processo, p.data_disponibilizacao::text AS data_disponibilizacao, p.tribunal, p.orgao,
             p.tipo_documento, p.texto, p.link, pr.master_responsavel_id
        FROM publicacoes p LEFT JOIN processos pr ON pr.id = p.processo_id
-      WHERE p.id::text = ANY($1::text[]) AND NOT COALESCE(p.cancelada, false)`, [lista]);
+      WHERE p.id::text = ANY($1::text[]) AND NOT COALESCE(p.cancelada, false)
+      ORDER BY p.data_disponibilizacao, p.id`, [lista]);
   let masterPadrao;
+  const escolhidas = new Set(); // na simulação, a peça já usada por uma publicação anterior não é escolhida de novo
   for (const pub of pubs) {
     res.analisadas++;
     const dados = dadosDaDecisao(pub);
@@ -34,10 +36,10 @@ export async function processarPublicacoes(ids, { usuarioImportacao = null, simu
         WHERE a.arquivada_em IS NULL AND a.visibilidade_snapshot = 'normal'
           AND (($1::uuid IS NOT NULL AND a.processo_id = $1::uuid) OR ($2 <> '' AND REGEXP_REPLACE(COALESCE(a.processo_numero,''), '[^0-9]', '', 'g') = $2))`,
       [pub.processo_id ?? null, digitos]);
-    const peca = escolherPeca(pecas, dados);
+    const peca = escolherPeca(pecas.filter(x => !escolhidas.has(x.id)), dados);
     const base = { publicacao_id: String(pub.id), processo: pub.numero_processo || digitos, tipo: dados.tipo_decisao, data: dados.data, resultado: dados.resultado ?? 'a confirmar' };
     if (!peca) { res.sem_peca++; if (pecas.length) res.itens.push({ ...base, situacao: 'sem peça apta' }); continue; }
-    if (simular) { res.itens.push({ ...base, peca_id: peca.id, tipo_peca: peca.tipo_peca, situacao: 'registraria', evidencia: dados.evidencia }); continue; }
+    if (simular) { escolhidas.add(peca.id); res.itens.push({ ...base, peca_id: peca.id, tipo_peca: peca.tipo_peca, situacao: 'registraria', evidencia: dados.evidencia }); continue; }
     try {
       if (masterPadrao === undefined && !pub.master_responsavel_id && !usuarioImportacao) {
         masterPadrao = (await banco.queryOne(`SELECT id FROM usuarios WHERE perfil='master' AND ativo=true ORDER BY criado_em NULLS LAST, id LIMIT 1`))?.id ?? null;
@@ -55,6 +57,18 @@ export async function processarPublicacoes(ids, { usuarioImportacao = null, simu
   }
   if (res.decisoes) console.log(`[DecisoesPublicacoes] ${JSON.stringify({ ...res, itens: undefined })}`);
   return res;
+}
+
+// Etapa 3 (D3): reprocessa as publicações já importadas dos últimos `dias` (padrão 120). Simulação por padrão;
+// gravar exige simular=false. Pré-filtra no banco as que podem ser decisão (o tipo fino fica com dadosDaDecisao).
+export async function reprocessarPublicacoes({ dias = 120, simular = true, usuarioImportacao = null, banco = db, registrar = registrarDecisao } = {}) {
+  const ids = (await banco.query(
+    `SELECT id::text AS id FROM publicacoes
+      WHERE NOT COALESCE(cancelada, false) AND data_disponibilizacao >= CURRENT_DATE - $1::int
+        AND (COALESCE(tipo_documento,'') = '' OR tipo_documento ~* '(senten|ac[oó]rd|ementa|decis)')
+      ORDER BY data_disponibilizacao, id`, [dias])).map(r => r.id);
+  const r = await processarPublicacoes(ids, { usuarioImportacao, simular, banco, registrar });
+  return { dias, simular, publicacoes_no_periodo: ids.length, ...r };
 }
 
 // Depois de responder à importação: não segura a resposta e nunca derruba quem importou.

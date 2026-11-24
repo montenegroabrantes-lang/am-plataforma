@@ -71,7 +71,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.12.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.13.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -549,6 +549,20 @@ function construirServidor(token) {
     },
     annotations: escrita,
   }, async ({ id, ...b }) => saida(await chamar('POST', `/acervo/pecas/${id}/decisao`, token, b)));
+
+  s.registerTool('decisoes_publicacoes', {
+    title: 'Decisões do acervo lidas nas publicações (reprocessamento)',
+    description: 'Percorre as publicações do Diário já importadas dos últimos `dias` (padrão 120) e, para cada sentença, '
+      + 'acórdão ou decisão de processo com peça pendente no acervo, mostra a decisão que registraria (peça, resultado '
+      + 'lido no dispositivo ou "a confirmar", data, trecho). SIMULAÇÃO POR PADRÃO: nada é gravado. Só passe '
+      + 'simular=false depois que o advogado aprovar a lista; aí registra como registrar_decisao_peca (precedente não '
+      + 'conferido, tarefa ao Master do processo e aviso). As publicações novas já são lidas sozinhas na importação.',
+    inputSchema: {
+      dias: z.number().int().min(1).max(365).optional().describe('janela em dias (padrão 120)'),
+      simular: z.boolean().optional().describe('padrão true; false grava (só com aprovação)'),
+    },
+    annotations: escrita,
+  }, async ({ dias, simular }) => saidaCompacta(await chamar('POST', '/acervo/decisoes-publicacoes/reprocessar', token, { ...(dias ? { dias } : {}), simular: simular !== false })));
 
   s.registerTool('relatorio_acervo', {
     title: 'Relatório mensal do acervo',

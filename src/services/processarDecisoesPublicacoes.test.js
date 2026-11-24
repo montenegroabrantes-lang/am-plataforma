@@ -56,3 +56,18 @@ test('lista vazia não consulta o banco', async () => {
   const r = await processarPublicacoes([], { banco });
   assert.equal(r.analisadas, 0); assert.equal(banco.chamadas.length, 0);
 });
+
+test('simulação não escolhe duas vezes a mesma peça (duas sentenças no mesmo processo)', async () => {
+  const r = await processarPublicacoes([1, 2], { simular: true, banco: bancoFalso({ pubs: [sentenca(1), sentenca(2)], pecas: [inicial] }) });
+  assert.equal(r.itens.filter(i => i.situacao === 'registraria').length, 1);
+  assert.equal(r.sem_peca, 1);
+});
+
+test('reprocessamento: busca as publicações da janela e simula por padrão', async () => {
+  const { reprocessarPublicacoes } = await import('./processarDecisoesPublicacoes.js');
+  const base = bancoFalso({ pubs: [sentenca(7)], pecas: [inicial] });
+  const banco = { ...base, async query(sql, params) { if (/CURRENT_DATE/.test(sql)) { assert.equal(params[0], 30); return [{ id: '7' }]; } return base.query(sql, params); } };
+  const r = await reprocessarPublicacoes({ dias: 30, banco, registrar: async () => { throw new Error('não devia gravar'); } });
+  assert.equal(r.simular, true); assert.equal(r.dias, 30); assert.equal(r.publicacoes_no_periodo, 1);
+  assert.equal(r.itens[0].situacao, 'registraria');
+});
