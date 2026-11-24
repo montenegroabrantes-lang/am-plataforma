@@ -71,7 +71,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.13.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.14.0' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -563,6 +563,40 @@ function construirServidor(token) {
     },
     annotations: escrita,
   }, async ({ dias, simular }) => saidaCompacta(await chamar('POST', '/acervo/decisoes-publicacoes/reprocessar', token, { ...(dias ? { dias } : {}), simular: simular !== false })));
+
+  s.registerTool('cobertura_acervo', {
+    title: 'Processos sem peça no acervo (cobertura)',
+    description: 'SÓ LEITURA. Processos ativos e não restritos que não têm nenhuma peça no acervo, com a tese (pela ligação '
+      + 'produto → tese), o ente deduzido do polo passivo, a data de distribuição, a última decisão publicada (tipo, data, '
+      + 'resultado lido ou "a confirmar") e as pendências para o cadastro retroativo (produto sem tese, ente a definir, sem '
+      + 'data). Totais por tese e por ente. Sem nome de cliente.',
+    inputSchema: {
+      tese: z.string().optional().describe('slug da tese'),
+      ente: z.enum(ENTES).optional(),
+      com_decisao: z.boolean().optional().describe('true = só processos com decisão publicada'),
+      limite: z.number().int().min(1).max(2000).optional().describe('máximo de processos na lista (padrão 500)'),
+    },
+    annotations: leitura,
+  }, async ({ com_decisao, ...a }) => saidaCompacta(await chamar('GET', `/acervo/cobertura${qs({ ...a, com_decisao: com_decisao ? 'true' : undefined })}`, token)));
+
+  s.registerTool('produtos_acervo', {
+    title: 'Produtos e a tese do acervo de cada um',
+    description: 'SÓ LEITURA. Produtos do escritório (a "tese" das tarefas) com a tese do acervo ligada, a sugestão de ligação '
+      + 'pelo nome (quando ainda não há) e quantos processos ativos cada um tem. Ligar é decisão do advogado: ligar_produto_tese.',
+    inputSchema: {},
+    annotations: leitura,
+  }, async () => saidaCompacta(await chamar('GET', '/acervo/produtos', token)));
+
+  s.registerTool('ligar_produto_tese', {
+    title: 'Ligar um produto a uma tese do acervo',
+    description: 'Grava a tese do acervo de um produto (tese=null desliga). Usar só com a aprovação do advogado. Os processos '
+      + 'desse produto passam a ter tese na cobertura e podem entrar no cadastro retroativo.',
+    inputSchema: {
+      id: z.string().uuid().describe('id do produto (produtos_acervo)'),
+      tese: z.string().nullable().describe('slug da tese, ou null para desligar'),
+    },
+    annotations: escrita,
+  }, async ({ id, tese }) => saida(await chamar('PATCH', `/acervo/produtos/${id}/tese`, token, { tese })));
 
   s.registerTool('relatorio_acervo', {
     title: 'Relatório mensal do acervo',

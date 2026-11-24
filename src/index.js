@@ -19,6 +19,7 @@ import { aplicarAcervoOrgaos } from './db/migracoes/acervoOrgaos.js';
 import { aplicarAvisosAcervo } from './db/migracoes/avisosAcervo.js';
 import { aplicarRelatorioAcervo } from './db/migracoes/relatorioAcervo.js';
 import { aplicarAvisoRelatorio } from './db/migracoes/avisoRelatorio.js';
+import { aplicarAcervoCobertura } from './db/migracoes/acervoCobertura.js';
 import { aprovadoresConfigurados } from './services/reprotocolo/pacote.js';
 import { aplicarMigracaoSyncR06 } from './services/tribunal/syncMigracao.js';
 
@@ -1100,6 +1101,8 @@ async function iniciar() {
     await migrar('2026_11_24_relatorio_acervo', () => db.transaction(tx => aplicarRelatorioAcervo(tx)));
     // Aviso do relatório mensal na fila dos avisos do acervo. Também sem .catch.
     await migrar('2026_11_24_aviso_relatorio', () => db.transaction(tx => aplicarAvisoRelatorio(tx)));
+    // Peças que faltam no acervo: ligação produto → tese e marca de peça retroativa. Também sem .catch.
+    await migrar('2026_11_24_acervo_cobertura', () => db.transaction(tx => aplicarAcervoCobertura(tx)));
 
     await migrar('2026_10_S03_sessao_revogavel', () => migrarSessaoRevogavel((sql) => db.execute(sql)));
     // S-13: gatilho de auditoria só-inserção, por último entre as migrações do esquema (ver o comentário do S-13 acima).
