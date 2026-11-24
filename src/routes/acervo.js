@@ -967,16 +967,19 @@ acervoRouter.get('/painel', async (req, res) => { try {
 
   // Curadoria (§6): precedentes não conferidos, peças decididas sem resultado há mais de 30 dias, peças sem Drive,
   // sem data de protocolo, sem órgão julgador e peças de mérito sem os argumentos usados (§5.3).
+  // Registro sem número de processo é modelo (peça-padrão, minuta), não peça protocolada: fica fora das
+  // pendências de protocolo, órgão e argumentos; continua na de Drive, porque o modelo precisa do arquivo.
   const resumoPeca = p => ({ id: p.id, titulo: p.titulo, processo_numero: p.processo_numero });
   const comArgumento = new Set(usoArgumentos.map(u => u.peca_id));
+  const protocoladas = pecas.filter(p => String(p.processo_numero ?? '').trim());
   const curadoria = {
     precedentes_nao_conferidos: precedentes.filter(p => !p.conferido).map(p => ({ id: p.id, processo_numero: p.processo_numero, orgao: p.orgao, tribunal: p.tribunal, data_julgamento: p.data_julgamento })),
     pecas_sem_resultado: pecas.filter(p => p.resultado === 'pendente' && p.data_decisao && diasEntre(p.data_decisao, hoje) > DIAS_CURADORIA)
       .map(p => ({ ...resumoPeca(p), data_decisao: p.data_decisao, dias: diasEntre(p.data_decisao, hoje) })),
     pecas_sem_drive: pecas.filter(p => !p.drive_url && !p.drive_file_id).map(resumoPeca),
-    pecas_sem_protocolo: pecas.filter(p => !p.data_protocolo).map(resumoPeca),
-    pecas_sem_orgao: pecas.filter(p => !p.orgao_julgador_id).map(resumoPeca),
-    pecas_sem_argumento: pecas.filter(p => TIPOS_COM_ARGUMENTO.has(p.tipo_peca) && !comArgumento.has(p.id)).map(p => ({ ...resumoPeca(p), tipo_peca: p.tipo_peca })),
+    pecas_sem_protocolo: protocoladas.filter(p => !p.data_protocolo).map(resumoPeca),
+    pecas_sem_orgao: protocoladas.filter(p => !p.orgao_julgador_id).map(resumoPeca),
+    pecas_sem_argumento: protocoladas.filter(p => TIPOS_COM_ARGUMENTO.has(p.tipo_peca) && !comArgumento.has(p.id)).map(p => ({ ...resumoPeca(p), tipo_peca: p.tipo_peca })),
   };
 
   res.json({
