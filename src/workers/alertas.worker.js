@@ -8,6 +8,11 @@ import { reprocessarSincronizacaoDrive } from '../services/reprocessarSyncDrive.
 import { verificarTokenGoogle } from '../services/google/verificarToken.js';
 import { detectarProtocolosNoDrive } from '../services/drive/conciliacao.js';
 import { despacharAvisos } from '../services/avisosAcervo.js';
+import { fecharMesSeForPrimeiroDiaUtil } from '../services/relatorioMensal.js';
+import { fecharRelatorio } from '../routes/acervo.js';
+
+// O fechamento automático age como o sistema: sem usuário, sem acesso a registros restritos.
+const REQ_SISTEMA = { user: { id: null, perfil: 'master', pode_marcar_restrito: false }, _ip: null };
 
 export function criarAlertasWorker() {
   return new Worker('alertas', async job => {
@@ -24,6 +29,9 @@ export function criarAlertasWorker() {
     }
     if (job.name === 'avisos-acervo') {
       await despacharAvisos();
+    }
+    if (job.name === 'relatorio-acervo') {
+      await fecharMesSeForPrimeiroDiaUtil({ fechar: mes => fecharRelatorio(REQ_SISTEMA, mes) });
     }
     if (job.name === 'reprocessar-sync-camila') {
       const { tentadas, sincronizadas } = await reprocessarSincronizacaoCamila();

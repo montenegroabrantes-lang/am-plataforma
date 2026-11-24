@@ -124,6 +124,18 @@ export async function iniciarWorkers() {
     }
   );
 
+  // Relatório mensal do acervo (24/11/2026): fecha o mês anterior e avisa os Masters no 1º dia útil, 08h.
+  await alertasQueue.add(
+    'relatorio-acervo',
+    {},
+    {
+      repeat:           { ...AGENDA['relatorio-acervo'] },
+      jobId:            'relatorio-acervo-mensal',
+      removeOnComplete: 3,
+      removeOnFail:     3,
+    }
+  );
+
   // Verificação diária de ciclos recorrentes (FGTS Remanescente, etc.) às 07h de Brasília (antes: 04h)
   await alertasQueue.add(
     'ciclos-recorrentes',
@@ -212,10 +224,10 @@ export async function iniciarWorkers() {
   await removerAgendamentosAntigos(syncQueue, ['sincronizar-todos']);
   await removerAgendamentosAntigos(backupQueue, ['backup-diario']);
   await removerAgendamentosAntigos(alertasQueue, [
-    'lembretes-diarios', 'ciclos-recorrentes', 'escalonamento-vespera', 'verificar-token-google', 'avisos-acervo',
+    'lembretes-diarios', 'ciclos-recorrentes', 'escalonamento-vespera', 'verificar-token-google', 'avisos-acervo', 'relatorio-acervo',
   ]);
 
-  console.log('[Workers] Sync DataJud (07h e 19h BRT, sem o TJPB), Backup (02h BRT), Alertas WhatsApp (08h BRT, seg-sex), Ciclos Recorrentes (07h BRT), Escalonamento de Véspera (08h30/16h30 BRT, seg-sex), Avisos do acervo (10/10min, 08h–20h BRT, seg-sex), Reprocessamento de Sync Camila (15/15min), Reprocessamento de Sync Drive (30/30min), Detector de protocolo no Drive (30/30min) e Teste do token Google (08h BRT) iniciados.');
+  console.log('[Workers] Sync DataJud (07h e 19h BRT, sem o TJPB), Backup (02h BRT), Alertas WhatsApp (08h BRT, seg-sex), Ciclos Recorrentes (07h BRT), Escalonamento de Véspera (08h30/16h30 BRT, seg-sex), Avisos do acervo (10/10min, 08h–20h BRT, seg-sex), Relatório mensal do acervo (1º dia útil, 08h BRT), Reprocessamento de Sync Camila (15/15min), Reprocessamento de Sync Drive (30/30min), Detector de protocolo no Drive (30/30min) e Teste do token Google (08h BRT) iniciados.');
   // Lista dos agendamentos vivos no Redis, com a próxima execução já em Brasília: se algum horário
   // estiver errado (ou sobrar um agendamento antigo), aparece aqui no primeiro deploy.
   for (const fila of [syncQueue, backupQueue, alertasQueue, sacQueue]) {

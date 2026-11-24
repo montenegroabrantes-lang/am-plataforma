@@ -563,7 +563,7 @@ CREATE INDEX idx_acervo_pecas_orgao ON acervo_pecas (orgao_julgador_id) WHERE or
 -- Avisos do acervo por WhatsApp (24/11/2026): fila, um aviso por evento, despachada em dia útil das 08h às 20h.
 CREATE TABLE avisos_acervo (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  tipo TEXT NOT NULL CHECK (tipo IN ('acervo_vigilancia','acervo_decisao','acervo_tese')),
+  tipo TEXT NOT NULL CONSTRAINT avisos_acervo_tipo_check CHECK (tipo IN ('acervo_vigilancia','acervo_decisao','acervo_tese','acervo_relatorio')),
   chave_evento TEXT NOT NULL, usuario_id UUID NOT NULL REFERENCES usuarios(id), tarefa_id UUID REFERENCES tarefas(id) ON DELETE SET NULL,
   texto TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'pendente' CHECK (status IN ('pendente','enviando','enviado','falhou','incerto','descartado')),

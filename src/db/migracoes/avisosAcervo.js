@@ -9,7 +9,7 @@
 export async function aplicarAvisosAcervo(conexao) {
   await conexao.execute(`CREATE TABLE IF NOT EXISTS avisos_acervo (
     id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    tipo          TEXT NOT NULL CHECK (tipo IN ('acervo_vigilancia','acervo_decisao','acervo_tese')),
+    tipo          TEXT NOT NULL CONSTRAINT avisos_acervo_tipo_check CHECK (tipo IN ('acervo_vigilancia','acervo_decisao','acervo_tese')),
     chave_evento  TEXT NOT NULL,
     usuario_id    UUID NOT NULL REFERENCES usuarios(id),
     tarefa_id     UUID REFERENCES tarefas(id) ON DELETE SET NULL,
