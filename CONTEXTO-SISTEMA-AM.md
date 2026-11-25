@@ -4096,7 +4096,26 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Carga inicial (24/11/2026):** 15 órgãos criados a partir do texto `orgao_julgador` das peças, com nomes normalizados — JEFPs do TJPB como "Nº Juizado Especial da Fazenda Pública da Região Metropolitana da Capital" (nome do PJe), varas como "Nª Vara de Fazenda Pública da Capital", JEFPs do TJPE como "Nº Juizado Especial da Fazenda Pública da Capital (Recife)", "1ª Vara Federal da Paraíba (JEF) — João Pessoa" (TRF5) e "3ª Turma Recursal da Capital" (TJPB). 73 das 80 peças ligadas; ficaram sem ligação as contrarrazões do 0862195-34.2025 (turma de destino ainda indefinida), a apelação do TRF1 1088566-48.2025 (sem turma conhecida) e 5 peças sem número de processo nem órgão. As taxas de êxito ainda vêm vazias: todas as peças estão pendentes.
 - Pendências: reconectar o conector do AM no Claude para carregar as ferramentas de órgão (1.8.0); painel de inteligência (§6, frontend) e tarefa automática ao Master na vigilância (§5.4), a decidir.
 
-### 24/11/2026 — Peças que faltam no acervo, etapa 2: cadastro retroativo e data do DataJud (branch `feat/acervo-retroativas`, NÃO publicado)
+### 25/11/2026 — Peças que faltam no acervo: correção do DataJud no cadastro e primeira carga (PUBLICADO, PR #45)
+
+- **Incidente:** depois do PR #44, a simulação do cadastro em produção ficou 17–28 minutos presa e o `/health` parou de responder nesse intervalo. O DataJud deu timeout e HTTP 429 em todos os lotes do TJPB, e cada lote fazia 4 tentativas de 35 s, com esperas de 5, 15 e 45 s. Nada foi gravado. A chave pública do CNJ também levou 429 da máquina do escritório, ou seja, não é só o Railway (o sync do servidor já roda sem o TJPB).
+- **Correção (PR #45):**
+  - `consultarPorNumeros(tribunal, numeros, { tentativas, timeoutMs })`; o sync continua no padrão.
+  - O cadastro faz 1 tentativa de até 10 s por lote, com teto de 30 s no total (`DATAJUD_CADASTRO`).
+  - Campo `datas` (`{ numero: "AAAA-MM-DD" }`, até 300) com datas já consultadas fora do servidor; `buscar_datajud=false` pula a consulta.
+  - O resumo ganha `datas_informadas` e `datajud_consultado`. MCP 1.15.1.
+- **Primeira carga (aprovada pelo usuário em 25/11):** os 67 processos prontos com decisão publicada, com `buscar_datajud=false`.
+  - 67 peças retroativas, todas sem data: FGTS 47, férias de 45 dias 10, insalubridade 5, piso 4, adicional noturno 1; Município de João Pessoa 40, Estado da Paraíba 27.
+  - Decisões: 76 publicações analisadas, 65 registradas, 11 sem peça apta (acórdãos e decisões seguintes no mesmo processo).
+  - Cobertura depois da carga: 739 processos sem peça; 4 com decisão ainda precisam do usuário (2 com polo passivo vazio, 2 com ente não reconhecido).
+  - Lista: `BANCO DE DADOS/AM - Simulacao Retroativas com Decisao.md`.
+- **Pendências:**
+  - datas de protocolo das retroativas quando o DataJud voltar (consulta local e envio por `datas`, ou curadoria);
+  - os 4 processos acima;
+  - a carga dos demais em lotes por tese, sempre com simulação;
+  - as teses de 13º SALÁRIO, Equiparação salarial no magistério e FERIAS 30 DIAS.
+
+### 24/11/2026 — Peças que faltam no acervo, etapa 2: cadastro retroativo e data do DataJud (PUBLICADO, PR #44)
 - **Erro antigo corrigido no DataJud:** `parsear` cortava `dataAjuizamento` nos 10 primeiros caracteres, mas o TJPB manda o formato compacto `AAAAMMDDhhmmss`; "2025071112" não era lido e `processos.data_distribuicao` nunca foi preenchida (0 de 806 processos em 24/11). Agora `diaDataJud` lê o compacto e o ISO; o sync passa a gravar a data (afeta também os filtros e rankings por ano).
 - **`POST /api/acervo/cobertura/cadastrar`** (Master; chave com `acervo_edicao`): `com_decisao`, `tese`, `processos` (até 300 ids), `limite` (1–300, padrão 100), `simular` (padrão **true**). Para cada processo pronto (tese e ente), cria a peça "Inicial (cadastro retroativo)": tipo inicial, 1º grau, tese do produto e as mães dela, ente e detalhe pelo polo passivo, tribunal, vara como órgão, protocolo = data de distribuição (do AM ou, sem ela, do DataJud, que também é gravada no processo), pasta do cliente no Drive, `retroativa=true`. Depois lê as decisões já publicadas desses processos, em ordem de data (`processarPublicacoes`; acórdão só acha peça recursal, então fica sem peça). Sem data em lugar nenhum, a peça entra sem data. Uma transação por processo, conferindo de novo que não há peça; repetir não duplica. Auditoria `cadastro_retroativo`.
 - Simulação devolve: selecionados, criaria, precisa de você (com motivos), datas do AM e do DataJud, sem data, lotes do DataJud com falha, com decisão publicada, e a lista.
