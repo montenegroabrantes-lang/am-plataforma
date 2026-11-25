@@ -35,14 +35,14 @@ export const INDICE = {
   TRF6: 'api_publica_trf6',
 };
 
-function http() {
+function http(timeout = 35_000) {
   return axios.create({
     baseURL: BASE,
     headers: {
       Authorization: `APIKey ${API_KEY}`,
       'Content-Type': 'application/json',
     },
-    timeout: 35_000,
+    timeout,
     validateStatus: () => true, // nunca lança exceção por status — tratamos manualmente
   });
 }
@@ -55,9 +55,9 @@ const transporteDaExecucao = new AsyncLocalStorage();
 export function comTransporte(substituto, fn) { return transporteDaExecucao.run(substituto, fn); }
 
 export const transporte = {
-  post(indice, body) {
+  post(indice, body, { timeoutMs } = {}) {
     const sub = transporteDaExecucao.getStore();
-    return sub ? sub.post(indice, body) : http().post(`/${indice}/_search`, body);
+    return sub ? sub.post(indice, body) : http(timeoutMs).post(`/${indice}/_search`, body);
   },
   esperar(ms) {
     if (transporteDaExecucao.getStore()) return Promise.resolve();
@@ -214,12 +214,13 @@ function calcularEspera(tentativa, resp) {
 
 // Um POST com nova tentativa. Nunca lança: devolve { ok, status, data, tentativas, erroRede }.
 // 2xx = ok. Retenta 429/408/5xx e falha de rede/timeout; os demais 4xx (400, 401, 403...) não adianta repetir.
-async function postarComRetry(indice, body, rotulo) {
-  for (let tentativa = 1; tentativa <= TENTATIVAS; tentativa++) {
+// `opcoes` (cadastro retroativo, 25/11/2026): { tentativas, timeoutMs } para quem não pode segurar a requisição.
+async function postarComRetry(indice, body, rotulo, { tentativas: maxTentativas = TENTATIVAS, timeoutMs } = {}) {
+  for (let tentativa = 1; tentativa <= maxTentativas; tentativa++) {
     let resp = null;
     let erroRede = null;
     try {
-      resp = await transporte.post(indice, body);
+      resp = await transporte.post(indice, body, timeoutMs ? { timeoutMs } : undefined);
     } catch (err) {
       erroRede = motivoSemResposta(err);
     }
@@ -228,11 +229,11 @@ async function postarComRetry(indice, body, rotulo) {
       return { ok: true, status, data: resp.data, tentativas: tentativa };
     }
     const retentavel = status === null || status === 429 || status === 408 || status >= 500;
-    if (!retentavel || tentativa === TENTATIVAS) {
+    if (!retentavel || tentativa === maxTentativas) {
       return { ok: false, status, data: resp?.data ?? null, tentativas: tentativa, erroRede };
     }
     const espera = calcularEspera(tentativa, resp);
-    console.warn(`[DataJud] ${rotulo}: ${descreverFalha({ status, erroRede })} — nova tentativa ${tentativa + 1}/${TENTATIVAS} em ${espera / 1000}s`);
+    console.warn(`[DataJud] ${rotulo}: ${descreverFalha({ status, erroRede })} — nova tentativa ${tentativa + 1}/${maxTentativas} em ${espera / 1000}s`);
     await transporte.esperar(espera);
   }
 }
@@ -260,7 +261,8 @@ function montarEncontrados(hits, pedidos) {
 //    número fora de `encontrados` e de `falharam` = o DataJud respondeu e não tem esse processo;
 //  - hits: documentos devolvidos; status: último status HTTP (200 quando tudo respondeu bem).
 // Lança ErroDataJud quando o lote inteiro falhou.
-export async function consultarPorNumeros(tribunal, numerosPuros) {
+// `opcoes` = { tentativas, timeoutMs } (padrão: 4 tentativas, 35 s). O cadastro retroativo usa 1 tentativa curta.
+export async function consultarPorNumeros(tribunal, numerosPuros, opcoes = {}) {
   const indice = INDICE[tribunal];
   if (!indice) throw new ErroDataJud(`DataJud: tribunal ${tribunal} não mapeado`);
 
@@ -271,7 +273,7 @@ export async function consultarPorNumeros(tribunal, numerosPuros) {
   const pedidos = new Set(numeros);
   const rotulo  = `${tribunal} lote de ${numeros.length}`;
 
-  const r = await postarComRetry(indice, { size: TAMANHO_PAGINA, query: { terms: { numeroProcesso: numeros } } }, rotulo);
+  const r = await postarComRetry(indice, { size: TAMANHO_PAGINA, query: { terms: { numeroProcesso: numeros } } }, rotulo, opcoes);
 
   if (r.ok) {
     const hits  = r.data?.hits?.hits || [];
@@ -299,7 +301,7 @@ export async function consultarPorNumeros(tribunal, numerosPuros) {
   // Degrada para consulta por número (match, como o sync individual), em vez de deixar o sync cego de novo.
   if (r.status === 400) {
     console.warn(`[DataJud] ${rotulo}: HTTP 400 na consulta em lote — usando consulta por número`);
-    return consultarUmAUm(tribunal, indice, numeros, pedidos);
+    return consultarUmAUm(tribunal, indice, numeros, pedidos, opcoes);
   }
 
   // Erro com processos no corpo (429 costuma vir assim): aproveita os que vieram; os que faltam são FALHA.
@@ -315,7 +317,7 @@ export async function consultarPorNumeros(tribunal, numerosPuros) {
 }
 
 // Fallback do lote recusado: um número por vez (concorrência 5), cada um com a mesma regra de nova tentativa.
-async function consultarUmAUm(tribunal, indice, numeros, pedidos) {
+async function consultarUmAUm(tribunal, indice, numeros, pedidos, opcoes = {}) {
   const CONC = 5;
   const encontrados = new Map();
   const falharam = new Set();
@@ -325,7 +327,7 @@ async function consultarUmAUm(tribunal, indice, numeros, pedidos) {
 
   for (let i = 0; i < numeros.length; i += CONC) {
     await Promise.all(numeros.slice(i, i + CONC).map(async (numero) => {
-      const r = await postarComRetry(indice, { size: 3, query: { match: { numeroProcesso: numero } } }, `${tribunal} individual`);
+      const r = await postarComRetry(indice, { size: 3, query: { match: { numeroProcesso: numero } } }, `${tribunal} individual`, opcoes);
       tentativas += r.tentativas;
       if (!r.ok) { falharam.add(numero); statusFalha = r.status ?? statusFalha; return; }
       const docs = r.data?.hits?.hits || [];

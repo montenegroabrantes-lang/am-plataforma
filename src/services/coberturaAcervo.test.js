@@ -80,3 +80,41 @@ test('cadastro retroativo em simulação: data do AM ou do DataJud, pendentes à
   const lim = await cadastrarRetroativas({ banco, buscarDatas, limite: 1 });
   assert.equal(lim.selecionados, 1);
 });
+
+test('cadastro retroativo: datas informadas no pedido dispensam o DataJud; buscar_datajud=false não consulta', async () => {
+  const { cadastrarRetroativas, datasInformadas } = await import('./coberturaAcervo.js');
+  const linhas = [
+    { id: 'P1', numero: '0000001-00.2025.8.15.2001', tribunal: 'TJPB', polo_passivo: 'ESTADO DA PARAIBA', data_distribuicao: null, produto: 'FGTS', tese: 'fgts-nulidade', tem_drive: true },
+    { id: 'P2', numero: '0000002-00.2025.8.15.2001', tribunal: 'TJPB', polo_passivo: 'ESTADO DA PARAIBA', data_distribuicao: null, produto: 'FGTS', tese: 'fgts-nulidade', tem_drive: true },
+  ];
+  const banco = { query: async () => linhas, transaction: () => { throw new Error('não devia gravar'); } };
+  const pedidos = [];
+  const buscarDatas = async porTribunal => { pedidos.push([...porTribunal]); return { datas: new Map(), falhas: 1 }; };
+  const r = await cadastrarRetroativas({ banco, buscarDatas, datas: { '0000001-00.2025.8.15.2001': '2025-03-04' } });
+  assert.deepEqual(pedidos, [[['TJPB', ['00000020020258152001']]]], 'só o que não veio no pedido vai ao DataJud');
+  assert.equal(r.datas_informadas, 1); assert.equal(r.sem_data, 1); assert.equal(r.datajud_consultado, true);
+  assert.deepEqual(r.itens.map(i => [i.data_protocolo, i.fonte_data]), [['2025-03-04', 'DataJud'], [null, null]]);
+  pedidos.length = 0;
+  const sem = await cadastrarRetroativas({ banco, buscarDatas, buscarDataJud: false });
+  assert.equal(pedidos.length, 0); assert.equal(sem.sem_data, 2); assert.equal(sem.datajud_consultado, false);
+  assert.deepEqual([...datasInformadas({ '0000001-00.2025.8.15.2001': '2025-02-30', '123': '2025-01-01', '00000010020258152001': '2025-01-31', x: null })],
+    [['00000010020258152001', '2025-01-31']], 'data impossível e número curto ficam fora');
+});
+
+test('DataJud no cadastro: uma tentativa curta por lote e teto total', async () => {
+  const dj = await import('./tribunal/datajud.js');
+  const { datasNoDataJud, DATAJUD_CADASTRO } = await import('./coberturaAcervo.js');
+  const postOriginal = dj.transporte.post; const esperarOriginal = dj.transporte.esperar;
+  const chamadas = [];
+  dj.transporte.post = async (indice, body, opcoes) => { chamadas.push(opcoes); return { status: 429, data: null }; };
+  dj.transporte.esperar = async () => { throw new Error('não devia esperar'); };
+  try {
+    let t = 0; const agora = () => (t += 20_000);
+    const numeros = Array.from({ length: 120 }, (_, i) => String(i).padStart(20, '0'));
+    const r = await datasNoDataJud(new Map([['TJPB', numeros]]), { agora });
+    assert.equal(r.datas.size, 0);
+    assert.ok(chamadas.length >= 1 && chamadas.length < 3, `parou no teto total (${chamadas.length} chamadas)`);
+    assert.ok(chamadas.every(o => o?.timeoutMs === DATAJUD_CADASTRO.timeoutMs));
+    assert.equal(r.falhas, dj.dividirEmLotes(numeros).length, 'todos os lotes contam como falha');
+  } finally { dj.transporte.post = postOriginal; dj.transporte.esperar = esperarOriginal; }
+});

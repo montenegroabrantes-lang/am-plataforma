@@ -1087,8 +1087,12 @@ acervoRouter.post('/cobertura/cadastrar', apenasMaster, async (req, res) => { tr
   if (processos !== null && (!Array.isArray(processos) || processos.length > 300 || processos.some(id => !uuidValido(id)))) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'processos deve ser uma lista de até 300 ids.' });
   const simular = !(b.simular === false || b.simular === 'false');
   const comDecisao = b.com_decisao === true || b.com_decisao === 'true';
+  // datas: { numero: 'AAAA-MM-DD' } consultadas no DataJud de uma máquina do escritório (do Railway ele não responde).
+  const datas = b.datas === undefined ? null : b.datas;
+  if (datas !== null && (typeof datas !== 'object' || Array.isArray(datas) || Object.keys(datas).length > 300)) return res.status(422).json({ ok:false, erro:'validacao', mensagem:'datas deve ser um objeto { numero: "AAAA-MM-DD" } com até 300 processos.' });
+  const buscarDataJud = !(b.buscar_datajud === false || b.buscar_datajud === 'false');
   const { cadastrarRetroativas } = await import('../services/coberturaAcervo.js');
-  const r = await cadastrarRetroativas({ processos, comDecisao, tese: b.tese || null, limite, simular, usuarioId: req.user.id });
+  const r = await cadastrarRetroativas({ processos, comDecisao, tese: b.tese || null, limite, simular, datas, buscarDataJud, usuarioId: req.user.id });
   if (!simular) await registrarAuditoria({ usuarioId:req.user.id, acao:'cadastro_retroativo', entidade:'acervo_peca', entidadeId:null, valorDepois:{ criadas:r.criadas, com_decisao:comDecisao, tese:b.tese || null, decisoes:r.decisoes, ...marcaChave(req) }, ip:req._ip });
   res.json({ ok:true, ...r });
 } catch (e) { erro(res, e); } });
