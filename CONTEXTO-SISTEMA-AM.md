@@ -4096,6 +4096,33 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Carga inicial (24/11/2026):** 15 órgãos criados a partir do texto `orgao_julgador` das peças, com nomes normalizados — JEFPs do TJPB como "Nº Juizado Especial da Fazenda Pública da Região Metropolitana da Capital" (nome do PJe), varas como "Nª Vara de Fazenda Pública da Capital", JEFPs do TJPE como "Nº Juizado Especial da Fazenda Pública da Capital (Recife)", "1ª Vara Federal da Paraíba (JEF) — João Pessoa" (TRF5) e "3ª Turma Recursal da Capital" (TJPB). 73 das 80 peças ligadas; ficaram sem ligação as contrarrazões do 0862195-34.2025 (turma de destino ainda indefinida), a apelação do TRF1 1088566-48.2025 (sem turma conhecida) e 5 peças sem número de processo nem órgão. As taxas de êxito ainda vêm vazias: todas as peças estão pendentes.
 - Pendências: reconectar o conector do AM no Claude para carregar as ferramentas de órgão (1.8.0); painel de inteligência (§6, frontend) e tarefa automática ao Master na vigilância (§5.4), a decidir.
 
+### 25/11/2026 — Peças que faltam no acervo: carga dos demais processos
+
+- **Pedido do usuário:** "implementar tudo de uma vez sem parar". Todos os lotes foram simulados e depois gravados, um por tese, com `buscar_datajud=false`.
+- **Gravadas 671 peças retroativas:**
+
+  | Tese | Peças |
+  |---|---|
+  | FGTS | 553 |
+  | piso | 70 |
+  | férias de 45 dias | 29 |
+  | adicional noturno | 10 |
+  | insalubridade | 9 |
+
+  - Nenhuma decisão publicada nesses processos.
+  - Um processo do piso saiu da cobertura entre a simulação e a gravação.
+- **Ficaram de fora 12 casos de FGTS fora do padrão da tese `fgts-nulidade`:**
+  - 7 na Justiça Federal contra a União (TRF3, TRF4 e TRF6);
+  - 2 com "outro município da PB" cujo detalhe é Recife e Fortaleza (erro da dedução do ente);
+  - 3 contra o Estado de Pernambuco (pedem a variante de PE).
+- **Total:** o acervo tem 738 retroativas. A cobertura caiu para 67 processos sem peça, todos dependendo do usuário.
+  - Lista: `BANCO DE DADOS/AM - Acervo Pendencias da Cobertura.md`.
+  - Motivos: polo passivo vazio, ente não reconhecido, produto sem tese, processo sem produto e os 12 acima.
+- **Curadoria depois da carga:**
+  - 739 peças sem data de protocolo e sem órgão;
+  - 454 sem pasta do Drive (o cliente não tem `drive_pasta_url`).
+- **A corrigir no código:** "Município de X" no TJPB vira `municipio-outro-pb` mesmo quando X é de outro estado.
+
 ### 25/11/2026 — Peças que faltam no acervo: correção do DataJud no cadastro e primeira carga (PUBLICADO, PR #45)
 
 - **Incidente:** depois do PR #44, a simulação do cadastro em produção ficou 17–28 minutos presa e o `/health` parou de responder nesse intervalo. O DataJud deu timeout e HTTP 429 em todos os lotes do TJPB, e cada lote fazia 4 tentativas de 35 s, com esperas de 5, 15 e 45 s. Nada foi gravado. A chave pública do CNJ também levou 429 da máquina do escritório, ou seja, não é só o Railway (o sync do servidor já roda sem o TJPB).
