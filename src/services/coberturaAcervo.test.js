@@ -118,3 +118,15 @@ test('DataJud no cadastro: uma tentativa curta por lote e teto total', async () 
     assert.equal(r.falhas, dj.dividirEmLotes(numeros).length, 'todos os lotes contam como falha');
   } finally { dj.transporte.post = postOriginal; dj.transporte.esperar = esperarOriginal; }
 });
+
+test('município de outro estado no TJPB não vira município da Paraíba', async () => {
+  const { MUNICIPIOS_PB } = await import('./municipiosPB.js');
+  assert.equal(MUNICIPIOS_PB.length, 223);
+  for (const [texto, motivo] of [['MUNICIPIO DE RECIFE', 'município fora da Paraíba'], ['Município de Fortaleza - CE', 'município fora da Paraíba']]) {
+    assert.deepEqual(enteDoPoloPassivo(texto, 'TJPB'), { ente: null, detalhe: null, motivo });
+  }
+  assert.deepEqual(enteDoPoloPassivo('Município de Santa Rita', 'TJPB'), { ente: 'municipio-outro-pb', detalhe: 'SANTA RITA', motivo: null });
+  assert.equal(enteDoPoloPassivo('MUNICÍPIO DE SÃO JOSÉ DE PIRANHAS X FULANO', 'TJPB').detalhe, 'SAO JOSE DE PIRANHAS');
+  assert.equal(enteDoPoloPassivo('MUNICIPIO DE CAMPINA GRANDE - PREFEITURA', 'TJPB').detalhe, 'CAMPINA GRANDE');
+  assert.equal(enteDoPoloPassivo('Município de Mãe d\'Água', 'TJPB').detalhe, 'MAE D AGUA');
+});
