@@ -71,7 +71,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.15.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.15.1' });
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -592,6 +592,9 @@ function construirServidor(token) {
       processos: z.array(z.string().uuid()).max(300).optional().describe('ids de processos (cobertura_acervo) em vez dos filtros'),
       limite: z.number().int().min(1).max(300).optional().describe('padrão 100'),
       simular: z.boolean().optional().describe('padrão true; false grava (só com aprovação)'),
+      datas: z.record(z.string(), z.string().regex(/^\d{4}-\d{2}-\d{2}$/)).optional()
+        .describe('datas de ajuizamento já consultadas no DataJud: { "numero do processo": "AAAA-MM-DD" }'),
+      buscar_datajud: z.boolean().optional().describe('padrão true: o servidor tenta o DataJud (1 tentativa curta) para as datas que faltam'),
     },
     annotations: escrita,
   }, async ({ simular, ...a }) => saidaCompacta(await chamar('POST', '/acervo/cobertura/cadastrar', token, { ...a, simular: simular !== false })));

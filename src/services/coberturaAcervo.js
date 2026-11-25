@@ -128,14 +128,20 @@ export const MAX_LOTE_RETROATIVAS = 300;
 
 // Datas de ajuizamento no DataJud, uma consulta por tribunal e lote. Falha de um lote não interrompe: os números
 // dele ficam sem data. Devolve Map(numero só com dígitos → 'AAAA-MM-DD') e quantos lotes falharam.
-export async function datasNoDataJud(porTribunal) {
+// 25/11/2026: chamado do Railway, o DataJud dá timeout ou 429 e as 4 tentativas de 35 s seguraram a simulação por
+// mais de 15 minutos. Aqui vale UMA tentativa de até 10 s por lote e 30 s no total; o que não couber fica sem data
+// (as datas podem vir prontas no pedido, buscadas de uma máquina do escritório — `datas`).
+export const DATAJUD_CADASTRO = { tentativas: 1, timeoutMs: 10_000, totalMs: 30_000 };
+export async function datasNoDataJud(porTribunal, { agora = () => Date.now() } = {}) {
   const { consultarPorNumeros, dividirEmLotes, INDICE } = await import('./tribunal/datajud.js');
   const datas = new Map(); let falhas = 0;
+  const fim = agora() + DATAJUD_CADASTRO.totalMs;
   for (const [tribunal, numeros] of porTribunal) {
     if (!INDICE[tribunal]) { falhas++; continue; }
     for (const lote of dividirEmLotes(numeros)) {
+      if (agora() >= fim) { falhas++; continue; }
       try {
-        const r = await consultarPorNumeros(tribunal, lote);
+        const r = await consultarPorNumeros(tribunal, lote, { tentativas: DATAJUD_CADASTRO.tentativas, timeoutMs: DATAJUD_CADASTRO.timeoutMs });
         for (const [n, x] of r.encontrados) if (x?.dados?.data_ajuizamento) datas.set(n, x.dados.data_ajuizamento);
         if (r.falharam?.size) falhas++;
       } catch (e) { falhas++; console.warn(`[Cobertura] DataJud ${tribunal}:`, e.message); }
@@ -144,8 +150,23 @@ export async function datasNoDataJud(porTribunal) {
   return { datas, falhas };
 }
 
+// Datas informadas no pedido: { "numero (com ou sem máscara)": "AAAA-MM-DD" } → Map(só dígitos → data). Inválidas ficam fora.
+export function datasInformadas(datas) {
+  const m = new Map();
+  if (!datas || typeof datas !== 'object') return m;
+  for (const [n, d] of Object.entries(datas)) {
+    const num = String(n).replace(/\D/g, '');
+    const dia = String(d ?? '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (num.length !== 20 || !dia) continue;
+    const dt = new Date(`${dia[0]}T12:00:00Z`);
+    if (Number.isNaN(dt.getTime()) || dt.toISOString().slice(0, 10) !== dia[0]) continue;
+    m.set(num, dia[0]);
+  }
+  return m;
+}
+
 export async function cadastrarRetroativas({ processos = null, comDecisao = false, tese = null, limite = 100, simular = true, usuarioId = null,
-  banco = db, buscarDatas = datasNoDataJud, processar = null } = {}) {
+  datas: datasDoPedido = null, buscarDataJud = true, banco = db, buscarDatas = datasNoDataJud, processar = null } = {}) {
   const cob = await listarCobertura({ tese, comDecisao, limite: 100000 }, banco);
   let escolhidos = cob.processos;
   if (processos?.length) { const q = new Set(processos.map(String)); escolhidos = escolhidos.filter(x => q.has(String(x.processo_id))); }
@@ -153,20 +174,27 @@ export async function cadastrarRetroativas({ processos = null, comDecisao = fals
   const prontos = escolhidos.filter(x => x.pronto);
   const precisaDeVoce = escolhidos.filter(x => !x.pronto).map(x => ({ processo_numero: x.processo_numero, produto: x.produto, pendencias: x.pendencias }));
 
-  // Datas que faltam: DataJud, por tribunal.
-  const semData = prontos.filter(x => !x.data_distribuicao);
+  // Datas que faltam: primeiro as informadas no pedido (DataJud consultado de uma máquina do escritório); o resto,
+  // DataJud pelo servidor, com tentativa curta (buscarDataJud=false pula a consulta).
+  const informadas = datasInformadas(datasDoPedido);
+  const digitos = x => x.processo_numero.replace(/\D/g, '');
+  const semData = prontos.filter(x => !x.data_distribuicao && !informadas.has(digitos(x)));
   const porTribunal = new Map();
-  for (const x of semData) { const l = porTribunal.get(x.tribunal) ?? []; l.push(x.processo_numero.replace(/\D/g, '')); porTribunal.set(x.tribunal, l); }
-  const { datas, falhas } = semData.length ? await buscarDatas(porTribunal) : { datas: new Map(), falhas: 0 };
+  for (const x of semData) { const l = porTribunal.get(x.tribunal) ?? []; l.push(digitos(x)); porTribunal.set(x.tribunal, l); }
+  const { datas, falhas } = semData.length && buscarDataJud ? await buscarDatas(porTribunal) : { datas: new Map(), falhas: 0 };
 
   const itens = prontos.map(x => {
-    const doDataJud = !x.data_distribuicao ? datas.get(x.processo_numero.replace(/\D/g, '')) ?? null : null;
+    const doPedido = !x.data_distribuicao ? informadas.get(digitos(x)) ?? null : null;
+    const doDataJud = !x.data_distribuicao && !doPedido ? datas.get(digitos(x)) ?? null : null;
     return { processo_id: x.processo_id, processo_numero: x.processo_numero, tese: x.tese, ente: x.ente, ente_detalhe: x.ente_detalhe,
-      data_protocolo: x.data_distribuicao || doDataJud, fonte_data: x.data_distribuicao ? 'AM' : doDataJud ? 'DataJud' : null, decisao: x.decisao };
+      data_protocolo: x.data_distribuicao || doPedido || doDataJud,
+      fonte_data: x.data_distribuicao ? 'AM' : doPedido || doDataJud ? 'DataJud' : null, decisao: x.decisao };
   });
   const resumo = {
     simular, selecionados: escolhidos.length, criaria: itens.length, precisa_de_voce: precisaDeVoce.length,
     datas_do_am: itens.filter(i => i.fonte_data === 'AM').length, datas_do_datajud: itens.filter(i => i.fonte_data === 'DataJud').length,
+    datas_informadas: itens.filter(i => i.fonte_data === 'DataJud' && informadas.has(digitos(i))).length,
+    datajud_consultado: Boolean(semData.length && buscarDataJud),
     sem_data: itens.filter(i => !i.data_protocolo).length, lotes_datajud_com_falha: falhas, com_decisao_publicada: itens.filter(i => i.decisao).length,
   };
   if (simular) return { ...resumo, itens, precisa_de_voce_itens: precisaDeVoce };
