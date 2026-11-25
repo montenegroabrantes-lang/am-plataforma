@@ -6,6 +6,7 @@
 
 import { db } from '../db/index.js';
 import { dadosDaDecisao } from './decisoesPublicacoes.js';
+import { MUNICIPIOS_PB } from './municipiosPB.js';
 
 const normalizar = s => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
 
@@ -20,15 +21,33 @@ const ENTES_POLO = [
   ['uniao', /\b(UNIAO FEDERAL|UNIAO)\b/],
   ['alpb', /\b(ASSEMBLEIA LEGISLATIVA (DO ESTADO )?DA PARAIBA|ALPB)\b/],
 ];
+// Nome do município da Paraíba logo depois de "MUNICIPIO DE " (o mais longo que casar), ou null.
+const MUNICIPIOS_PB_LONGOS = [...MUNICIPIOS_PB].sort((a, b) => b.length - a.length);
+function municipioDaParaiba(t) {
+  for (const m of t.matchAll(/\bMUNICIPIO DE ([A-Z0-9 ]+)/g)) {
+    const resto = `${m[1]} `;
+    const nome = MUNICIPIOS_PB_LONGOS.find(x => resto.startsWith(`${x} `));
+    if (nome) return nome;
+  }
+  return null;
+}
+
 export function enteDoPoloPassivo(texto, tribunal = null) {
   const t = normalizar(texto);
   if (!t) return { ente: null, detalhe: null, motivo: 'polo passivo vazio' };
   const achados = new Set(ENTES_POLO.filter(([, re]) => re.test(t)).map(([e]) => e));
-  if (!achados.size && /\bMUNICIPIO DE [A-Z]/.test(t) && /TJPB/i.test(String(tribunal ?? ''))) achados.add('municipio-outro-pb');
+  // "Município de X" no TJPB só vira municipio-outro-pb se X for município da Paraíba (lista do IBGE). Recife,
+  // Fortaleza etc. ficam "município fora da Paraíba" (25/11/2026: dois casos assim tinham entrado como PB).
+  let municipioPB = null;
+  if (!achados.size && /\bMUNICIPIO DE [A-Z]/.test(t) && /TJPB/i.test(String(tribunal ?? ''))) {
+    municipioPB = municipioDaParaiba(t);
+    if (!municipioPB) return { ente: null, detalhe: null, motivo: 'município fora da Paraíba' };
+    achados.add('municipio-outro-pb');
+  }
   if (achados.size === 1) {
     const ente = [...achados][0];
     const detalhe = ente === 'estado-paraiba' && /\b(PBPREV|PARAIBA PREVIDENCIA)\b/.test(t) ? 'PBPREV'
-      : ente === 'municipio-outro-pb' ? (t.match(/\bMUNICIPIO DE ([A-Z ]{3,40}?)(?= E | X |$)/)?.[1]?.trim() ?? null) : null;
+      : ente === 'municipio-outro-pb' ? municipioPB : null;
     return { ente, detalhe, motivo: null };
   }
   return { ente: null, detalhe: null, motivo: achados.size ? 'mais de um ente no polo passivo' : 'ente não reconhecido' };
