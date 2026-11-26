@@ -20,6 +20,7 @@ import { aplicarAvisosAcervo } from './db/migracoes/avisosAcervo.js';
 import { aplicarRelatorioAcervo } from './db/migracoes/relatorioAcervo.js';
 import { aplicarAvisoRelatorio } from './db/migracoes/avisoRelatorio.js';
 import { aplicarAcervoCobertura } from './db/migracoes/acervoCobertura.js';
+import { aplicarPrecatorios } from './db/migracoes/precatorios.js';
 import { aprovadoresConfigurados } from './services/reprotocolo/pacote.js';
 import { aplicarMigracaoSyncR06 } from './services/tribunal/syncMigracao.js';
 
@@ -56,6 +57,7 @@ import { despachosRouter } from './routes/despachos.js';
 import { reprotocoloRouter } from './routes/reprotocolo.js';
 import { comunicacaoRouter } from './routes/comunicacao.js';
 import { cobrancasRouter } from './routes/cobrancas.js';
+import { precatoriosRouter } from './routes/precatorios.js';
 import { mcpRouter } from './mcp/index.js';
 import { oauthRouter } from './oauth/index.js';
 
@@ -189,6 +191,7 @@ app.use('/api/auditoria',     autenticar, auditoriaRouter);
 app.use('/api/reprotocolo',   autenticar, reprotocoloRouter);
 app.use('/api/comunicacao',   autenticar, comunicacaoRouter);
 app.use('/api/cobrancas',     autenticar, cobrancasRouter);
+app.use('/api/precatorios',   autenticar, precatoriosRouter);
 app.use('/mcp',               limiteMcp, mcpRouter); // S-20: 60/min por Master que autorizou o conector
 montarUrlencodedOauth(app);
 // S-20: /oauth/token e /oauth/register por IP (o /oauth/authorize tem o limitador do S-02)
@@ -1103,6 +1106,8 @@ async function iniciar() {
     await migrar('2026_11_24_aviso_relatorio', () => db.transaction(tx => aplicarAvisoRelatorio(tx)));
     // Peças que faltam no acervo: ligação produto → tese e marca de peça retroativa. Também sem .catch.
     await migrar('2026_11_24_acervo_cobertura', () => db.transaction(tx => aplicarAcervoCobertura(tx)));
+    // Versão 2.0, etapa 2: precatório como entidade (tabelas novas, nada muda em processos). Também sem .catch.
+    await migrar('2026_11_25_precatorios', () => db.transaction(tx => aplicarPrecatorios(tx)));
 
     await migrar('2026_10_S03_sessao_revogavel', () => migrarSessaoRevogavel((sql) => db.execute(sql)));
     // S-13: gatilho de auditoria só-inserção, por último entre as migrações do esquema (ver o comentário do S-13 acima).
