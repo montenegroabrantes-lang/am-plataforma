@@ -4336,3 +4336,11 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   inválida → 401. Conector `am-acervo` registrado no `~/.claude.json` do usuário (escopo user).
 - Limitação: a auditoria registra o Master dono da chave e `via_chave`; o IP de uso da chave aparece como
   127.0.0.1 quando a chamada vem pelo /mcp (chamada interna).
+
+### 26/11/2026 — Versão 2.0, etapa 6 (limpeza), parte 2: prazos vencidos e correção da restauração de ciclos
+- **Prazos vencidos há mais de 30 dias (decisão do usuário), gravado às 12:22:** 59 tarefas `prazo` passaram a `cancelada` e as 59 publicações de origem a `triagem_status='irrelevante'` (para não voltarem à fila "Triagem necessária", que seguiu em 347). Os 15 eventos da agenda Google foram **mantidos** por decisão do usuário (o `calendar_event_id` continua na tarefa). Transação única, backup em JSON na pasta BANCO DE DADOS do Drive, registro em `logs_auditoria` (`cancelar_lote`). `/hoje`: prazos de 136 para 77, vencidos de 115 para 56.
+- **Lição — cancelar prazo de publicação com triagem pendente devolve a publicação à triagem** (`t.status='cancelada'` conta como "sem prazo definido"). Para tirar de vez, a publicação precisa de `sem_prazo` ou `irrelevante`.
+- **Incidente:** a rotina "Restaura ciclos cancelados por engano" em `src/index.js` rodava a **cada início do servidor**, fora de `migrar`. Depois do cancelamento das 363, o redeploy das 11:37 reabriu **174 tarefas antigas de ciclo** (jun–ago, duplicatas históricas dos mesmos clientes, registradas como `restaurar_lote_ciclos`). `/hoje` voltou de 39 para 213 em "Para protocolar".
+- **Correção publicada (`f31d0ab`), com aprovação do usuário:** a rotina foi removida do início do servidor. Em seguida as 174 foram canceladas de novo (transação, backup em JSON, `logs_auditoria`). Fila de protocolar: 35 pendentes, 8 bloqueadas e 4 `ciclo_aceito`.
+- **Não confirmado:** se o job diário `ciclos-recorrentes` (`verificarCiclosRecorrentes`) respeita o cancelamento para todos esses clientes; ele só pula quando existe tarefa cancelada com o mesmo `ciclo_inicio` que ele calcula. Conferir a contagem de `ciclo` pendentes depois da próxima execução.
+- **Falta na etapa 6:** 56 prazos vencidos há até 30 dias (decisão do usuário) e o levantamento de tabelas e telas sem uso.
