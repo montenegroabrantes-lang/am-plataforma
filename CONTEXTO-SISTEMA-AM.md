@@ -4320,3 +4320,16 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Efeito:** `verificarCiclosRecorrentes` não recria tarefa para o mesmo `ciclo_inicio` cancelado; esses clientes só voltam à aba "Novo ciclo" no ciclo seguinte. Para desfazer: voltar `status='pendente'` e limpar a justificativa nos ids do log.
 - **Conferido em produção, logado:** `/hoje` passou de 402 para 39 em "Para protocolar" (15 já no Drive, falta o número).
 - **Falta na etapa 6, com decisão do usuário:** os 115 prazos vencidos (88 classificados, 27 publicações sem prazo; 59 há mais de 30 dias, 44 de 8 a 30, 12 até 7; 69 na agenda Google) e o levantamento de tabelas e telas sem uso.
+
+### 26/11/2026 — /mcp aceita a chave de integração do acervo (conector local do Claude Code)
+- `POST /mcp` passa a aceitar `Authorization: Bearer am_live_…` além do JWT do conector OAuth. A chave precisa
+  de `acervo_leitura` ou `acervo_edicao` (senão 403); chave inválida/revogada/expirada → 401.
+- Modo chave (`src/mcp/index.js`): as ferramentas chamam `/api/integracoes/v1/acervo/…` com `X-AM-API-Key`
+  (o recorte da chave continua em `acervoExterno.js`); as de fora do acervo (`FORA_DA_CHAVE`: Drive, prazos,
+  protocolo inicial, contexto do processo, re-protocolo, WhatsApp) não aparecem na lista e, chamadas pelo nome,
+  não chegam à API. Limite do /mcp: um balde por chave (hash), 60/min.
+- Uso: conector HTTP `am-acervo` no Claude Code (escopo do usuário), apontando para `/mcp` com a chave
+  "Acervo jurídico — Claude". O conector OAuth do claude.ai continua igual.
+- Testes: `src/mcp/index.chave.test.js` (4 casos); suíte completa 1219/0 falhas.
+- Limitação: a auditoria registra o Master dono da chave e `via_chave`; o IP de uso da chave aparece como
+  127.0.0.1 quando a chamada vem pelo /mcp (chamada interna).

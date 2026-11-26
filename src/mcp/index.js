@@ -12,15 +12,36 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { autenticar } from '../middleware/auth.js';
 import { urlHttpsOuNulo } from '../utils/validacao.js';
 import { somenteBearer } from '../middleware/somenteBearer.js';
+import { autenticarChaveExterna, ehChaveExterna } from '../routes/chavesApi.js';
 
 export const mcpRouter = Router();
 
 const BASE = `http://127.0.0.1:${process.env.PORT || 3001}/api`;
 
+// Chave de integração do acervo (26/11/2026): o /mcp também aceita `Bearer am_live_…` com a
+// permissão acervo_leitura ou acervo_edicao. Nesse modo as ferramentas chamam
+// /api/integracoes/v1/acervo (acervoExterno.js decide o que a chave alcança: sem Drive, prazos,
+// protocolos, contexto do processo nem registros restritos) e as ferramentas de fora do acervo
+// nem aparecem na lista.
+export const FORA_DA_CHAVE = new Set([
+  'consultar_processo_peca', 'cumprir_prazo', 'registrar_protocolo_inicial',
+  'salvar_documento_drive', 'preparar_protocolo', 'salvar_peca_drive',
+  'levantamento_reprotocolo', 'conferir_vinculo_oficial',
+  'localizar_cliente', 'enviar_whatsapp_cliente',
+]);
+const MSG_FORA_DA_CHAVE = 'A chave de integração do acervo só alcança teses, peças, precedentes e o restante do acervo jurídico.';
+
 async function chamar(metodo, caminho, token, corpo) {
-  const r = await fetch(`${BASE}${caminho}`, {
+  let url = `${BASE}${caminho}`;
+  let auth = { Authorization: `Bearer ${token}` };
+  if (ehChaveExterna(token)) {
+    if (!/^\/acervo(\/|\?|$)/.test(caminho)) return { status: 403, dados: { ok: false, erro: MSG_FORA_DA_CHAVE } };
+    url = `${BASE}/integracoes/v1/acervo${caminho.slice('/acervo'.length) || '/'}`;
+    auth = { 'X-AM-API-Key': token };
+  }
+  const r = await fetch(url, {
     method: metodo,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    headers: { 'Content-Type': 'application/json', ...auth },
     body: corpo ? JSON.stringify(corpo) : undefined,
   });
   const texto = await r.text();
@@ -71,7 +92,12 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.15.1' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.16.0' });
+  if (ehChaveExterna(token)) {
+    // Modo chave: ferramentas de fora do acervo não são registradas (chamar() também as recusa).
+    const registrar = s.registerTool.bind(s);
+    s.registerTool = (nome, ...resto) => (FORA_DA_CHAVE.has(nome) ? undefined : registrar(nome, ...resto));
+  }
 
   s.registerTool('listar_teses', {
     title: 'Listar teses do acervo',
@@ -823,8 +849,22 @@ function construirServidor(token) {
   return s;
 }
 
+// Bearer am_live_… → chave de integração (precisa de permissão do acervo); qualquer outro → JWT.
+function autenticarMcp(req, res, next) {
+  const bearer = req.headers.authorization.slice('Bearer '.length).trim();
+  if (!ehChaveExterna(bearer)) return autenticar(req, res, next);
+  delete req.headers['x-am-api-key']; // vale só o Bearer, que é o repassado às rotas
+  return autenticarChaveExterna(req, res, () => {
+    const p = req.integracao.permissoes;
+    if (!p.includes('acervo_leitura') && !p.includes('acervo_edicao')) {
+      return res.status(403).json({ ok: false, erro: 'Esta chave não possui permissão do acervo (acervo_leitura ou acervo_edicao).' });
+    }
+    next();
+  });
+}
+
 // (S-01) /mcp é isento da checagem de Origin: só aceita Bearer, nunca o cookie de sessão.
-mcpRouter.post('/', somenteBearer, autenticar, async (req, res) => {
+mcpRouter.post('/', somenteBearer, autenticarMcp, async (req, res) => {
   const token = req.headers.authorization.replace('Bearer ', '');
   const servidor = construirServidor(token);
   const transporte = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });

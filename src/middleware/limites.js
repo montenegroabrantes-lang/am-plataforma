@@ -10,6 +10,7 @@
 // Os contadores ficam em memória (uma instância só): somem no redeploy, sem efeito colateral.
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
+import { createHash } from 'crypto';
 
 const MIN = 60 * 1000;
 const HORA = 60 * MIN;
@@ -41,6 +42,8 @@ export function criarLimiteIA(nome = 'ia') {
 export function chaveMcp(req) {
   const cabecalho = String(req.headers?.authorization ?? '');
   const token = req.cookies?.am_token || (cabecalho.startsWith('Bearer ') ? cabecalho.slice(7) : '');
+  // Chave de integração do acervo: um balde por chave (o hash, nunca a chave).
+  if (token.startsWith('am_live_')) return `k:${createHash('sha256').update(token).digest('hex').slice(0, 16)}`;
   if (token && process.env.JWT_SECRET) {
     try {
       const t = jwt.verify(token, process.env.JWT_SECRET);
