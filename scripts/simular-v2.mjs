@@ -6,6 +6,7 @@ import cors from 'cors';
 import { randomUUID } from 'node:crypto';
 import { criarPrecatoriosRouter } from '../src/routes/precatorios.js';
 import { criarComercialRouter } from '../src/routes/comercial.js';
+import { criarHojeRouter } from '../src/routes/hoje.js';
 
 const PROC = '33333333-3333-4333-8333-333333333333';
 const base = { cliente_id: null, processo_origem_id: null, numero_origem: null, regime_especial: false, exercicio: null, etapa: 'autuado',
@@ -81,5 +82,23 @@ const leadsFicticios = [
 const bancoComercial = { async query(sql) { return sql.includes('camila_contact_id') ? [] : sql.includes('FROM tarefas') ? tarefasComerciais : fechamentos; } };
 app.use('/api/comercial', (q, _r, n) => { q.user = user; n(); },
   criarComercialRouter({ banco: bancoComercial, clienteCamila: () => ({ get: async () => ({ data: { ok: true, leads: leadsFicticios } }) }) }));
+// Tela Hoje e Busca: tarefas, assinaturas e publicações fictícias; a busca usa respostas fixas.
+const bancoHoje = { async query(sql) {
+  if (sql.includes('FROM tarefas t')) return [
+    { id: 1, tipo: 'prazo', descricao: 'Impugnação à contestação', prazo_data: ha(-1), processo_numero: '0800001-11.2026.8.15.2001', cliente_nome: 'Ana Beatriz Lima (fictício)', responsavel_nome: 'Ana' },
+    { id: 2, tipo: 'prazo', descricao: 'Manifestação sobre cálculos', prazo_data: ha(4), processo_numero: '0800002-22.2025.8.15.2001', cliente_nome: 'Carlos Nóbrega (fictício)' },
+    { id: 3, tipo: 'protocolar', descricao: 'Protocolar FGTS de temporário', cliente_nome: 'Paulo Dantas (fictício)', criado_em: ha(12), responsavel_nome: 'Bia' },
+    { id: 4, tipo: 'protocolar', cliente_nome: 'Roberto Maia (fictício)', criado_em: ha(3), drive_protocolo_detectado_em: ha(1) },
+  ];
+  if (sql.includes('FROM despachos_itens')) return [{ id: 'a1', observacao: 'Contrarrazões prontas', local: '2ª Vara da Fazenda', processo_numero: '0800003-33.2024.8.15.2001', cliente_nome: 'Mariana Souto (fictício)' }];
+  if (sql.includes('FROM publicacoes pb')) return [{ id: 'p1', tipo_documento: 'Sentença', numero_processo: '0800005-55.2025.8.15.2001', data_disponibilizacao: ha(1), cliente_nome: 'Luciana Farias (fictício)' }, { id: 'p2', tipo_documento: 'EXPEDIENTE', data_disponibilizacao: ha(0) }];
+  if (sql.includes('FROM onboardings_contrato')) return [{ status: 'protocolo_pendente', total: 21, dias_medio: 47 }, { status: 'cadastro_pendente', total: 7, dias_medio: 60 }];
+  return linhas;
+} };
+app.use('/api/hoje', (q, _r, n) => { q.user = user; n(); }, criarHojeRouter({ banco: bancoHoje }));
+app.get('/api/processos', (q, r) => r.json({ ok: true, processos: [{ id: PROC, numero: '0800001-11.2026.8.15.2001', cliente_nome: 'Ana Beatriz Lima (fictício)', polo_passivo: 'Município de João Pessoa', status: 'ativo' }] }));
+app.get('/api/clientes', (q, r) => r.json({ ok: true, clientes: [{ id: O(9), nome: 'Ana Beatriz Lima (fictício)', cpf: '***.456.789-**' }] }));
+app.get('/api/acervo/teses', (q, r) => r.json({ ok: true, teses: [{ slug: 'fgts-nulidade', label: 'FGTS por nulidade da contratação temporária', situacao: 'ativa' }, { slug: 'piso', label: 'Piso do magistério', situacao: 'em_risco' }] }));
+app.get('/api/acervo', (q, r) => r.json({ ok: true, pecas: [{ id: 'pc1', titulo: 'Inicial · FGTS de temporário · Município (fictício)', cliente_nome: 'Ana Beatriz Lima', processo_numero: '0800001-11.2026.8.15.2001' }], precedentes: [{ id: 'pr1', processo_numero: 'RE 765.320', orgao: 'STF', ratio: 'FGTS devido na contratação temporária nula (Tema 916).' }] }));
 app.use((q, r) => r.json({ ok: true }));
 app.listen(3051, '127.0.0.1', () => console.log('simulação de precatórios em http://127.0.0.1:3051'));
