@@ -7,6 +7,7 @@ import { registrarAuditoria } from '../middleware/auditoria.js';
 export const chavesApiRouter = Router();
 const PERMISSOES_VALIDAS = new Set(['leitura', 'clientes', 'processos', 'estimativas', 'tarefas', 'camila', 'despachos', 'acervo_leitura', 'acervo_edicao']);
 const PREFIXO = 'am_live_';
+export const ehChaveExterna = valor => typeof valor === 'string' && valor.startsWith(PREFIXO);
 const hashChave = chave => createHash('sha256').update(chave).digest('hex');
 const rotuloChave = chave => `${chave.slice(0, 11)}••••••••${chave.slice(-4)}`;
 const escopoMaster = req => req.user.master_id || req.user.id;
