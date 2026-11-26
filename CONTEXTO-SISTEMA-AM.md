@@ -4362,3 +4362,9 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - `banco_pecas` e `custos_api` saíram também de `src/db/schema.sql` (usado só em banco novo).
 - `/health` 200 depois da remoção; sem erro de tabela inexistente nos registros do servidor.
 - **Falta na etapa 6:** arquivar `eventos_sac`, 56 prazos vencidos há até 30 dias, e a etapa de código (classificações, cobranças, restos antigos) depois de 30 dias.
+
+### 26/11/2026 — Versão 2.0, etapa 6 (limpeza), parte 5: `eventos_sac` arquivada e esvaziada
+- **Gravado em produção com aprovação do usuário:** as 33.150 linhas de `eventos_sac` foram exportadas para um arquivo `.jsonl.gz` (1,4 MB; uma linha JSON por registro, todas as colunas) na pasta BANCO DE DADOS do Drive do usuário, o arquivo foi relido e conferido linha a linha na contagem, e só então a tabela foi esvaziada (`TRUNCATE`), tudo em uma transação com a tabela travada. Registro em `logs_auditoria` (`arquivar_e_esvaziar`). A tabela continua existindo; o banco caiu para 42 MB.
+- **O que havia:** 32.947 registros datados de mai–jul/2023 e 203 de jun–set/2026, todos `tipo='atendimento'`, nenhum ligado a cliente ou lead. O arquivo comprimiu de 33 MB para 1,4 MB, sinal de conteúdo muito repetido: `sincronizarEventosSAC` insere os atendimentos das últimas 48h a cada execução com `ON CONFLICT DO NOTHING`, mas a tabela não tem chave única além do `id`, então nada impede duplicata.
+- **Efeito:** o bloco SAC de `GET /api/relatorio/sac` (eventos dos últimos 30 dias) já vinha zerado desde 29/09 e continua zerado. Os jobs `sync-digisac` e `sync-sheets` seguem rodando; se voltarem a trazer atendimentos, a tabela volta a encher, com duplicatas.
+- **Falta na etapa 6:** 56 prazos vencidos há até 30 dias (decisão do usuário) e a etapa de código (classificações, cobranças, restos antigos, e decidir se o sync do SAC continua) depois de 30 dias.
