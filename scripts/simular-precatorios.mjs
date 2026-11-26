@@ -36,7 +36,8 @@ const banco = {
   async queryOne(sql, p = []) {
     if (sql.includes('FROM processos WHERE numero')) return p[0] === '0800011-10.2022.8.15.2001' ? { id: PROC, cliente_id: null, visibilidade: 'normal' } : null;
     if (sql.includes('WHERE numero = $1')) return linhas.find(l => l.numero === p[0] && l.id !== p[1]) || null;
-    return linhas.find(l => l.id === p[0]) || null;
+    const achado = linhas.find(l => l.id === p[0]);
+    return achado ? { ...achado } : null; // cópia: o UPDATE não pode alterar o "antes" que a rota já leu
   },
   async execute(sql, p = []) {
     if (sql.includes('INSERT INTO precatorio_eventos')) { eventos.push({ precatorio_id: p[0], campo: p[1], de: p[2], para: p[3], criado_em: new Date(), usuario_nome: 'Teste Local' }); return; }
