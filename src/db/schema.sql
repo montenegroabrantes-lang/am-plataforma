@@ -320,17 +320,7 @@ CREATE TABLE pecas (
 );
 
 -- Banco de peças (RAG) — embeddings das petições do Drive
-CREATE TABLE banco_pecas (
-  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  nome        TEXT NOT NULL,
-  tipo        TEXT,
-  produto_id  UUID REFERENCES produtos(id),
-  drive_id    TEXT NOT NULL UNIQUE,
-  texto       TEXT NOT NULL,
-  embedding   vector(1536),              -- text-embedding-3-small (OpenAI)
-  criado_em   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX ON banco_pecas USING ivfflat (embedding vector_cosine_ops);
+-- Tabela banco_pecas removida em 26/11/2026 (vazia e sem uso).
 
 -- ─────────────────────────────────────────────
 --  FINANCEIRO — HONORÁRIOS
@@ -419,17 +409,7 @@ CREATE TABLE eventos_sac (
 -- ─────────────────────────────────────────────
 --  CUSTOS DE API
 -- ─────────────────────────────────────────────
-CREATE TABLE custos_api (
-  id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  provedor    TEXT NOT NULL CHECK (provedor IN ('claude','openai')),
-  tarefa      TEXT NOT NULL,             -- 'diagnostico' | 'peticao'
-  tokens_in   INTEGER,
-  tokens_out  INTEGER,
-  custo_usd   NUMERIC(10,6),
-  custo_brl   NUMERIC(10,4),
-  referencia  TEXT,                      -- ID do processo/lead relacionado
-  criado_em   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- Tabela custos_api removida em 26/11/2026 (vazia e sem uso).
 
 -- ─────────────────────────────────────────────
 --  LOG DE AUDITORIA (imutável)
@@ -481,7 +461,6 @@ CREATE INDEX ON leads (master_responsavel_id);
 CREATE INDEX ON honorarios (master_responsavel_id);
 CREATE INDEX ON clientes (master_responsavel_id);
 CREATE INDEX ON eventos_sac (processado, criado_em);
-CREATE INDEX ON custos_api (provedor, criado_em);
 CREATE INDEX ON logs_auditoria (entidade, entidade_id);
 CREATE INDEX ON clientes USING gin (nome gin_trgm_ops);
 
