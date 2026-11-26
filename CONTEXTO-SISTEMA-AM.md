@@ -4331,5 +4331,8 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - Uso: conector HTTP `am-acervo` no Claude Code (escopo do usuário), apontando para `/mcp` com a chave
   "Acervo jurídico — Claude". O conector OAuth do claude.ai continua igual.
 - Testes: `src/mcp/index.chave.test.js` (4 casos); suíte completa 1219/0 falhas.
+- Publicado (merge 87a3c47) e verificado em produção com a chave: `tools/list` traz só as ferramentas do
+  acervo; `listar_teses` e `buscar_acervo` respondem 200; `salvar_documento_drive` → "tool not found"; chave
+  inválida → 401. Conector `am-acervo` registrado no `~/.claude.json` do usuário (escopo user).
 - Limitação: a auditoria registra o Master dono da chave e `via_chave`; o IP de uso da chave aparece como
   127.0.0.1 quando a chamada vem pelo /mcp (chamada interna).
