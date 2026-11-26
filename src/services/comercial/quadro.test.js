@@ -54,3 +54,15 @@ test('quadro: sete colunas na ordem, mais parados primeiro, contagem de atrasado
   assert.deepEqual(q[0].cartoes.map(c => c.dias), [9, 2]);
   assert.equal(q[6].cartoes[0].atrasado, false);
 });
+
+test('proposta sem contato há mais de 30 dias sai do quadro e é contada à parte; outras colunas não têm corte', () => {
+  const q = montarQuadro({ agora, leads: [
+    { contact_id: 1, etapa: 'proposta_enviada', proposta_enviada_em: ha(31) },
+    { contact_id: 2, etapa: 'proposta_enviada', proposta_enviada_em: ha(90), ultima_cliente_em: ha(30) },
+    { contact_id: 3, etapa: 'contrato_enviado', ultima_equipe_em: ha(200) },
+  ] });
+  assert.deepEqual([q[0].total, q[0].fora_do_quadro, q[0].corte_dias], [1, 1, 30]);
+  assert.equal(q[0].cartoes[0].id, 'lead:2');
+  assert.equal(q[2].total, 1);
+  assert.equal(q[2].fora_do_quadro, undefined);
+});

@@ -10,6 +10,10 @@
 // definir os números; até lá valem estes.
 export const LIMITES_DIAS = { proposta: 5, documentos: 7, contrato: 3, ativar: 3, cadastro: 3, protocolo: 7 };
 
+// Decisão do usuário (25/11/2026): proposta sem contato há mais de 30 dias sai do quadro. Ela continua em
+// Estimativas, onde a Camila faz a retomada; o quadro só informa quantas ficaram de fora.
+export const CORTE_PROPOSTA_DIAS = 30;
+
 export const COLUNAS = [
   { id: 'proposta',   nome: 'Proposta enviada', origem: 'lead', etapas: ['proposta_enviada', 'entregue_manual'], passo: 'Acompanhar a resposta do cliente' },
   { id: 'documentos', nome: 'Documentos',       origem: 'lead', etapas: ['documentos_parciais', 'documentos_completos'], passo: 'Cobrar os documentos que faltam' },
@@ -49,12 +53,14 @@ export function cartaoDoLead(lead, agora, limites = LIMITES_DIAS) {
   if (lead.onboarding && lead.onboarding.status !== 'cancelado') return null;
   const passo = lead.etapa === 'documentos_completos' ? 'Preparar o contrato'
     : lead.aguardando_nossa_resposta ? 'Responder o cliente' : COLUNAS.find(c => c.id === coluna).passo;
-  return fechar({
+  const cartao = fechar({
     id: `lead:${lead.contact_id}`, tipo: 'lead', coluna, nome: lead.nome || 'Sem nome', valor: lead.valor ?? null,
     detalhe: NOME_ETAPA[lead.etapa] || lead.etapa, responsavel: lead.atendente_nome || (lead.status_atendimento === 'com_camila' ? 'Camila' : null),
     proximo_passo: passo, link: `/estimativas?aba=leads&lead=${encodeURIComponent(lead.contact_id)}`,
     desde: maisRecente(lead.ultima_cliente_em, lead.ultima_equipe_em) || maisRecente(lead.proposta_enviada_em, lead.entregue_em, lead.criado_em),
   }, agora, limites);
+  if (coluna === 'proposta' && cartao.dias != null && cartao.dias > CORTE_PROPOSTA_DIAS) return { fora_do_corte: true };
+  return cartao;
 }
 
 // Fechamento (onboarding) com as tarefas de protocolo dele. `tarefas`: só as deste fechamento.
@@ -91,8 +97,10 @@ export function montarQuadro({ leads = [], fechamentos = [], tarefas = [], agora
     ...leads.map(l => cartaoDoLead(l, agora, limites)),
     ...fechamentos.map(o => cartaoDoFechamento(o, tarefasPorFechamento.get(o.id) || [], agora, limites)),
   ].filter(Boolean);
+  const propostasAntigas = cartoes.filter(k => k.fora_do_corte).length;
   return COLUNAS.map(c => {
     const itens = cartoes.filter(k => k.coluna === c.id).sort((a, b) => (b.dias ?? -1) - (a.dias ?? -1));
-    return { id: c.id, nome: c.nome, origem: c.origem, limite_dias: limites[c.id] ?? null, total: itens.length, atrasados: itens.filter(k => k.atrasado).length, cartoes: itens };
+    return { id: c.id, nome: c.nome, origem: c.origem, limite_dias: limites[c.id] ?? null, total: itens.length, atrasados: itens.filter(k => k.atrasado).length,
+      ...(c.id === 'proposta' ? { fora_do_quadro: propostasAntigas, corte_dias: CORTE_PROPOSTA_DIAS } : {}), cartoes: itens };
   });
 }
