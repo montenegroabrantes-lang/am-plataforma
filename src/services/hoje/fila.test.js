@@ -44,16 +44,16 @@ test('fila: no máximo oito por grupo, e o cartão continua com o total', () => 
   assert.equal(montarHoje({ agora }).resumo[0].nota, 'nenhum vencendo');
 });
 
-test('prazo com petição juntada: sugestão, endereço da baixa, vem primeiro e não muda as contagens', () => {
+test('prazo com petição juntada: sugestão e endereço da baixa, sem mudar a ordem nem as contagens', () => {
   const avaliacoes = new Map([[3, { acao: 'sugerir', texto: 'Petição juntada em 24/11/2026' }], [2, { acao: 'concluir', motivo: 'audiencia' }], [1, { acao: 'nada' }]]);
   const r = montarHoje({ agora, avaliacoes, tarefas: [
     { id: 1, tipo: 'prazo', descricao: 'Recurso', prazo_data: dia(-2) },
     { id: 2, tipo: 'prazo', descricao: 'Audiência', prazo_data: dia(-1) },
     { id: 3, tipo: 'prazo', descricao: 'Contrarrazões', prazo_data: dia(9) },
   ] });
-  assert.deepEqual(r.fila.map(i => i.titulo), ['Contrarrazões', 'Recurso', 'Audiência']);
-  assert.deepEqual([r.fila[0].sugestao, r.fila[0].cumprir], ['Petição juntada em 24/11/2026', '/api/hoje/prazos/3/cumprir']);
-  assert.deepEqual([r.fila[1].sugestao, r.fila[1].cumprir, r.fila[2].sugestao], [null, null, null]);
+  assert.deepEqual(r.fila.map(i => i.titulo), ['Recurso', 'Audiência', 'Contrarrazões']);
+  assert.deepEqual([r.fila[2].sugestao, r.fila[2].cumprir], ['Petição juntada em 24/11/2026', '/api/hoje/prazos/3/cumprir']);
+  assert.deepEqual([r.fila[0].sugestao, r.fila[0].cumprir, r.fila[1].sugestao], [null, null, null]);
   assert.deepEqual([r.resumo[0].total, r.resumo[0].nota, r.resumo[0].com_peticao], [3, '2 vencidos', 1]);
   assert.equal(r.fila[0]._d, undefined);
 });
@@ -61,4 +61,13 @@ test('prazo com petição juntada: sugestão, endereço da baixa, vem primeiro e
 test('sem avaliações nada é sugerido', () => {
   const r = montarHoje({ agora, tarefas: [{ id: 1, tipo: 'prazo', prazo_data: dia(1) }] });
   assert.deepEqual([r.fila[0].sugestao, r.fila[0].cumprir, r.resumo[0].com_peticao], [null, null, 0]);
+});
+
+test('fila de prazos: os 8 mais urgentes e, além deles, todo prazo com petição juntada', () => {
+  const tarefas = Array.from({ length: 12 }, (_, i) => ({ id: i + 1, tipo: 'prazo', descricao: `P${i + 1}`, prazo_data: dia(i) }));
+  const avaliacoes = new Map([[2, { acao: 'sugerir', texto: 'Petição juntada em 24/11/2026' }], [11, { acao: 'sugerir', texto: 'Petição juntada em 25/11/2026' }]]);
+  const r = montarHoje({ agora, tarefas, avaliacoes });
+  assert.deepEqual(r.fila.map(i => i.titulo), ['P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P11']);
+  assert.deepEqual([r.resumo[0].total, r.resumo[0].com_peticao], [12, 2]);
+  assert.equal(POR_GRUPO, 8);
 });

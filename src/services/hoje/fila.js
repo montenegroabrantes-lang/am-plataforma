@@ -41,7 +41,7 @@ export function montarHoje({ tarefas = [], assinaturas = [], publicacoes = [], a
     return { grupo: 'prazo', id: `tarefa:${t.id}`, titulo: t.descricao || 'Prazo', sub: [t.cliente_nome, t.processo_numero].filter(Boolean).join(' · ') || null,
       quando: textoPrazo(d), atrasado: d !== null && d < 0, responsavel: t.responsavel_nome || null, acao: 'Abrir tarefa',
       link: `/tarefas?busca=${encodeURIComponent(t.processo_numero || t.cliente_nome || '')}`,
-      sugestao, cumprir: sugestao ? `/api/hoje/prazos/${t.id}/cumprir` : null, _d: d ?? 1e6, _ordem: (sugestao ? -1e7 : 0) + (d ?? 1e6) };
+      sugestao, cumprir: sugestao ? `/api/hoje/prazos/${t.id}/cumprir` : null, _d: d ?? 1e6, _ordem: d ?? 1e6 };
   }).sort((a, b) => a._ordem - b._ordem);
   const vencidos = prazos.filter(p => p.atrasado).length;
   const proximos = prazos.filter(p => !p.atrasado && p._d <= DIAS_PRAZO_PROXIMO).length;
@@ -71,6 +71,9 @@ export function montarHoje({ tarefas = [], assinaturas = [], publicacoes = [], a
   }).sort((a, b) => a._ordem - b._ordem);
 
   const limpar = lista => lista.slice(0, POR_GRUPO).map(({ _ordem, _d, ...item }) => item);
+  // Prazos: os mais urgentes primeiro (ordem por data) e, além do limite, todo prazo com petição
+  // juntada — a sugestão nunca empurra um prazo urgente para fora da fila nem fica escondida.
+  const prazosDaFila = prazos.filter((p, i) => i < POR_GRUPO || p.sugestao).map(({ _ordem, _d, ...item }) => item);
   return {
     resumo: [
       { chave: 'prazo', nome: 'Prazos', total: prazos.length, alerta: vencidos > 0, com_peticao: comPeticao,
@@ -79,6 +82,6 @@ export function montarHoje({ tarefas = [], assinaturas = [], publicacoes = [], a
       { chave: 'protocolar', nome: 'Para protocolar', total: protocolos.length, alerta: noDrive > 0, nota: noDrive ? `${noDrive} já no Drive, falta o número` : 'tarefas abertas' },
       { chave: 'decisao', nome: 'Decisões novas', total: decisoes.length, alerta: false, nota: `não lidas, últimos ${DIAS_DECISAO} dias` },
     ],
-    fila: [...limpar(prazos), ...limpar(assinar), ...limpar(protocolos), ...limpar(decisoes)],
+    fila: [...prazosDaFila, ...limpar(assinar), ...limpar(protocolos), ...limpar(decisoes)],
   };
 }
