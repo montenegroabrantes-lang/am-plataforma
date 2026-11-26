@@ -58,6 +58,7 @@ import { reprotocoloRouter } from './routes/reprotocolo.js';
 import { comunicacaoRouter } from './routes/comunicacao.js';
 import { cobrancasRouter } from './routes/cobrancas.js';
 import { precatoriosRouter } from './routes/precatorios.js';
+import { comercialRouter } from './routes/comercial.js';
 import { mcpRouter } from './mcp/index.js';
 import { oauthRouter } from './oauth/index.js';
 
@@ -192,6 +193,7 @@ app.use('/api/reprotocolo',   autenticar, reprotocoloRouter);
 app.use('/api/comunicacao',   autenticar, comunicacaoRouter);
 app.use('/api/cobrancas',     autenticar, cobrancasRouter);
 app.use('/api/precatorios',   autenticar, precatoriosRouter);
+app.use('/api/comercial',     autenticar, comercialRouter);
 app.use('/mcp',               limiteMcp, mcpRouter); // S-20: 60/min por Master que autorizou o conector
 montarUrlencodedOauth(app);
 // S-20: /oauth/token e /oauth/register por IP (o /oauth/authorize tem o limitador do S-02)

@@ -1,10 +1,11 @@
-// Servidor de simulação para conferir a tela de Precatórios sem banco: usa as rotas reais com um
-// banco em memória e dados fictícios. Uso: node scripts/simular-precatorios.mjs (porta 3051).
+// Servidor de simulação para conferir as telas da versão 2.0 (Precatórios e Comercial) sem banco: usa as rotas reais com um
+// banco em memória e dados fictícios. Uso: node scripts/simular-v2.mjs (porta 3051).
 import express from 'express';
 import 'express-async-errors';
 import cors from 'cors';
 import { randomUUID } from 'node:crypto';
 import { criarPrecatoriosRouter } from '../src/routes/precatorios.js';
+import { criarComercialRouter } from '../src/routes/comercial.js';
 
 const PROC = '33333333-3333-4333-8333-333333333333';
 const base = { cliente_id: null, processo_origem_id: null, numero_origem: null, regime_especial: false, exercicio: null, etapa: 'autuado',
@@ -53,5 +54,32 @@ app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 app.get('/api/auth/me', (_q, r) => r.json({ ok: true, user }));
 app.use('/api/precatorios', (q, _r, n) => { q.user = user; n(); }, criarPrecatoriosRouter({ banco, auditar: async () => {} }));
+// Quadro Comercial: fechamentos, tarefas e leads fictícios.
+const ha = dias => new Date(Date.now() - dias * 86_400_000).toISOString();
+const O = n => `0000000${n}-0000-4000-8000-000000000000`;
+const fechamentos = [
+  { id: O(1), status: 'cadastro_pendente', nome: 'Paulo Henrique Dantas (fictício)', valor_fechado: '8400', fechado_em: ha(60), responsavel_cadastro_nome: 'Ana' },
+  { id: O(2), status: 'cadastro_pendente', nome: 'Fernanda Queiroz (fictício)', fechado_em: ha(2), responsavel_cadastro_nome: 'Ana' },
+  { id: O(3), status: 'protocolo_pendente', cliente_nome: 'LUCIANA FARIAS (FICTÍCIO)', valor_fechado: '12900', fechado_em: ha(50), responsavel_protocolo_nome: 'Bia' },
+  { id: O(4), status: 'protocolo_pendente', cliente_nome: 'ROBERTO MAIA (FICTÍCIO)', fechado_em: ha(9), responsavel_protocolo_nome: 'Bia' },
+  { id: O(5), status: 'concluido', cliente_nome: 'MARIANA SOUTO (FICTÍCIO)', atualizado_em: ha(4), responsavel_protocolo_nome: 'Bia' },
+];
+const tarefasComerciais = [
+  { onboarding_id: O(3), tipo: 'cadastro_cliente', status: 'concluida', concluida_em: ha(47) },
+  { onboarding_id: O(3), tipo: 'protocolar', status: 'pendente' }, { onboarding_id: O(3), tipo: 'protocolar', status: 'concluida' },
+  { onboarding_id: O(4), tipo: 'cadastro_cliente', status: 'concluida', concluida_em: ha(3) },
+  { onboarding_id: O(4), tipo: 'protocolar', status: 'pendente', drive_protocolo_detectado_em: ha(1) },
+];
+const leadsFicticios = [
+  { contact_id: 101, nome: 'Carlos Nóbrega (fictício)', etapa: 'proposta_enviada', valor: 15200, proposta_enviada_em: ha(8), status_atendimento: 'com_camila' },
+  { contact_id: 102, nome: 'Ana Beatriz Lima (fictício)', etapa: 'proposta_enviada', valor: 9800, proposta_enviada_em: ha(1), atendente_nome: 'Ana' },
+  { contact_id: 103, nome: 'José Ricardo Alves (fictício)', etapa: 'documentos_parciais', ultima_cliente_em: ha(3), atendente_nome: 'Ana' },
+  { contact_id: 104, nome: 'Rosilda Amorim (fictício)', etapa: 'aguardando_assinatura', ultima_equipe_em: ha(5), atendente_nome: 'Ana' },
+  { contact_id: 105, nome: 'Edvaldo Nunes (fictício)', etapa: 'assinado', ultima_cliente_em: ha(1) },
+  { contact_id: 106, nome: 'Fora do quadro (fictício)', etapa: 'simulou' },
+];
+const bancoComercial = { async query(sql) { return sql.includes('camila_contact_id') ? [] : sql.includes('FROM tarefas') ? tarefasComerciais : fechamentos; } };
+app.use('/api/comercial', (q, _r, n) => { q.user = user; n(); },
+  criarComercialRouter({ banco: bancoComercial, clienteCamila: () => ({ get: async () => ({ data: { ok: true, leads: leadsFicticios } }) }) }));
 app.use((q, r) => r.json({ ok: true }));
 app.listen(3051, '127.0.0.1', () => console.log('simulação de precatórios em http://127.0.0.1:3051'));
