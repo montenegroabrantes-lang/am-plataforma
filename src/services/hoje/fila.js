@@ -28,18 +28,24 @@ export function tipoDecisao(tipoDocumento) {
   return null;
 }
 
-export function montarHoje({ tarefas = [], assinaturas = [], publicacoes = [], agora = new Date() }) {
+// avaliacoes: Map(id da tarefa → resultado de avaliarPrazo), quando a rota calculou; sem ele, nada é sugerido.
+export function montarHoje({ tarefas = [], assinaturas = [], publicacoes = [], agora = new Date(), avaliacoes = new Map() }) {
   const hoje = soData(agora);
 
   const prazos = tarefas.filter(t => t.tipo === 'prazo').map(t => {
     const data = soData(t.prazo_data);
     const d = data ? dias(hoje, data) : null;
+    // Petição juntada depois da publicação: sugestão de baixa, confirmada com um clique (nunca automática).
+    const a = avaliacoes.get(t.id);
+    const sugestao = a?.acao === 'sugerir' ? a.texto : null;
     return { grupo: 'prazo', id: `tarefa:${t.id}`, titulo: t.descricao || 'Prazo', sub: [t.cliente_nome, t.processo_numero].filter(Boolean).join(' · ') || null,
       quando: textoPrazo(d), atrasado: d !== null && d < 0, responsavel: t.responsavel_nome || null, acao: 'Abrir tarefa',
-      link: `/tarefas?busca=${encodeURIComponent(t.processo_numero || t.cliente_nome || '')}`, _ordem: d ?? 1e6 };
+      link: `/tarefas?busca=${encodeURIComponent(t.processo_numero || t.cliente_nome || '')}`,
+      sugestao, cumprir: sugestao ? `/api/hoje/prazos/${t.id}/cumprir` : null, _d: d ?? 1e6, _ordem: (sugestao ? -1e7 : 0) + (d ?? 1e6) };
   }).sort((a, b) => a._ordem - b._ordem);
   const vencidos = prazos.filter(p => p.atrasado).length;
-  const proximos = prazos.filter(p => !p.atrasado && p._ordem <= DIAS_PRAZO_PROXIMO).length;
+  const proximos = prazos.filter(p => !p.atrasado && p._d <= DIAS_PRAZO_PROXIMO).length;
+  const comPeticao = prazos.filter(p => p.sugestao).length;
 
   const protocolos = tarefas.filter(t => t.tipo === 'protocolar').map(t => {
     const criada = soData(t.criado_em);
@@ -64,10 +70,10 @@ export function montarHoje({ tarefas = [], assinaturas = [], publicacoes = [], a
       link: '/publicacoes', _ordem: d ?? 1e6 };
   }).sort((a, b) => a._ordem - b._ordem);
 
-  const limpar = lista => lista.slice(0, POR_GRUPO).map(({ _ordem, ...item }) => item);
+  const limpar = lista => lista.slice(0, POR_GRUPO).map(({ _ordem, _d, ...item }) => item);
   return {
     resumo: [
-      { chave: 'prazo', nome: 'Prazos', total: prazos.length, alerta: vencidos > 0,
+      { chave: 'prazo', nome: 'Prazos', total: prazos.length, alerta: vencidos > 0, com_peticao: comPeticao,
         nota: vencidos ? `${plural(vencidos, 'vencido', 'vencidos')}${proximos ? ` · ${proximos} em ${DIAS_PRAZO_PROXIMO} dias` : ''}` : proximos ? `${proximos} em ${DIAS_PRAZO_PROXIMO} dias` : 'nenhum vencendo' },
       { chave: 'assinar', nome: 'Para assinar', total: assinar.length, alerta: false, nota: assinar.length ? 'prontos no PJe' : 'nada na última varredura' },
       { chave: 'protocolar', nome: 'Para protocolar', total: protocolos.length, alerta: noDrive > 0, nota: noDrive ? `${noDrive} já no Drive, falta o número` : 'tarefas abertas' },

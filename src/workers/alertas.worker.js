@@ -3,6 +3,8 @@ import { redis }  from '../cache/redis.js';
 import { enviarLembretesDiarios, enviarEscalonamentoVespera } from './alertasTarefas.js';
 import { verificarCiclosRecorrentes } from '../services/ciclosRecorrentes.js';
 import { verificarWatchdogSAC } from './sac.worker.js';
+import { executarBaixaAutomatica } from '../services/prazos/baixa.js';
+import { db as bancoPrazos } from '../db/index.js';
 import { reprocessarSincronizacaoCamila } from '../services/reprocessarSyncCamila.js';
 import { reprocessarSincronizacaoDrive } from '../services/reprocessarSyncDrive.js';
 import { verificarTokenGoogle } from '../services/google/verificarToken.js';
@@ -23,6 +25,10 @@ export function criarAlertasWorker() {
       const { tarefas } = await verificarCiclosRecorrentes();
       console.log(`[Ciclos] Verificação diária concluída — ${tarefas} tarefas criadas.`);
       await verificarWatchdogSAC().catch(err => console.warn('[SAC Watchdog] Falha na verificação:', err.message));
+      // Baixa diária de prazos (26/11/2026): audiência com data passada e prazo com peça nossa + petição juntada.
+      await executarBaixaAutomatica({ banco: bancoPrazos })
+        .then(r => console.log(`[Prazos] Baixa automática — ${r.concluidas} concluída(s) (${r.audiencias} audiência(s), ${r.com_peca} com peça); ${r.sugeridas} com petição juntada aguardando confirmação.`))
+        .catch(err => console.warn('[Prazos] Falha na baixa automática:', err.message));
     }
     if (job.name === 'escalonamento-vespera') {
       await enviarEscalonamentoVespera();
