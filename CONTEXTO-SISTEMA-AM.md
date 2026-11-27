@@ -4420,3 +4420,9 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Não alterado:** o campo antigo `status_precatorio` do processo (ficha do processo) continua com a lista anterior de situações.
 - **Simulação local:** `scripts/simular-v2.mjs` passou a servir `/api/despachos` com 60 linhas fictícias.
 - Testes: backend 1.239, frontend 137, `next build` ok. Um push do backend foi recusado por commit de outra sessão (PR #48/#49); refeito com rebase, sem perda.
+
+### 26/11/2026, 22h09 — Varredura do PJe rodada a pedido do usuário, já com a regra nova do precatório
+- Execução extra de `/varredura-despachos` (fora das 15h): 52 processos com movimento no Painel desde as 15h10 (49 do AM), 72 autos lidos sem bloqueio (49 do Painel, 19 de precatório relidos, 4 do rodízio). Enviado ao AM: 440 itens, 7 arquivos.
+- **Resultado da regra do SAPRE com leitura fresca:** Assinaturas caiu de 16 para 5 (3 alvarás e 2 precatórios com certidão: 0826704-97.2024 e 0851071-88.2024); 10 processos foram para Cartório/"Certificar o envio ao SAPRE"; 0810952-85.2024 voltou a "Juntar concordância" (minuta nova em 10/11); 3 foram para "Formulário juntado: falta a minuta do precatório" (um no Núcleo 4.0, folha Outros). Conferido na tela Despachos em produção.
+- Demais mudanças: 7 processos novos no Gabinete (conclusos em 26/11 e um de 28/10), 1 remetido à Turma Recursal, 3 saídas da diligência; 3 resultados gravados no acervo, 5 a conferir (2 com tarefa), 3 sentenças na fila de leitura.
+- O verificador `check.swift` contou 66 de 67 no PDF do Cartório; a comparação pelo texto do PDF mostrou os 67 números. Estado anterior guardado em `estado/*.antes-2611-noite.json`.
