@@ -172,6 +172,42 @@ const itensDespachos = Array.from({ length: 60 }, (_, i) => ({
   folha: 'cartorio', local: i % 2 ? '2º JEFP/A' : 'Núcleo 4.0', bloco: ['Expedir RPV', 'Pedir conclusão para homologar o cumprimento', 'Conferir: pedir a minuta'][i % 3],
   observacao: 'Linha fictícia ' + (i + 1), dias_parado: 5 + i * 3, concluso: null, ultimo_andamento: 'Juntada de informações', lido_no_pje: true, acervo: null,
 }));
-app.get('/api/despachos', (q, r) => r.json({ ok: true, varredura: { executada_em: new Date().toISOString() }, itens: itensDespachos.map((x, i) => ({ ...x, acesso_tribunal: acessoFic(i) })), mudancas: [] }));
+// Pedidos de conferência fictícios (um de cada tipo), com as mesmas regras do servidor de verdade.
+const { aplicarResposta, conferenciaDoItem, paraTela } = await import('../src/services/despachosConferencias.js');
+const pedidosFic = [
+  { folha: 'assinaturas', local: '2º JEFP/A', bloco: 'Assinar precatório no SAPRE', observacao: 'Certidão do cartório em 12/11 (conferir se é a do SAPRE)' },
+  { folha: 'cartorio', local: '2º JEFP/A', bloco: 'Expedir RPV', observacao: 'Sentença publicada em 03/11: conferir antes de pedir a RPV' },
+  { folha: 'cartorio', local: 'Núcleo 4.0', bloco: 'Conferir antes de despachar', observacao: 'Prazo do Município decorrido em 20/10 após nossa petição de 01/09: conferir se é cumprimento e pedir conclusão' },
+  { folha: 'cartorio', local: '2º JEFP/A', bloco: 'Expedir alvará', observacao: 'Juiz despachou em 25/11 · cartório expedir o alvará no BRBJus (conferir o despacho)' },
+  { folha: 'cartorio', local: '2º JEFP/A', bloco: 'Expedir alvará', observacao: 'Juiz despachou em 24/11 · cartório expedir o alvará no BRBJus (conferir o despacho)' },
+];
+pedidosFic.forEach((x, k) => Object.assign(itensDespachos[k], x, { dias_parado: 12 + k * 9 }));
+const respostasFic = [];
+const agora = () => new Date().toISOString();
+app.get('/api/despachos', (q, r) => {
+  const porId = new Map(respostasFic.map(x => [x.id, x]));
+  r.json({ ok: true, varredura: { executada_em: agora() }, mudancas: [],
+    itens: itensDespachos.map((x, i) => ({ ...x, conferencia_id: undefined, acesso_tribunal: acessoFic(i), conferencia: conferenciaDoItem(x, porId, agora()) })),
+    conferencias_respondidas: [...respostasFic].reverse().map(paraTela) });
+});
+app.post('/api/despachos/conferencias', (q, r) => {
+  const { processo_id, tipo, referencia, resposta } = q.body || {};
+  const item = itensDespachos.find(i => i.processo_id === processo_id && !i.conferencia_id && conferenciaDoItem(i, new Map(), agora())?.tipo === tipo);
+  if (!item) return r.status(404).json({ ok: false, erro: 'Este pedido de conferência não está mais na folha. Atualize a tela.' });
+  const anterior = { folha: item.folha, local: item.local, bloco: item.bloco, observacao: item.observacao };
+  const resultado = aplicarResposta(item, tipo, resposta);
+  const nova = { id: `c0000000-0000-4000-9000-${String(respostasFic.length + 1).padStart(12, '0')}`, processo_id, numero: item.numero, tipo, referencia, resposta, usuario_nome: user.nome, respondido_em: agora(), estado_anterior: anterior, resultado };
+  respostasFic.push(nova);
+  Object.assign(item, resultado, { conferencia_tipo: tipo, conferencia_ref: referencia, conferencia_id: nova.id });
+  r.json({ ok: true, id: nova.id, resultado });
+});
+app.delete('/api/despachos/conferencias/:id', (q, r) => {
+  const k = respostasFic.findIndex(x => x.id === q.params.id);
+  if (k < 0) return r.status(404).json({ ok: false, erro: 'Conferência não encontrada ou já reaberta.' });
+  const [c] = respostasFic.splice(k, 1);
+  const item = itensDespachos.find(i => i.conferencia_id === c.id);
+  if (item) Object.assign(item, c.estado_anterior, { conferencia_id: null });
+  r.json({ ok: true, id: c.id, itens_restaurados: item ? 1 : 0 });
+});
 app.use((q, r) => r.json({ ok: true }));
 app.listen(3051, '127.0.0.1', () => console.log('simulação de precatórios em http://127.0.0.1:3051'));

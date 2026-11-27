@@ -5,6 +5,7 @@ import { registrarAuditoria } from '../middleware/auditoria.js';
 import { db } from '../db/index.js';
 import { criarListagemProcessos, exigePermissao } from '../services/processosExternos.js';
 import { criarEnvioArquivo, criarGravacaoVarredura } from '../services/despachos.js';
+import { criarListaConferenciasExterna } from '../services/despachosConferencias.js';
 import { acervoExternoRouter } from './acervoExterno.js';
 import { criarBaseSegundoGrau, criarGravacaoSegundoGrau } from '../services/segundoGrau.js';
 import { criarListaSemNumero, criarGravacaoNumeros } from '../services/precatorios/formacao.js';
@@ -36,6 +37,9 @@ integracoesExternasRouter.post(
   exigePermissao('despachos'),
   criarGravacaoVarredura(db),
 );
+
+// Respostas do escritório às conferências, para a rotina respeitar na varredura seguinte.
+integracoesExternasRouter.get('/v1/despachos/conferencias', exigePermissao('despachos'), criarListaConferenciasExterna(db));
 
 // 2º grau (rotina /varredura-2grau): lista o que ler e recebe a leitura. Mesma permissão da varredura.
 integracoesExternasRouter.get('/v1/segundo-grau/base', exigePermissao('despachos'), criarBaseSegundoGrau(db));

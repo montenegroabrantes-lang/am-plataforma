@@ -4,6 +4,7 @@ import { registrarAuditoria } from '../middleware/auditoria.js';
 import { filtroVisibilidade } from '../utils/visibilidade.js';
 import { obterAcessoTribunal } from './acessoTribunal.js';
 import { numeroPrecatorioValido, registrarAssinados } from './precatorios/formacao.js';
+import { aplicarConferencias, conferenciaDoItem, listarRespondidas, paraTela, validarConferencia } from './despachosConferencias.js';
 
 // 'diligencia' = trabalho interno do escritório, exibido separado das folhas do balcão.
 export const FOLHAS = ['assinaturas', 'gabinete', 'cartorio', 'outros', 'diligencia'];
@@ -57,6 +58,8 @@ export function validarVarredura(corpo) {
       concluso: texto(item.concluso, 200),
       ultimo_andamento: texto(item.ultimo_andamento, 300),
       lido_no_pje: item.lido_no_pje !== false,
+      // Pedido de conferência marcado pela rotina (tipo e data do documento); sem marca, vale o texto.
+      conferencia: validarConferencia(item.conferencia),
     });
   }
 
@@ -115,13 +118,18 @@ export function criarGravacaoVarredura(conexao) {
         );
 
         if (itens.length) {
+          // Respostas já dadas pelo escritório às conferências valem também para a varredura nova.
+          const prontos = await aplicarConferencias(tx, itens.map(i => ({ ...i, processo_id: idPorNumero.get(i.numero), numero: undefined })), dados.executada_em);
           await tx.execute(
             `INSERT INTO despachos_itens
-               (varredura_id, processo_id, folha, local, acervo, bloco, observacao, dias_parado, concluso, ultimo_andamento, lido_no_pje)
-             SELECT $1, x.processo_id, x.folha, x.local, x.acervo, x.bloco, x.observacao, x.dias_parado, x.concluso, x.ultimo_andamento, x.lido_no_pje
+               (varredura_id, processo_id, folha, local, acervo, bloco, observacao, dias_parado, concluso, ultimo_andamento, lido_no_pje,
+                conferencia_tipo, conferencia_ref, conferencia_id)
+             SELECT $1, x.processo_id, x.folha, x.local, x.acervo, x.bloco, x.observacao, x.dias_parado, x.concluso, x.ultimo_andamento, x.lido_no_pje,
+                    x.conferencia_tipo, x.conferencia_ref, x.conferencia_id
                FROM jsonb_to_recordset($2::jsonb) AS x(processo_id uuid, folha text, local text, acervo text, bloco text,
-                    observacao text, dias_parado int, concluso text, ultimo_andamento text, lido_no_pje boolean)`,
-            [varredura.id, JSON.stringify(itens.map(i => ({ ...i, processo_id: idPorNumero.get(i.numero), numero: undefined })))],
+                    observacao text, dias_parado int, concluso text, ultimo_andamento text, lido_no_pje boolean,
+                    conferencia_tipo text, conferencia_ref text, conferencia_id uuid)`,
+            [varredura.id, JSON.stringify(prontos)],
           );
         }
 
@@ -225,7 +233,8 @@ export function criarConsultaDespachos(conexao) {
       if (!varredura) return res.json({ ok: true, varredura: null, itens: [] });
       const itens = await conexao.query(
         `SELECT p.id AS processo_id, p.numero, d.folha, d.local, d.acervo, d.bloco, d.observacao,
-                d.dias_parado, d.concluso, d.ultimo_andamento, d.lido_no_pje, p.tribunal, p.grau, p.pje_id_processo, p.polo_passivo
+                d.dias_parado, d.concluso, d.ultimo_andamento, d.lido_no_pje, p.tribunal, p.grau, p.pje_id_processo, p.polo_passivo,
+                d.conferencia_tipo, d.conferencia_ref, d.conferencia_id
            FROM despachos_itens d
            JOIN processos p ON p.id = d.processo_id
           WHERE d.varredura_id = $1 ${filtroVisibilidade(req.user, 'p')}
@@ -234,8 +243,15 @@ export function criarConsultaDespachos(conexao) {
       );
       // Botão "abrir no PJe" em cada linha: mesmo destino da tela do processo.
       for (const i of itens) { i.acesso_tribunal = obterAcessoTribunal(i); delete i.tribunal; delete i.grau; delete i.pje_id_processo; }
+      // Pedidos de conferência: pendentes (botões na linha) e respondidos (lista com opção de reabrir).
+      const respondidas = await listarRespondidas(conexao, req.user);
+      const porId = new Map(respondidas.map(r => [r.id, r]));
+      for (const i of itens) {
+        i.conferencia = conferenciaDoItem(i, porId, varredura.executada_em);
+        delete i.conferencia_tipo; delete i.conferencia_ref; delete i.conferencia_id;
+      }
       const mudancas = await calcularMudancas(conexao, varredura, itens, req.user);
-      return res.json({ ok: true, varredura, itens, mudancas });
+      return res.json({ ok: true, varredura, itens, mudancas, conferencias_respondidas: respondidas.map(paraTela) });
     } catch (err) {
       console.error('[Despachos] Falha ao consultar:', err.message);
       return res.status(500).json({ ok: false, erro: 'Não foi possível carregar as folhas de despacho.' });
