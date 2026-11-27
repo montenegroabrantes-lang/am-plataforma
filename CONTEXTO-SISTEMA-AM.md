@@ -4459,3 +4459,16 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **"Lembrar de mim neste computador" (frontend `480987e`, deploy SUCCESS 23:30), pedido e aprovado pelo usuário:** caixa na tela de entrada, desmarcada por padrão. Marcada, o login bem-sucedido grava no `localStorage` (`am_lembrar_login`) **só nome e e-mail**; na volta a tela mostra "Olá, <primeiro nome>", um cartão com nome e e-mail, e pede apenas a senha (o e-mail segue no formulário, fora da vista, com `autocomplete="username"`, para o navegador preencher a senha da conta certa). "Entrar com outra conta" apaga o registro; entrar com a caixa desmarcada também. Regras em `src/lib/lembrarLogin.mjs` (+6 testes, um deles garante que senha, token e perfil nunca são gravados; a leitura valida e limpa o que vem do armazenamento). O backend não mudou; a sessão segue em até 7 dias.
 - **Conferido em produção:** caixa presente e desmarcada, orientação nova sob o botão. **Não conferido:** o ciclo real (entrar com a caixa marcada e voltar), porque não digito senhas; na prévia foi simulado com nome e e-mail fictícios. Testes do site: 157; `next build` ok.
 - **A segunda opção ("manter conectado por 30 dias") foi apresentada e o usuário não a pediu.**
+
+### 26/11/2026 — Conector OAuth: ler peça e precedente por id antes de editar (ferramentas MCP 1.17.0)
+- **Pedido do usuário:** ampliar o conector OAuth do AM (claude.ai e app) com as ferramentas de edição do acervo.
+- **Constatação:** o conector OAuth já tinha as ferramentas de edição desde 23/11 (`8412d99`): `criar_tese`, `atualizar_tese`,
+  `atualizar_peca`, `atualizar_precedente`, argumentos, vigilância, órgãos, arquivar etc. O mesmo `/mcp` serve o OAuth e a
+  chave. Sessões do Claude abertas antes do deploy de 23/11 continuam com a lista antiga (16 ferramentas); as abertas depois
+  enxergam todas.
+- **Lacuna corrigida:** não havia como ler uma peça ou um precedente inteiro pelo id. A busca não traz os argumentos usados nem
+  os precedentes citados, e em `atualizar_peca` essas listas (e as teses) substituem as atuais, então editar sem ler apagava
+  itens. Novas ferramentas somente leitura `ler_peca` (`GET /api/acervo/pecas/:id`) e `ler_precedente`
+  (`GET /api/acervo/precedentes/:id`), nos dois modos (OAuth e chave); as descrições de `atualizar_peca` e
+  `atualizar_precedente` mandam ler antes. Rotas e regras de acesso não mudaram.
+- Testes: `index.conhecimento.test.js` e `index.chave.test.js` cobrem as duas ferramentas.

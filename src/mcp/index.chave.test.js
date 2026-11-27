@@ -32,6 +32,7 @@ const recebidas = [];
 const registrar = (req, res, corpo) => { recebidas.push({ metodo: req.method, caminho: req.originalUrl, chave: req.headers['x-am-api-key'], auth: req.headers.authorization, corpo: req.body }); res.json(corpo); };
 app.get('/api/integracoes/v1/acervo/teses', (req, res) => registrar(req, res, { ok: true, teses: [{ slug: 'fgts-nulidade' }] }));
 app.get('/api/integracoes/v1/acervo/', (req, res) => registrar(req, res, { ok: true, pecas: [], precedentes: [] }));
+app.get('/api/integracoes/v1/acervo/pecas/:id', (req, res) => registrar(req, res, { ok: true, peca: { id: req.params.id, argumentos: [], precedentes: [] } }));
 app.patch('/api/integracoes/v1/acervo/teses/:slug', (req, res) => registrar(req, res, { ok: true, tese: { slug: req.params.slug } }));
 app.use('/api', (req, res) => registrar(req, res.status(418), { ok: false, erro: 'rota fora da integração chamada' }));
 app.use('/mcp', mcpRouter);
@@ -61,7 +62,7 @@ test('lista as ferramentas do acervo e esconde Drive, prazos, protocolos, re-pro
   const { status, dados } = await rpc('am_live_acervo', 'tools/list');
   assert.equal(status, 200);
   const nomes = new Set(dados.result.tools.map(t => t.name));
-  for (const n of ['listar_teses', 'buscar_acervo', 'criar_peca', 'atualizar_peca', 'criar_precedente', 'atualizar_precedente', 'conferir_precedente', 'criar_tese', 'atualizar_tese']) {
+  for (const n of ['listar_teses', 'buscar_acervo', 'criar_peca', 'atualizar_peca', 'criar_precedente', 'atualizar_precedente', 'conferir_precedente', 'criar_tese', 'atualizar_tese', 'ler_peca', 'ler_precedente']) {
     assert.ok(nomes.has(n), n);
   }
   for (const n of FORA_DA_CHAVE) assert.ok(!nomes.has(n), `${n} não deveria aparecer`);
@@ -76,10 +77,15 @@ test('ferramentas chamam /api/integracoes/v1/acervo com a chave no X-AM-API-Key,
   assert.equal(r2.dados.result.isError, false);
   const r3 = await rpc('am_live_acervo', 'tools/call', { name: 'atualizar_tese', arguments: { slug: 'fgts-nulidade', label: 'FGTS — nulidade' } });
   assert.equal(r3.dados.result.isError, false);
+  const ID = '66666666-6666-4666-8666-666666666666';
+  const r4 = await rpc('am_live_acervo', 'tools/call', { name: 'ler_peca', arguments: { id: ID } });
+  assert.equal(r4.dados.result.isError, false);
+  assert.equal(textoDe(r4).peca.id, ID);
   assert.deepEqual(recebidas.map(x => `${x.metodo} ${x.caminho.split('?')[0]}`), [
     'GET /api/integracoes/v1/acervo/teses',
     'GET /api/integracoes/v1/acervo/',
     'PATCH /api/integracoes/v1/acervo/teses/fgts-nulidade',
+    `GET /api/integracoes/v1/acervo/pecas/${ID}`,
   ]);
   for (const x of recebidas) { assert.equal(x.chave, 'am_live_acervo'); assert.equal(x.auth, undefined); }
 });
