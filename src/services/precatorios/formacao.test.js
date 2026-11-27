@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { montarFaixa, PASSOS_PRECATORIO, PASSOS_ALVARA, BLOCO_INTIMACAO_ALVARA, ehAssinaturaDePrecatorio, ehAlvaraPago,
-  numeroPrecatorioValido, registrarAssinados, criarGravacaoNumeros } from './formacao.js';
+  numeroPrecatorioValido, registrarAssinados, criarGravacaoNumeros, mesmoCredor } from './formacao.js';
 import { validarVarredura } from '../despachos.js';
 import { aplicarPrecatorioSemNumero } from '../../db/migracoes/precatorioSemNumero.js';
 import { pendencias } from './regras.js';
@@ -52,7 +52,9 @@ test('a varredura aceita o número do precatório na saída e descarta o que nã
 function banco({ processos, fichas = [] }) {
   const chamadas = [], auditorias = [];
   const tx = {
-    async query(sql, p) { chamadas.push({ sql: sql.replace(/\s+/g, ' ').trim(), p }); return processos.filter(x => p[0].includes(x.numero)); },
+    async query(sql, p) { chamadas.push({ sql: sql.replace(/\s+/g, ' ').trim(), p });
+      if (sql.includes('FROM precatorios WHERE processo_origem_id IS NULL')) return fichas.filter(f => !f.processo_origem_id && !f.numero_origem && f.numero);
+      return processos.filter(x => p[0].includes(x.numero)); },
     async queryOne(sql, p) {
       const s = sql.replace(/\s+/g, ' ').trim(); chamadas.push({ sql: s, p });
       if (s.startsWith('INSERT INTO precatorios')) { fichas.push({ id: `nova${fichas.length + 1}`, numero: p[0], processo_origem_id: p[4], numero_origem: p[5], etapa: p[6] }); return { id: fichas.at(-1).id }; }
@@ -70,7 +72,7 @@ test('juiz assinou: cria a ficha ligada à origem, sem número, na etapa Assinad
   const b = banco({ processos: PROC });
   const r = await registrarAssinados(b.tx, [{ numero: O1, motivo: 'ofício requisitório de precatório juntado em 25/11' }, { numero: O2, motivo: 'RPV expedida' },
     { numero: '0000001-11.2020.8.15.2001', motivo: 'ofício requisitório de precatório juntado' }], { auditar: b.auditar });
-  assert.deepEqual(r, { fichas_criadas: 1, numeros_preenchidos: 0 });
+  assert.deepEqual(r, { fichas_criadas: 1, numeros_preenchidos: 0, origens_vinculadas: 0 });
   const ins = b.chamadas.find(c => c.sql.startsWith('INSERT INTO precatorios'));
   assert.deepEqual(ins.p.slice(0, 7), [null, 'Fulana de Tal', 'Município de João Pessoa', 'c1', 'p1', O1, 'assinado']);
   assert.equal(b.auditorias[0].acao, 'criar_ficha_precatorio_assinado');
@@ -87,8 +89,8 @@ test('com o número do ofício a ficha já nasce autuada; sem cliente usa o polo
 test('não duplica: a segunda varredura não cria outra ficha, e só completa o número que faltava', async () => {
   const b = banco({ processos: PROC, fichas: [{ id: 'f1', numero: null, processo_origem_id: 'p1', numero_origem: O1 }] });
   const s = [{ numero: O1, motivo: 'ofício requisitório de precatório juntado em 25/11' }];
-  assert.deepEqual(await registrarAssinados(b.tx, s, { auditar: b.auditar }), { fichas_criadas: 0, numeros_preenchidos: 0 });
-  assert.deepEqual(await registrarAssinados(b.tx, [{ ...s[0], precatorio_numero: T1 }], { auditar: b.auditar }), { fichas_criadas: 0, numeros_preenchidos: 1 });
+  assert.deepEqual(await registrarAssinados(b.tx, s, { auditar: b.auditar }), { fichas_criadas: 0, numeros_preenchidos: 0, origens_vinculadas: 0 });
+  assert.deepEqual(await registrarAssinados(b.tx, [{ ...s[0], precatorio_numero: T1 }], { auditar: b.auditar }), { fichas_criadas: 0, numeros_preenchidos: 1, origens_vinculadas: 0 });
   const up = b.chamadas.find(c => c.sql.startsWith('UPDATE precatorios SET numero'));
   assert.deepEqual(up.p, ['f1', T1]);
   assert.ok(!b.chamadas.some(c => c.sql.startsWith('INSERT INTO precatorios (')));
@@ -97,7 +99,7 @@ test('não duplica: a segunda varredura não cria outra ficha, e só completa o 
 test('número do tribunal que já tem ficha manual: só liga a origem, não cria outra', async () => {
   const b = banco({ processos: PROC, fichas: [{ id: 'manual', numero: T1, processo_origem_id: null, numero_origem: null }] });
   const r = await registrarAssinados(b.tx, [{ numero: O1, motivo: 'ofício requisitório de precatório juntado', precatorio_numero: T1 }], { auditar: b.auditar });
-  assert.deepEqual(r, { fichas_criadas: 0, numeros_preenchidos: 0 });
+  assert.deepEqual(r, { fichas_criadas: 0, numeros_preenchidos: 0, origens_vinculadas: 0 });
   const up = b.chamadas.find(c => c.sql.startsWith('UPDATE precatorios SET processo_origem_id'));
   assert.deepEqual(up.p, ['manual', 'p1', O1, 'c1']);
 });
@@ -109,7 +111,7 @@ test('rota dos números: recusa número torto e grava o válido', async () => {
   let r = resp(); await rota({ body: {} }, r); assert.equal(r.codigo, 400);
   r = resp(); await rota({ body: { numeros: [{ numero_origem: O1, numero: O2 }] } }, r); assert.equal(r.codigo, 400);
   r = resp(); await rota({ body: { numeros: [{ numero_origem: O1, numero: T1 }] } }, r);
-  assert.deepEqual(r.corpo, { ok: true, fichas_criadas: 0, numeros_preenchidos: 1 });
+  assert.deepEqual(r.corpo, { ok: true, fichas_criadas: 0, numeros_preenchidos: 1, origens_vinculadas: 0 });
 });
 
 test('migração só solta a obrigatoriedade do número; ficha sem número cobra o número', async () => {
@@ -118,4 +120,19 @@ test('migração só solta a obrigatoriedade do número; ficha sem número cobra
   assert.deepEqual(sqls, ['ALTER TABLE precatorios ALTER COLUMN numero DROP NOT NULL']);
   const p = { numero: null, etapa: 'assinado', habilitacao_ramon: 'habilitado', habilitacao_luciano: 'habilitado', processo_origem_id: 'x' };
   assert.deepEqual(pendencias(p, 2026).map(i => i.tipo), ['sem_numero']);
+});
+
+test('ficha antiga do mesmo credor, sem origem: liga a origem em vez de criar outra; com duas candidatas, cria', async () => {
+  assert.ok(mesmoCredor('FULANA DE TAL', 'Fulana de Tal'));
+  assert.ok(mesmoCredor('Adriana Cláudia P. S. e Silva', 'ADRIANA CLAUDIA POLARI SOUTO E SILVA'));
+  assert.ok(!mesmoCredor('Fulana de Tal', 'Fulana Souza'));
+  assert.ok(!mesmoCredor('', 'Fulana'));
+  const antiga = { id: 'antiga', numero: T1, credor_nome: 'FULANA DE TAL', processo_origem_id: null, numero_origem: null };
+  let b = banco({ processos: PROC, fichas: [antiga] });
+  const s = [{ numero: O1, motivo: 'ofício requisitório de precatório juntado em 25/11' }];
+  assert.deepEqual(await registrarAssinados(b.tx, s, { auditar: b.auditar }), { fichas_criadas: 0, numeros_preenchidos: 0, origens_vinculadas: 1 });
+  assert.deepEqual(b.chamadas.find(c => c.sql.startsWith('UPDATE precatorios SET processo_origem_id')).p, ['antiga', 'p1', O1, 'c1']);
+  assert.equal(b.auditorias[0].acao, 'vincular_origem_precatorio');
+  b = banco({ processos: PROC, fichas: [{ ...antiga }, { ...antiga, id: 'outra', numero: '0800002-22.2026.8.15.0000' }] });
+  assert.deepEqual(await registrarAssinados(b.tx, s, { auditar: b.auditar }), { fichas_criadas: 1, numeros_preenchidos: 0, origens_vinculadas: 0 });
 });

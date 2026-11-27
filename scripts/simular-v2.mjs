@@ -18,12 +18,32 @@ const linhas = [
   { numero: '0800105-50.2026.8.15.0000', credor_nome: 'Lindalva Coutinho (fictício)', devedor: 'Mun. João Pessoa', exercicio: 2028, habilitacao_ramon: 'protocolada', habilitacao_luciano: 'habilitado' },
   { numero: '0800106-60.2023.8.15.0000', credor_nome: 'Inácio Gomes Ferraz (fictício)', devedor: 'Mun. João Pessoa', exercicio: 2025, etapa: 'aguardando_pagamento' },
   { numero: '0800107-70.2026.8.15.0000', credor_nome: 'Rosilda Amorim (fictício)', devedor: 'EMLUR' },
+  { numero: null, credor_nome: 'Tereza Cristina Nóbrega (fictício)', devedor: 'Município de João Pessoa', etapa: 'assinado', habilitacao_ramon: 'pendente', processo_origem_id: PROC, numero_origem: '0800011-10.2022.8.15.2001', observacao: 'Ficha criada pela varredura do PJe: ofício requisitório de precatório juntado em 26/11.' },
 ].map(l => ({ id: randomUUID(), ...base, ...l, criado_em: new Date(), atualizado_em: new Date() }));
 const eventos = [];
+// Faixas "em formação" e "alvarás a receber": itens fictícios da varredura do PJe.
+const it = (n, cliente, folha, local, bloco, extra = {}) => ({ processo_id: `p${n}`, numero: `08${String(n).padStart(5, '0')}-11.2024.8.15.2001`, cliente_nome: `${cliente} (fictício)`, folha, local, bloco, observacao: null, concluso: null, dias_parado: null, ...extra });
+const itensVarredura = [
+  it(1, 'Abel Tavares', 'diligencia', '2º JEFP', 'Fazer minuta de precatório', { dias_parado: 21 }), it(2, 'Berenice Lins', 'diligencia', '3ª Vara da Fazenda', 'Fazer minuta de precatório', { dias_parado: 6 }),
+  it(3, 'Cícero Paiva', 'diligencia', '1º JEFP', 'Fazer formulário de precatório/RPV', { dias_parado: 2 }),
+  it(4, 'Dalva Moura', 'cartorio', '2º JEFP', 'Formulário juntado: falta a minuta do precatório', { observacao: 'Formulário juntado em 12/11', dias_parado: 15 }),
+  it(5, 'Edson Brito', 'diligencia', '4º JEFP', 'Juntar concordância', { observacao: 'Minuta juntada em 24/11', dias_parado: 3 }),
+  it(6, 'Fátima Leal', 'cartorio', '2º JEFP', 'Certificar o envio ao SAPRE', { observacao: 'Concordância juntada em 10/11', dias_parado: 17 }),
+  it(7, 'Gilson Prado', 'outros', 'Núcleo 4.0', 'Certificar o envio ao SAPRE', { observacao: 'Concordância juntada em 03/11', dias_parado: 24 }),
+  it(8, 'Helena Vaz', 'assinaturas', '1º JEFP', 'Assinar precatório no SAPRE', { observacao: 'Certidão do cartório em 25/11', dias_parado: 2 }),
+  it(9, 'Ivo Sales', 'cartorio', '3º JEFP', 'Pedir conclusão para expedir alvará', { dias_parado: 12 }),
+  it(10, 'Júlia Reis', 'gabinete', '2º JEFP', 'Expedir alvará', { concluso: '19/11 Conclusos para decisão', dias_parado: 8 }),
+  it(11, 'Kátia Nunes', 'gabinete', '1º JEFP', 'Expedir alvará', { concluso: '01/10 Conclusos para despacho', dias_parado: 57 }),
+  it(12, 'Lauro Pires', 'gabinete', '4ª Vara da Fazenda', 'Expedir alvará', { concluso: '10/11 Conclusos para despacho', dias_parado: 17 }),
+  it(13, 'Marta Dias', 'diligencia', '2º JEFP', 'Cumprir intimação pessoal para o alvará', { observacao: 'Juiz exigiu intimação pessoal em 20/11', dias_parado: 7 }),
+  it(14, 'Nilo Rocha', 'assinaturas', '3º JEFP', 'Assinar alvará no BRBJus', { observacao: 'Alvará juntado em 10/11', dias_parado: 17 }),
+];
 const comOrigem = l => ({ ...l, origem_numero: l.processo_origem_id ? l.numero_origem : null, origem_visibilidade: 'normal', cliente_nome: null });
 
 const banco = {
   async query(sql, p = []) {
+    if (sql.includes('FROM despachos_itens')) return itensVarredura.filter(i => p[1].includes(i.bloco));
+    if (sql.includes('pr.numero IS NULL')) return linhas.filter(l => !l.numero).map(l => ({ precatorio_id: l.id, numero: l.numero_origem, cliente_nome: l.credor_nome, processo_id: l.processo_origem_id, criado_em: l.criado_em }));
     if (sql.includes('INSERT INTO precatorios')) {
       const [numero, credor_nome, devedor, cliente_id, processo_origem_id, numero_origem, regime_especial, exercicio, etapa, valor_requisitado,
         honorarios_percentual, prioridade, habilitacao_ramon, habilitacao_luciano, observacao] = p;
@@ -36,6 +56,9 @@ const banco = {
     return linhas.map(comOrigem);
   },
   async queryOne(sql, p = []) {
+    if (sql.includes('alvará pago')) return { total: 4 };
+    if (sql.includes('FROM despachos_varreduras')) return { id: 'v1', executada_em: new Date(Date.now() - 3 * 3600_000) };
+    if (sql.includes('FROM segundo_grau_varreduras')) return null;
     if (sql.includes('FROM processos WHERE numero')) return p[0] === '0800011-10.2022.8.15.2001' ? { id: PROC, cliente_id: null, visibilidade: 'normal' } : null;
     if (sql.includes('WHERE numero = $1')) return linhas.find(l => l.numero === p[0] && l.id !== p[1]) || null;
     const achado = linhas.find(l => l.id === p[0]);

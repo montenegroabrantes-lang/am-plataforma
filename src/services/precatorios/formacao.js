@@ -56,13 +56,23 @@ export function montarFaixa(passos, itens) {
 export const ehAssinaturaDePrecatorio = saida => /of[ií]cio requisit[óo]rio de precat[óo]rio/i.test(String(saida?.motivo || ''));
 export const ehAlvaraPago = saida => /^alvar[áa] pago/i.test(String(saida?.motivo || ''));
 
+// Mesmo credor: nome igual sem acento/caixa, ou primeiro e último nomes iguais (fichas antigas abreviam o meio).
+const normal = v => String(v ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+export function mesmoCredor(a, b) {
+  const x = normal(a), y = normal(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const px = x.split(' '), py = y.split(' ');
+  return px.length > 1 && py.length > 1 && px[0] === py[0] && px.at(-1) === py.at(-1);
+}
+
 const curto = (v, max) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max);
 
 // Cria a ficha dos precatórios assinados que ainda não têm ficha, e completa o número do tribunal
 // das que estavam sem. `saidas` vem da varredura já validada. Devolve o que fez.
 export async function registrarAssinados(tx, saidas, { auditar = registrarAuditoria, ip = null } = {}) {
   const assinadas = saidas.filter(ehAssinaturaDePrecatorio);
-  const feito = { fichas_criadas: 0, numeros_preenchidos: 0 };
+  const feito = { fichas_criadas: 0, numeros_preenchidos: 0, origens_vinculadas: 0 };
   if (!assinadas.length) return feito;
   const processos = await tx.query(
     `SELECT p.id, p.numero, p.cliente_id, p.polo_ativo, p.polo_passivo, c.nome AS cliente_nome
@@ -90,11 +100,23 @@ export async function registrarAssinados(tx, saidas, { auditar = registrarAudito
         [emUso.id, proc.id, proc.numero, proc.cliente_id]);
       continue;
     }
+    // Ficha antiga cadastrada à mão, sem origem, do mesmo credor: é o mesmo precatório. Liga a origem
+    // em vez de criar outra (só quando há exatamente uma candidata; na dúvida, cria e a equipe decide).
+    const nomeCredor = proc.cliente_nome || proc.polo_ativo;
+    const soltas = await tx.query(`SELECT id, credor_nome FROM precatorios WHERE processo_origem_id IS NULL AND numero_origem IS NULL AND numero IS NOT NULL`, []);
+    const iguais = soltas.filter(f => mesmoCredor(f.credor_nome, nomeCredor));
+    if (iguais.length === 1) {
+      await tx.execute(`UPDATE precatorios SET processo_origem_id = $2, numero_origem = $3, cliente_id = COALESCE(cliente_id, $4), atualizado_em = NOW() WHERE id = $1 AND processo_origem_id IS NULL`,
+        [iguais[0].id, proc.id, proc.numero, proc.cliente_id]);
+      await auditar({ acao: 'vincular_origem_precatorio', entidade: 'precatorio', entidadeId: iguais[0].id, valorDepois: { numero_origem: proc.numero, motivo: 'mesmo credor, juiz assinou o ofício' }, ip }, tx);
+      feito.origens_vinculadas += 1;
+      continue;
+    }
     const etapa = numeroTribunal ? 'autuado' : 'assinado';
     const nova = await tx.queryOne(
       `INSERT INTO precatorios (numero, credor_nome, devedor, cliente_id, processo_origem_id, numero_origem, etapa, observacao)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-      [numeroTribunal, curto(proc.cliente_nome || proc.polo_ativo, 200) || 'A conferir', curto(proc.polo_passivo, 200) || 'A conferir',
+      [numeroTribunal, curto(nomeCredor, 200) || 'A conferir', curto(proc.polo_passivo, 200) || 'A conferir',
         proc.cliente_id, proc.id, proc.numero, etapa, curto(`Ficha criada pela varredura do PJe: ${s.motivo}.`, 400)]);
     await tx.execute(`INSERT INTO precatorio_eventos (precatorio_id, campo, de, para) VALUES ($1, 'etapa', NULL, $2)`, [nova.id, etapa]);
     await auditar({ acao: 'criar_ficha_precatorio_assinado', entidade: 'precatorio', entidadeId: nova.id,
