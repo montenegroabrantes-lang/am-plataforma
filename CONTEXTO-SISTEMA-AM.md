@@ -4489,3 +4489,8 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Conferido em produção:** tabelas e colunas criadas; lista e ficha de Precatórios exibindo a leitura. Testes: backend 1.248 (0 falhas, 1 pulado), site 157; `next build` ok.
 - **Rotina agendada (27/11, definido pelo usuário):** terça e sexta, às 16h (o usuário pediu 15h e depois aceitou 16h, para não coincidir com a varredura de despachos), tarefa `varredura-2grau-terca-sexta-15h` (o identificador manteve o nome antigo) do aplicativo Claude (roda com o aplicativo aberto; o PJe de 2º grau precisa estar com a sessão do usuário aberta no Chrome).
 - **Pendente:** partes A (precatórios em formação no 1º grau, ficha automática ao assinar) e C (alertas) do plano de precatórios; decidir se o sistema pode ler o texto das decisões para sugerir a etapa.
+
+### 27/11/2026 — Vitrine da tela de entrada atualizada (PUBLICADO)
+- **Aprovado pelo usuário.** Site `ab587b7` (deploy SUCCESS 07:13): em `src/lib/novidadesV2.mjs`, data 27/11/2026; cartão Precatórios cita os andamentos lidos no tribunal duas vezes por semana; a fase "Automação" virou "Tribunal" (feita) e "Avisos e celular" (em andamento), progresso 6 de 7 (86%); lista "em andamento" trocada (precatórios em formação, avisos, menu/escuro/celular). O teste limita o texto de cada cartão a 80 letras e o de cada item em andamento a 70.
+- A tela é pública: sem nomes, números, menção a segredo de justiça ou ao PJe. Conferido em produção pelo HTML de `/login`. Testes do site: 157.
+- **Não feito (sugerido para depois):** cartão com demonstração da tela Processos e da faixa de abas.
