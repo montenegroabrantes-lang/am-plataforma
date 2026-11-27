@@ -137,7 +137,7 @@ processosRouter.get('/', async (req, res) => {
   // JOIN LATERAL evita 3 subqueries por linha — uma única busca da última movimentação e da última publicação.
   // Empate no dia fica com a movimentação (a publicação só tem a data, sem hora).
   const rows = await db.query(
-    `SELECT p.id, p.numero, p.tribunal, p.vara, p.status, p.acao,
+    `SELECT p.id, p.numero, p.tribunal, p.vara, p.status, p.acao, p.grau, p.pje_id_processo,
             p.polo_ativo, p.polo_passivo,
             p.visibilidade, p.compartilhado, p.master_responsavel_id,
             p.situacao_atual, p.urgente, p.etapa_atual, p.localizacao_processual,
@@ -184,6 +184,9 @@ processosRouter.get('/', async (req, res) => {
      LIMIT $${params.length - 1} OFFSET $${params.length}`,
     params
   );
+
+  // Botão "abrir no PJe" da lista: mesmo destino da tela do processo. O identificador interno não sai na lista.
+  for (const r of rows) { r.acesso_tribunal = obterAcessoTribunal(r); delete r.pje_id_processo; }
 
   // Buscar valores de classificação para os processos retornados
   const ids = rows.map(r => r.id);

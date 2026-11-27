@@ -7,6 +7,9 @@ import { randomUUID } from 'node:crypto';
 import { criarPrecatoriosRouter } from '../src/routes/precatorios.js';
 import { criarComercialRouter } from '../src/routes/comercial.js';
 import { criarHojeRouter } from '../src/routes/hoje.js';
+import { obterAcessoTribunal } from '../src/services/acessoTribunal.js';
+// Botão PJe das listas: dois em cada três processos fictícios têm o vínculo direto com os autos.
+const acessoFic = i => obterAcessoTribunal({ tribunal: 'TJPB', grau: '1', pje_id_processo: i % 3 ? String(2500000 + i) : null });
 
 const PROC = '33333333-3333-4333-8333-333333333333';
 const base = { cliente_id: null, processo_origem_id: null, numero_origem: null, regime_especial: false, exercicio: null, etapa: 'autuado',
@@ -22,7 +25,7 @@ const linhas = [
 ].map(l => ({ id: randomUUID(), ...base, ...l, criado_em: new Date(), atualizado_em: new Date() }));
 const eventos = [];
 // Faixas "em formação" e "alvarás a receber": itens fictícios da varredura do PJe.
-const it = (n, cliente, folha, local, bloco, extra = {}) => ({ processo_id: `p${n}`, numero: `08${String(n).padStart(5, '0')}-11.2024.8.15.2001`, cliente_nome: `${cliente} (fictício)`, folha, local, bloco, observacao: null, concluso: null, dias_parado: null, ...extra });
+const it = (n, cliente, folha, local, bloco, extra = {}) => ({ processo_id: `p${n}`, numero: `08${String(n).padStart(5, '0')}-11.2024.8.15.2001`, cliente_nome: `${cliente} (fictício)`, folha, local, bloco, observacao: null, concluso: null, dias_parado: null, tribunal: 'TJPB', grau: '1', pje_id_processo: n % 3 ? String(2500000 + n) : null, ...extra });
 const itensVarredura = [
   it(1, 'Abel Tavares', 'diligencia', '2º JEFP', 'Fazer minuta de precatório', { dias_parado: 21 }), it(2, 'Berenice Lins', 'diligencia', '3ª Vara da Fazenda', 'Fazer minuta de precatório', { dias_parado: 6 }),
   it(3, 'Cícero Paiva', 'diligencia', '1º JEFP', 'Fazer formulário de precatório/RPV', { dias_parado: 2 }),
@@ -151,7 +154,7 @@ const processosFic = Array.from({ length: 48 }, (_, i) => ({
 }));
 const contar = campo => Object.entries(processosFic.reduce((a, p) => { a[p[campo]] = (a[p[campo]] || 0) + 1; return a; }, {})).map(([k, total]) => ({ k, total })).sort((a, b) => b.total - a.total);
 app.get('/api/processos/sync-status', (q, r) => r.json({ ok: true, em_andamento: false, ultima_execucao: { concluido_em: ha(0.1), via_datajud: 3, novas_movimentacoes: 0, falhas: 37 } }));
-app.get('/api/processos', (q, r) => { const pp = Number(q.query.por_pagina) || 30, pg = Number(q.query.pagina) || 1; r.json({ ok: true, total: 883, processos: processosFic.slice((pg - 1) * pp, pg * pp) }); });
+app.get('/api/processos', (q, r) => { const pp = Number(q.query.por_pagina) || 30, pg = Number(q.query.pagina) || 1; r.json({ ok: true, total: 883, processos: processosFic.slice((pg - 1) * pp, pg * pp).map((x, i) => ({ ...x, acesso_tribunal: acessoFic(i) })) }); });
 app.get('/api/triagem', (q, r) => r.json({ ok: true, stats: { movimentacao_pendente: 1, cessoes_credito: 1,
   por_etapa: contar('etapa').map(x => ({ etapa: x.k, total: x.total * 18 })), por_funcao: contar('cliente_cargo').map(x => ({ funcao: x.k, total: x.total * 18 })),
   por_vara: contar('vara').map(x => ({ vara: x.k, total: x.total * 18 })), por_produto: contar('produto_nome').map(x => ({ produto: x.k, total: x.total * 18 })),
@@ -169,6 +172,6 @@ const itensDespachos = Array.from({ length: 60 }, (_, i) => ({
   folha: 'cartorio', local: i % 2 ? '2º JEFP/A' : 'Núcleo 4.0', bloco: ['Expedir RPV', 'Pedir conclusão para homologar o cumprimento', 'Conferir: pedir a minuta'][i % 3],
   observacao: 'Linha fictícia ' + (i + 1), dias_parado: 5 + i * 3, concluso: null, ultimo_andamento: 'Juntada de informações', lido_no_pje: true, acervo: null,
 }));
-app.get('/api/despachos', (q, r) => r.json({ ok: true, varredura: { executada_em: new Date().toISOString() }, itens: itensDespachos, mudancas: [] }));
+app.get('/api/despachos', (q, r) => r.json({ ok: true, varredura: { executada_em: new Date().toISOString() }, itens: itensDespachos.map((x, i) => ({ ...x, acesso_tribunal: acessoFic(i) })), mudancas: [] }));
 app.use((q, r) => r.json({ ok: true }));
 app.listen(3051, '127.0.0.1', () => console.log('simulação de precatórios em http://127.0.0.1:3051'));

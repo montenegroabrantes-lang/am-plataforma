@@ -12,6 +12,7 @@ import {
   grupoExercicio, pendencias, resumoPorGrupo,
 } from '../services/precatorios/regras.js';
 import { criarConsultaFormacao } from '../services/precatorios/formacao.js';
+import { obterAcessoTribunal } from '../services/acessoTribunal.js';
 
 const SQL_LISTA = (extra = '') => `
   SELECT pr.id, pr.numero, pr.credor_nome, pr.devedor, pr.cliente_id, pr.processo_origem_id, pr.numero_origem,
@@ -92,7 +93,8 @@ export function criarPrecatoriosRouter({ banco = db, auditar = registrarAuditori
     const { origem_visibilidade: vis, ...p } = linha;
     const pend = pendencias(p, anoAtual());
     if (p.processo_origem_id && !usuarioVeVisibilidade(user, vis)) { p.processo_origem_id = null; p.origem_numero = null; p.numero_origem = null; }
-    return { ...p, grupo: grupoExercicio(p), pendencias: pend };
+    // Precatório corre no PJe de 2º grau do TJPB: o botão abre o PJe e copia o número para a pesquisa.
+    return { ...p, grupo: grupoExercicio(p), pendencias: pend, acesso_tribunal: p.numero ? obterAcessoTribunal({ tribunal: 'TJPB', grau: '2' }) : null };
   };
 
   // Processo de origem pelo número: só vincula o que existe e o que o usuário pode ver.

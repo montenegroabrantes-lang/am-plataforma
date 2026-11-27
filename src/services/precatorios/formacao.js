@@ -5,6 +5,7 @@
 // do precatório nasce sozinha, ligada ao processo de origem, ainda sem o número do tribunal.
 import { registrarAuditoria } from '../../middleware/auditoria.js';
 import { filtroVisibilidade } from '../../utils/visibilidade.js';
+import { obterAcessoTribunal } from '../acessoTribunal.js';
 
 const NUMERO_CNJ = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
 // Precatório do TJPB corre no 2º grau: o número termina em 8.15.0000.
@@ -55,7 +56,8 @@ export function montarFaixa(passos, itens) {
     vistos.add(marca);
     const alvo = porChave.get(passo.chave);
     alvo.itens.push({ processo_id: item.processo_id, numero: item.numero, cliente_nome: item.cliente_nome || null, local: item.local || null,
-      observacao: item.observacao || null, concluso: item.concluso || null, dias_parado: item.dias_parado ?? null });
+      observacao: item.observacao || null, concluso: item.concluso || null, dias_parado: item.dias_parado ?? null,
+      acesso_tribunal: item.tribunal ? obterAcessoTribunal(item) : null });
     alvo.total += 1;
   }
   for (const p of saida) p.itens.sort((a, b) => (b.dias_parado ?? -1) - (a.dias_parado ?? -1) || String(a.numero).localeCompare(String(b.numero)));
@@ -155,7 +157,7 @@ export function criarConsultaFormacao(conexao) {
     try {
       const varredura = await conexao.queryOne(`SELECT id, executada_em FROM despachos_varreduras ORDER BY executada_em DESC, criado_em DESC LIMIT 1`);
       const itens = varredura ? await conexao.query(
-        `SELECT p.id AS processo_id, p.numero, c.nome AS cliente_nome, d.folha, d.local, d.bloco, d.observacao, d.concluso, d.dias_parado,
+        `SELECT p.id AS processo_id, p.numero, c.nome AS cliente_nome, d.folha, d.local, d.bloco, d.observacao, d.concluso, d.dias_parado, p.tribunal, p.grau, p.pje_id_processo,
                 EXISTS (SELECT 1 FROM precatorios pr WHERE pr.processo_origem_id = p.id) AS tem_precatorio
            FROM despachos_itens d JOIN processos p ON p.id = d.processo_id LEFT JOIN clientes c ON c.id = p.cliente_id
           WHERE d.varredura_id = $1 AND d.bloco = ANY($2) ${filtroVisibilidade(req.user, 'p')}`, [varredura.id, BLOCOS_DAS_FAIXAS]) : [];

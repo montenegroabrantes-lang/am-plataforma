@@ -2,6 +2,7 @@
 // A rotina grava pela API externa (chave com a permissão "despachos"); a equipe só consulta.
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { filtroVisibilidade } from '../utils/visibilidade.js';
+import { obterAcessoTribunal } from './acessoTribunal.js';
 import { numeroPrecatorioValido, registrarAssinados } from './precatorios/formacao.js';
 
 // 'diligencia' = trabalho interno do escritório, exibido separado das folhas do balcão.
@@ -224,13 +225,15 @@ export function criarConsultaDespachos(conexao) {
       if (!varredura) return res.json({ ok: true, varredura: null, itens: [] });
       const itens = await conexao.query(
         `SELECT p.id AS processo_id, p.numero, d.folha, d.local, d.acervo, d.bloco, d.observacao,
-                d.dias_parado, d.concluso, d.ultimo_andamento, d.lido_no_pje
+                d.dias_parado, d.concluso, d.ultimo_andamento, d.lido_no_pje, p.tribunal, p.grau, p.pje_id_processo
            FROM despachos_itens d
            JOIN processos p ON p.id = d.processo_id
           WHERE d.varredura_id = $1 ${filtroVisibilidade(req.user, 'p')}
           ORDER BY d.folha, d.local, d.bloco, d.dias_parado DESC NULLS LAST, p.numero`,
         [varredura.id],
       );
+      // Botão "abrir no PJe" em cada linha: mesmo destino da tela do processo.
+      for (const i of itens) { i.acesso_tribunal = obterAcessoTribunal(i); delete i.tribunal; delete i.grau; delete i.pje_id_processo; }
       const mudancas = await calcularMudancas(conexao, varredura, itens, req.user);
       return res.json({ ok: true, varredura, itens, mudancas });
     } catch (err) {
