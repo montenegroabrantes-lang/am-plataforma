@@ -4472,3 +4472,9 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
   (`GET /api/acervo/precedentes/:id`), nos dois modos (OAuth e chave); as descrições de `atualizar_peca` e
   `atualizar_precedente` mandam ler antes. Rotas e regras de acesso não mudaram.
 - Testes: `index.conhecimento.test.js` e `index.chave.test.js` cobrem as duas ferramentas.
+- Suíte completa 1244 testes, 0 falhas (1 pulado). Publicado com aprovação do usuário (merge `e79f3e5`).
+- **Verificado em produção com a chave do acervo:** `serverInfo` 1.17.0; `tools/list` traz `ler_peca` e `ler_precedente`
+  (somente leitura) e o aviso em `atualizar_peca`; `ler_peca` e `ler_precedente` responderam 200 com teses, argumentos e
+  precedentes citados; id inexistente → 404. Nenhum dado alterado.
+- **Não verificado:** o modo OAuth em produção (sem token OAuth fora do claude.ai); é o mesmo código, coberto pelos testes.
+  O conector OAuth mostra as ferramentas novas nas conversas abertas depois do deploy.
