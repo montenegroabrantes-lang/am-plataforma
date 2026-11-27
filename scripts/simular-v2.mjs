@@ -107,5 +107,13 @@ app.get('/api/processos', (q, r) => r.json({ ok: true, processos: [{ id: PROC, n
 app.get('/api/clientes', (q, r) => r.json({ ok: true, clientes: [{ id: O(9), nome: 'Ana Beatriz Lima (fictício)', cpf: '***.456.789-**' }] }));
 app.get('/api/acervo/teses', (q, r) => r.json({ ok: true, teses: [{ slug: 'fgts-nulidade', label: 'FGTS por nulidade da contratação temporária', situacao: 'ativa' }, { slug: 'piso', label: 'Piso do magistério', situacao: 'em_risco' }] }));
 app.get('/api/acervo', (q, r) => r.json({ ok: true, pecas: [{ id: 'pc1', titulo: 'Inicial · FGTS de temporário · Município (fictício)', cliente_nome: 'Ana Beatriz Lima', processo_numero: '0800001-11.2026.8.15.2001' }], precedentes: [{ id: 'pr1', processo_numero: 'RE 765.320', orgao: 'STF', ratio: 'FGTS devido na contratação temporária nula (Tema 916).' }] }));
+// Despachos: 60 linhas fictícias em duas varas, para testar filtros e a volta à lista.
+const itensDespachos = Array.from({ length: 60 }, (_, i) => ({
+  processo_id: i === 0 ? PROC : `00000000-0000-4000-9000-${String(i).padStart(12, '0')}`,
+  numero: `08${String(10000 + i * 37).padStart(5, '0')}-${String(10 + (i % 80)).padStart(2, '0')}.2026.8.15.2001`,
+  folha: 'cartorio', local: i % 2 ? '2º JEFP/A' : 'Núcleo 4.0', bloco: ['Expedir RPV', 'Pedir conclusão para homologar o cumprimento', 'Conferir: pedir a minuta'][i % 3],
+  observacao: 'Linha fictícia ' + (i + 1), dias_parado: 5 + i * 3, concluso: null, ultimo_andamento: 'Juntada de informações', lido_no_pje: true, acervo: null,
+}));
+app.get('/api/despachos', (q, r) => r.json({ ok: true, varredura: { executada_em: new Date().toISOString() }, itens: itensDespachos, mudancas: [] }));
 app.use((q, r) => r.json({ ok: true }));
 app.listen(3051, '127.0.0.1', () => console.log('simulação de precatórios em http://127.0.0.1:3051'));
