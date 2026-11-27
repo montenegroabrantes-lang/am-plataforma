@@ -58,6 +58,7 @@ function banco({ processos, fichas = [] }) {
     async queryOne(sql, p) {
       const s = sql.replace(/\s+/g, ' ').trim(); chamadas.push({ sql: s, p });
       if (s.startsWith('INSERT INTO precatorios')) { fichas.push({ id: `nova${fichas.length + 1}`, numero: p[0], processo_origem_id: p[4], numero_origem: p[5], etapa: p[6] }); return { id: fichas.at(-1).id }; }
+      if (s.includes('AND numero IS NULL')) return fichas.find(f => (f.processo_origem_id === p[0] || f.numero_origem === p[1]) && !f.numero) || null;
       if (s.includes('WHERE processo_origem_id = $1')) return fichas.find(f => f.processo_origem_id === p[0] || f.numero_origem === p[1]) || null;
       if (s.includes('WHERE numero = $1')) return fichas.find(f => f.numero === p[0]) || null;
       return null;
@@ -99,7 +100,7 @@ test('não duplica: a segunda varredura não cria outra ficha, e só completa o 
 test('número do tribunal que já tem ficha manual: só liga a origem, não cria outra', async () => {
   const b = banco({ processos: PROC, fichas: [{ id: 'manual', numero: T1, processo_origem_id: null, numero_origem: null }] });
   const r = await registrarAssinados(b.tx, [{ numero: O1, motivo: 'ofício requisitório de precatório juntado', precatorio_numero: T1 }], { auditar: b.auditar });
-  assert.deepEqual(r, { fichas_criadas: 0, numeros_preenchidos: 0, origens_vinculadas: 0 });
+  assert.deepEqual(r, { fichas_criadas: 0, numeros_preenchidos: 0, origens_vinculadas: 1 });
   const up = b.chamadas.find(c => c.sql.startsWith('UPDATE precatorios SET processo_origem_id'));
   assert.deepEqual(up.p, ['manual', 'p1', O1, 'c1']);
 });
@@ -135,4 +136,12 @@ test('ficha antiga do mesmo credor, sem origem: liga a origem em vez de criar ou
   assert.equal(b.auditorias[0].acao, 'vincular_origem_precatorio');
   b = banco({ processos: PROC, fichas: [{ ...antiga }, { ...antiga, id: 'outra', numero: '0800002-22.2026.8.15.0000' }] });
   assert.deepEqual(await registrarAssinados(b.tx, s, { auditar: b.auditar }), { fichas_criadas: 1, numeros_preenchidos: 0, origens_vinculadas: 0 });
+});
+
+test('dois precatórios da mesma origem (credor e honorários): com número, cada um ganha a sua ficha', async () => {
+  const T2 = '0804124-28.2025.8.15.0000';
+  const b = banco({ processos: PROC });
+  const r = await registrarAssinados(b.tx, [{ numero: O1, motivo: 'lido no 2º grau', precatorio_numero: T1 }, { numero: O1, motivo: 'lido no 2º grau', precatorio_numero: T2 }].map(x => ({ ...x, motivo: 'ofício requisitório de precatório (' + x.motivo + ')' })), { auditar: b.auditar });
+  assert.deepEqual(r, { fichas_criadas: 2, numeros_preenchidos: 0, origens_vinculadas: 0 });
+  assert.deepEqual(b.fichas.map(f => [f.numero, f.etapa]), [[T1, 'autuado'], [T2, 'autuado']]);
 });

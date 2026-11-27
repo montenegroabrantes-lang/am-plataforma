@@ -82,27 +82,39 @@ export async function registrarAssinados(tx, saidas, { auditar = registrarAudito
     const proc = porNumero.get(s.numero);
     if (!proc) continue;
     const numeroTribunal = numeroPrecatorioValido(s.precatorio_numero) ? s.precatorio_numero.trim() : null;
-    const ficha = await tx.queryOne(
-      `SELECT id, numero FROM precatorios WHERE processo_origem_id = $1 OR numero_origem = $2 ORDER BY criado_em LIMIT 1`, [proc.id, proc.numero]);
-    const emUso = numeroTribunal ? await tx.queryOne(`SELECT id FROM precatorios WHERE numero = $1`, [numeroTribunal]) : null;
-    if (ficha) {
-      if (!ficha.numero && numeroTribunal && !emUso) {
-        await tx.execute(`UPDATE precatorios SET numero = $2, etapa = CASE WHEN etapa IN ('minuta_juntada','enviado_sapre','assinado','remetido') THEN 'autuado' ELSE etapa END, atualizado_em = NOW() WHERE id = $1`, [ficha.id, numeroTribunal]);
-        await tx.execute(`INSERT INTO precatorio_eventos (precatorio_id, campo, de, para) VALUES ($1, 'numero', NULL, $2)`, [ficha.id, numeroTribunal]);
-        await auditar({ acao: 'preencher_numero_precatorio', entidade: 'precatorio', entidadeId: ficha.id, valorDepois: { numero: numeroTribunal }, ip }, tx);
-        feito.numeros_preenchidos += 1;
+    if (numeroTribunal) {
+      // Veio o número do tribunal (lido no 2º grau). A chave é o número: um processo de origem pode
+      // gerar mais de um precatório (o do credor e o dos honorários).
+      const emUso = await tx.queryOne(`SELECT id FROM precatorios WHERE numero = $1`, [numeroTribunal]);
+      if (emUso) {
+        // Já tem ficha (cadastrada à mão, sem a origem): só liga a origem.
+        const r = await tx.execute(`UPDATE precatorios SET processo_origem_id = $2, numero_origem = $3, cliente_id = COALESCE(cliente_id, $4), atualizado_em = NOW() WHERE id = $1 AND processo_origem_id IS NULL`,
+          [emUso.id, proc.id, proc.numero, proc.cliente_id]);
+        if (r?.rowCount) {
+          await auditar({ acao: 'vincular_origem_precatorio', entidade: 'precatorio', entidadeId: emUso.id, valorDepois: { numero_origem: proc.numero, motivo: 'processo de referência lido no 2º grau' }, ip }, tx);
+          feito.origens_vinculadas += 1;
+        }
+        continue;
       }
-      continue;
+      const aguardando = await tx.queryOne(
+        `SELECT id, numero FROM precatorios WHERE (processo_origem_id = $1 OR numero_origem = $2) AND numero IS NULL ORDER BY criado_em LIMIT 1`, [proc.id, proc.numero]);
+      if (aguardando) {
+        await tx.execute(`UPDATE precatorios SET numero = $2, etapa = CASE WHEN etapa IN ('minuta_juntada','enviado_sapre','assinado','remetido') THEN 'autuado' ELSE etapa END, atualizado_em = NOW() WHERE id = $1`, [aguardando.id, numeroTribunal]);
+        await tx.execute(`INSERT INTO precatorio_eventos (precatorio_id, campo, de, para) VALUES ($1, 'numero', NULL, $2)`, [aguardando.id, numeroTribunal]);
+        await auditar({ acao: 'preencher_numero_precatorio', entidade: 'precatorio', entidadeId: aguardando.id, valorDepois: { numero: numeroTribunal }, ip }, tx);
+        feito.numeros_preenchidos += 1;
+        continue;
+      }
+    } else {
+      // Sem número: o juiz assinou no 1º grau. Se o processo já tem ficha, não cria outra.
+      const ficha = await tx.queryOne(
+        `SELECT id, numero FROM precatorios WHERE processo_origem_id = $1 OR numero_origem = $2 ORDER BY criado_em LIMIT 1`, [proc.id, proc.numero]);
+      if (ficha) continue;
     }
-    // O número do tribunal já tem ficha (cadastrada à mão, sem a origem): só liga a origem.
-    if (emUso) {
-      await tx.execute(`UPDATE precatorios SET processo_origem_id = $2, numero_origem = $3, cliente_id = COALESCE(cliente_id, $4), atualizado_em = NOW() WHERE id = $1 AND processo_origem_id IS NULL`,
-        [emUso.id, proc.id, proc.numero, proc.cliente_id]);
-      continue;
-    }
+    const nomeCredor = proc.cliente_nome || proc.polo_ativo;
+    if (!numeroTribunal) {
     // Ficha antiga cadastrada à mão, sem origem, do mesmo credor: é o mesmo precatório. Liga a origem
     // em vez de criar outra (só quando há exatamente uma candidata; na dúvida, cria e a equipe decide).
-    const nomeCredor = proc.cliente_nome || proc.polo_ativo;
     const soltas = await tx.query(`SELECT id, credor_nome FROM precatorios WHERE processo_origem_id IS NULL AND numero_origem IS NULL AND numero IS NOT NULL`, []);
     const iguais = soltas.filter(f => mesmoCredor(f.credor_nome, nomeCredor));
     if (iguais.length === 1) {
@@ -112,12 +124,13 @@ export async function registrarAssinados(tx, saidas, { auditar = registrarAudito
       feito.origens_vinculadas += 1;
       continue;
     }
+    }
     const etapa = numeroTribunal ? 'autuado' : 'assinado';
     const nova = await tx.queryOne(
       `INSERT INTO precatorios (numero, credor_nome, devedor, cliente_id, processo_origem_id, numero_origem, etapa, observacao)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
       [numeroTribunal, curto(nomeCredor, 200) || 'A conferir', curto(proc.polo_passivo, 200) || 'A conferir',
-        proc.cliente_id, proc.id, proc.numero, etapa, curto(`Ficha criada pela varredura do PJe: ${s.motivo}.`, 400)]);
+        proc.cliente_id, proc.id, proc.numero, etapa, curto(`Ficha criada pela varredura do PJe: ${s.motivo}.`.replace(/\.\.$/, '.'), 400)]);
     await tx.execute(`INSERT INTO precatorio_eventos (precatorio_id, campo, de, para) VALUES ($1, 'etapa', NULL, $2)`, [nova.id, etapa]);
     await auditar({ acao: 'criar_ficha_precatorio_assinado', entidade: 'precatorio', entidadeId: nova.id,
       valorDepois: { numero_origem: proc.numero, numero: numeroTribunal, etapa }, ip }, tx);
