@@ -16,25 +16,29 @@ export const BLOCO_INTIMACAO_ALVARA = 'Cumprir intimação pessoal para o alvar�
 
 // `folhas` restringe o passo a certas folhas (o mesmo bloco "Expedir alvará" está com o juiz no
 // gabinete e com o cartório quando falta a conclusão).
+// Nomes dos atos (27/11/2026, Dr. Ramon): o juiz DETERMINA; quem EXPEDE é o cartório. Os nomes antigos
+// ("Expedir alvará" no gabinete etc.) continuam aceitos para as varreduras gravadas antes da troca.
 export const PASSOS_PRECATORIO = [
   { chave: 'formulario', nome: 'Fazer o formulário', quem: 'Escritório', blocos: ['Fazer formulário de precatório/RPV', 'Fazer minuta de precatório'] },
   { chave: 'falta_minuta', nome: 'Falta a minuta', quem: 'Cartório', blocos: ['Formulário juntado: falta a minuta do precatório'] },
   { chave: 'concordancia', nome: 'Juntar concordância', quem: 'Escritório', blocos: ['Juntar concordância', 'Confirmar minuta de precatório'] },
+  { chave: 'determinar', nome: 'Concluso para determinar', quem: 'Juiz', blocos: ['Determinar precatório/RPV', 'Expedir precatório/RPV'], folhas: ['gabinete'] },
   { chave: 'certidao_sapre', nome: 'Certificar envio ao SAPRE', quem: 'Cartório', blocos: ['Certificar o envio ao SAPRE'] },
   { chave: 'assinar', nome: 'Assinar no SAPRE', quem: 'Juiz', blocos: ['Assinar precatório no SAPRE'] },
 ];
 export const PASSOS_ALVARA = [
-  { chave: 'pedir_conclusao', nome: 'Pedir conclusão', quem: 'Cartório', blocos: ['Pedir conclusão para expedir alvará', 'Expedir alvará'], folhas: ['cartorio', 'outros'] },
-  { chave: 'concluso', nome: 'Concluso para deferir', quem: 'Juiz', blocos: ['Expedir alvará'], folhas: ['gabinete'] },
+  { chave: 'pedir_conclusao', nome: 'Pedir conclusão', quem: 'Cartório', blocos: ['Pedir conclusão para determinar alvará', 'Pedir conclusão para expedir alvará'] },
+  { chave: 'determinar', nome: 'Determinar alvará', quem: 'Juiz', blocos: ['Determinar alvará', 'Expedir alvará'], folhas: ['gabinete'] },
   { chave: 'intimacao_pessoal', nome: 'Intimação pessoal exigida', quem: 'Escritório', blocos: [BLOCO_INTIMACAO_ALVARA] },
+  { chave: 'expedir', nome: 'Expedir alvará', quem: 'Cartório', blocos: ['Expedir alvará'], folhas: ['cartorio', 'outros'] },
   { chave: 'assinar', nome: 'Assinar no BRBJus', quem: 'Juiz', blocos: ['Assinar alvará no BRBJus'] },
 ];
 // RPV: paga no próprio processo. O bloco antigo "RPV ou precatório sem pagamento" é misto: entra aqui
 // só o processo que não é origem de um precatório cadastrado (esse já é acompanhado pela ficha).
 export const BLOCO_MISTO_SEM_PAGAMENTO = 'Conferir RPV ou precatório sem pagamento';
 export const PASSOS_RPV = [
+  { chave: 'determinar', nome: 'Determinar RPV', quem: 'Juiz', blocos: ['Determinar RPV', 'Expedir RPV'], folhas: ['gabinete'] },
   { chave: 'expedir', nome: 'Expedir RPV', quem: 'Cartório', blocos: ['Expedir RPV'], folhas: ['cartorio', 'outros'] },
-  { chave: 'concluso', nome: 'Concluso para expedir', quem: 'Juiz', blocos: ['Expedir RPV'], folhas: ['gabinete'] },
   { chave: 'sem_pagamento', nome: 'Expedida, sem pagamento', quem: 'Fazenda', blocos: ['Conferir RPV sem pagamento', BLOCO_MISTO_SEM_PAGAMENTO] },
   { chave: 'vencida', nome: 'Depósito vencido', quem: 'Escritório', blocos: ['Conferir depósito de RPV vencida'] },
 ];

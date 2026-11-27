@@ -17,8 +17,8 @@ test('faixa do precatório: cada bloco cai no seu passo, na ordem do caminho', (
     item('g', 'Expedir alvará', 'gabinete'), item('d', 'Certificar o envio ao SAPRE', 'cartorio'),
   ]);
   assert.deepEqual(f.map(p => [p.chave, p.quem, p.total]), [['formulario', 'Escritório', 1], ['falta_minuta', 'Cartório', 1],
-    ['concordancia', 'Escritório', 1], ['certidao_sapre', 'Cartório', 2], ['assinar', 'Juiz', 1]]);
-  assert.deepEqual(f[3].itens.map(i => i.numero), ['e', 'd']); // mais parado primeiro, sem repetir o processo
+    ['concordancia', 'Escritório', 1], ['determinar', 'Juiz', 0], ['certidao_sapre', 'Cartório', 2], ['assinar', 'Juiz', 1]]);
+  assert.deepEqual(f[4].itens.map(i => i.numero), ['e', 'd']); // mais parado primeiro, sem repetir o processo
 });
 
 test('faixa do alvará: o mesmo bloco muda de passo conforme a folha; intimação pessoal tem passo próprio', () => {
@@ -27,8 +27,12 @@ test('faixa do alvará: o mesmo bloco muda de passo conforme a folha; intimaçã
     item('c', 'Pedir conclusão para expedir alvará', 'cartorio'), item('d', BLOCO_INTIMACAO_ALVARA, 'diligencia'),
     item('e', 'Assinar alvará no BRBJus', 'assinaturas'), item('x', 'Assinar precatório no SAPRE', 'assinaturas'),
   ]);
-  assert.deepEqual(f.map(p => [p.chave, p.total]), [['pedir_conclusao', 2], ['concluso', 1], ['intimacao_pessoal', 1], ['assinar', 1]]);
+  // nome antigo no gabinete = juiz determinar; "Expedir alvará" no cartório = passo novo (cartório expede)
+  assert.deepEqual(f.map(p => [p.chave, p.nome, p.quem, p.total]), [['pedir_conclusao', 'Pedir conclusão', 'Cartório', 1], ['determinar', 'Determinar alvará', 'Juiz', 1],
+    ['intimacao_pessoal', 'Intimação pessoal exigida', 'Escritório', 1], ['expedir', 'Expedir alvará', 'Cartório', 1], ['assinar', 'Assinar no BRBJus', 'Juiz', 1]]);
   assert.equal(f[1].itens[0].concluso, '19/11 Conclusos para decisão');
+  const novos = montarFaixa(PASSOS_ALVARA, [item('n1', 'Determinar alvará', 'gabinete'), item('n2', 'Pedir conclusão para determinar alvará', 'cartorio')]);
+  assert.deepEqual(novos.map(p => p.total), [1, 1, 0, 0, 0]);
 });
 
 test('reconhece a assinatura do juiz, o alvará pago e o número do TJPB', () => {
@@ -151,6 +155,7 @@ test('faixa do RPV: expedir no cartório ou concluso, sem pagamento e depósito 
     item('d', BLOCO_MISTO_SEM_PAGAMENTO, 'diligencia'), item('e', BLOCO_MISTO_SEM_PAGAMENTO, 'diligencia', { tem_precatorio: true }), item('f', 'Conferir RPV sem pagamento', 'diligencia'),
     item('g', 'Expedir alvará', 'gabinete')];
   const f = montarFaixa(PASSOS_RPV, itensDeRpv(itens));
-  assert.deepEqual(f.map(p => [p.chave, p.quem, p.total]), [['expedir', 'Cartório', 1], ['concluso', 'Juiz', 1], ['sem_pagamento', 'Fazenda', 2], ['vencida', 'Escritório', 1]]);
+  assert.deepEqual(f.map(p => [p.chave, p.nome, p.quem, p.total]), [['determinar', 'Determinar RPV', 'Juiz', 1], ['expedir', 'Expedir RPV', 'Cartório', 1], ['sem_pagamento', 'Expedida, sem pagamento', 'Fazenda', 2], ['vencida', 'Depósito vencido', 'Escritório', 1]]);
+  assert.equal(montarFaixa(PASSOS_RPV, [item('z', 'Determinar RPV', 'gabinete')])[0].total, 1);
   assert.deepEqual(f[2].itens.map(i => i.numero).sort(), ['d', 'f']);
 });
