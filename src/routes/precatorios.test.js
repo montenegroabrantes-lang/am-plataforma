@@ -28,10 +28,12 @@ const banco = {
   async query(sql, params) {
     if (sql.includes('INSERT INTO precatorios')) { inserts.push(params); return [{ id: PREC }]; }
     if (sql.includes('FROM precatorio_eventos')) return [{ campo: 'etapa', de: 'autuado', para: 'incluido_orcamento' }];
+    if (sql.includes('WHERE a.precatorio_id = $1')) return [{ data: '2026-06-11', texto: 'JUNTADA DE PETIÇÃO DE PETIÇÃO' }];
     if (sql.includes('FROM precatorios pr')) return linhas;
     throw new Error(`inesperado: ${sql.slice(0, 60)}`);
   },
   async queryOne(sql) {
+    if (sql.includes('FROM segundo_grau_varreduras')) return { executada_em: '2026-11-27T12:00:00Z', precatorios_lidos: 16, precatorios_sem_acesso: 26, recursos_lidos: 40, andamentos_novos: 9 };
     if (sql.includes('FROM processos WHERE numero')) return processo;
     if (sql.includes('SELECT id FROM precatorios WHERE numero')) return duplicado ? { id: 'outro' } : null;
     if (sql.includes('SELECT * FROM precatorios WHERE id')) return existente;
@@ -148,4 +150,14 @@ test('editar: trocar o número de origem refaz o vínculo', async () => {
   await chamar('PATCH', `/${PREC}`, { numero_origem: '0800001-11.2026.8.15.2001' });
   assert.match(execucoes[0].sql, /SET numero_origem = \$2, processo_origem_id = \$3, atualizado_em/);
   assert.deepEqual(execucoes[0].params.slice(1), ['0800001-11.2026.8.15.2001', null]);
+});
+
+test('lista traz a última leitura do 2º grau; ficha traz os andamentos', async () => {
+  linhas = [{ id: PREC, numero: NUM, credor_nome: 'A', devedor: 'B', etapa: 'autuado', habilitacao_ramon: 'habilitado', habilitacao_luciano: 'habilitado',
+    pje_acesso: 'ok', pje_lido_em: '2026-11-27T12:00:00Z', ultimo_andamento: 'JUNTADA DE PETIÇÃO DE PETIÇÃO', ultimo_andamento_em: '2026-06-11' }];
+  const lista = await chamar('GET', '/');
+  assert.equal(lista.corpo.leitura_2grau.precatorios_lidos, 16);
+  assert.deepEqual([lista.corpo.precatorios[0].pje_acesso, lista.corpo.precatorios[0].ultimo_andamento], ['ok', 'JUNTADA DE PETIÇÃO DE PETIÇÃO']);
+  const ficha = await chamar('GET', `/${PREC}`);
+  assert.deepEqual(ficha.corpo.andamentos, [{ data: '2026-06-11', texto: 'JUNTADA DE PETIÇÃO DE PETIÇÃO' }]);
 });

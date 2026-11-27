@@ -6,6 +6,7 @@ import { db } from '../db/index.js';
 import { criarListagemProcessos, exigePermissao } from '../services/processosExternos.js';
 import { criarEnvioArquivo, criarGravacaoVarredura } from '../services/despachos.js';
 import { acervoExternoRouter } from './acervoExterno.js';
+import { criarBaseSegundoGrau, criarGravacaoSegundoGrau } from '../services/segundoGrau.js';
 
 export const integracoesExternasRouter = Router();
 
@@ -34,6 +35,10 @@ integracoesExternasRouter.post(
   exigePermissao('despachos'),
   criarGravacaoVarredura(db),
 );
+
+// 2º grau (rotina /varredura-2grau): lista o que ler e recebe a leitura. Mesma permissão da varredura.
+integracoesExternasRouter.get('/v1/segundo-grau/base', exigePermissao('despachos'), criarBaseSegundoGrau(db));
+integracoesExternasRouter.post('/v1/segundo-grau/varredura', exigePermissao('despachos'), criarGravacaoSegundoGrau(db));
 
 // Arquivos da varredura (PDF das folhas e planilhas), um por chamada, para download na tela.
 integracoesExternasRouter.post(

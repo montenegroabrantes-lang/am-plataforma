@@ -16,10 +16,13 @@ const SQL_LISTA = (extra = '') => `
   SELECT pr.id, pr.numero, pr.credor_nome, pr.devedor, pr.cliente_id, pr.processo_origem_id, pr.numero_origem,
          pr.regime_especial, pr.exercicio, pr.etapa, pr.valor_requisitado, pr.honorarios_percentual, pr.prioridade,
          pr.habilitacao_ramon, pr.habilitacao_luciano, pr.observacao, pr.criado_em, pr.atualizado_em,
+         pr.pje_acesso, pr.pje_lido_em, pr.pje_classe, pr.pje_orgao, pr.pje_relator,
+         ult.data AS ultimo_andamento_em, ult.texto AS ultimo_andamento,
          p.numero AS origem_numero, p.visibilidade AS origem_visibilidade, c.nome AS cliente_nome
     FROM precatorios pr
     LEFT JOIN processos p ON p.id = pr.processo_origem_id
     LEFT JOIN clientes c ON c.id = pr.cliente_id
+    LEFT JOIN LATERAL (SELECT a.data, a.texto FROM precatorio_andamentos a WHERE a.precatorio_id = pr.id ORDER BY a.data DESC, a.criado_em DESC LIMIT 1) ult ON true
    WHERE 1=1 ${extra}
    ORDER BY pr.regime_especial, pr.exercicio NULLS LAST, pr.credor_nome
    LIMIT 1000`;
@@ -108,7 +111,11 @@ export function criarPrecatoriosRouter({ banco = db, auditar = registrarAuditori
     const q = texto(req.query.q, 100);
     if (q) { params.push(`%${q}%`); extra = ` AND (pr.credor_nome ILIKE $1 OR pr.numero ILIKE $1 OR pr.devedor ILIKE $1 OR pr.numero_origem ILIKE $1)`; }
     const lista = (await banco.query(SQL_LISTA(extra), params)).map(l => apresentar(l, req.user));
-    res.json({ ok: true, precatorios: lista, resumo: resumoPorGrupo(lista), etapas: ETAPAS });
+    // Última leitura do PJe de 2º grau (rotina /varredura-2grau), para a tela dizer de quando são os andamentos.
+    const leitura = await banco.queryOne(
+      `SELECT executada_em, precatorios_lidos, precatorios_sem_acesso, recursos_lidos, andamentos_novos
+         FROM segundo_grau_varreduras ORDER BY executada_em DESC LIMIT 1`);
+    res.json({ ok: true, precatorios: lista, resumo: resumoPorGrupo(lista), etapas: ETAPAS, leitura_2grau: leitura || null });
   });
 
   router.get('/:id', async (req, res) => {
@@ -119,7 +126,9 @@ export function criarPrecatoriosRouter({ banco = db, auditar = registrarAuditori
       `SELECT e.campo, e.de, e.para, e.criado_em, u.nome AS usuario_nome
          FROM precatorio_eventos e LEFT JOIN usuarios u ON u.id = e.usuario_id
         WHERE e.precatorio_id = $1 ORDER BY e.criado_em DESC LIMIT 100`, [req.params.id]);
-    res.json({ ok: true, precatorio: apresentar(linha, req.user), eventos });
+    const andamentos = await banco.query(
+      `SELECT a.data, a.texto FROM precatorio_andamentos a WHERE a.precatorio_id = $1 ORDER BY a.data DESC, a.criado_em DESC LIMIT 300`, [req.params.id]);
+    res.json({ ok: true, precatorio: apresentar(linha, req.user), eventos, andamentos });
   });
 
   router.post('/', async (req, res) => {

@@ -22,6 +22,7 @@ import { aplicarAvisoRelatorio } from './db/migracoes/avisoRelatorio.js';
 import { aplicarAcervoCobertura } from './db/migracoes/acervoCobertura.js';
 import { aplicarPrecatorios } from './db/migracoes/precatorios.js';
 import { aplicarEtapaSapre } from './db/migracoes/precatorioEtapaSapre.js';
+import { aplicarSegundoGrau } from './db/migracoes/segundoGrau.js';
 import { aprovadoresConfigurados } from './services/reprotocolo/pacote.js';
 import { aplicarMigracaoSyncR06 } from './services/tribunal/syncMigracao.js';
 
@@ -1065,6 +1066,8 @@ async function iniciar() {
     await migrar('2026_11_25_precatorios', () => db.transaction(tx => aplicarPrecatorios(tx)));
     // Etapa nova "Enviado ao SAPRE" (certidão do cartório) entre a minuta e a assinatura. Também sem .catch.
     await migrar('2026_11_26_precatorio_etapa_sapre', () => db.transaction(tx => aplicarEtapaSapre(tx)));
+    // Acompanhamento do 2º grau: andamentos de precatório e registro das leituras. Só acrescenta. Também sem .catch.
+    await migrar('2026_11_27_segundo_grau', () => db.transaction(tx => aplicarSegundoGrau(tx)));
 
     await migrar('2026_10_S03_sessao_revogavel', () => migrarSessaoRevogavel((sql) => db.execute(sql)));
     // S-13: gatilho de auditoria só-inserção, por último entre as migrações do esquema (ver o comentário do S-13 acima).
