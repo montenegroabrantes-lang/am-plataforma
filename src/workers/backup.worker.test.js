@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,6 +6,11 @@ import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { gunzipSync } from 'node:zlib';
 import { gerarDumpComprimido, backupTemTamanhoPlausivel } from './backup.worker.js';
+import { redis } from '../cache/redis.js';
+
+// backup.worker.js importa o cliente do Redis, que conecta ao carregar e tenta de novo para sempre.
+// Sem fechar, o processo do teste nunca termina e `npm test` (node --test) fica preso.
+after(() => redis.disconnect());
 
 function scriptFalso(dir, nome, conteudo) {
   const arquivo = path.join(dir, nome);
