@@ -64,7 +64,7 @@ export function validarLeitura(corpo) {
 // (situação "em recurso", marcados como 2º grau, ou listados em "2º grau e Turmas" na última folha).
 export function criarBaseSegundoGrau(conexao) {
   return async (_req, res) => {
-    const precatorios = await conexao.query(`SELECT numero FROM precatorios ORDER BY numero`);
+    const precatorios = await conexao.query(`SELECT numero FROM precatorios WHERE numero IS NOT NULL ORDER BY numero`);
     const recursos = await conexao.query(
       `SELECT DISTINCT p.numero
          FROM processos p

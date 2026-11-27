@@ -7,6 +7,7 @@ import { criarListagemProcessos, exigePermissao } from '../services/processosExt
 import { criarEnvioArquivo, criarGravacaoVarredura } from '../services/despachos.js';
 import { acervoExternoRouter } from './acervoExterno.js';
 import { criarBaseSegundoGrau, criarGravacaoSegundoGrau } from '../services/segundoGrau.js';
+import { criarListaSemNumero, criarGravacaoNumeros } from '../services/precatorios/formacao.js';
 
 export const integracoesExternasRouter = Router();
 
@@ -39,6 +40,10 @@ integracoesExternasRouter.post(
 // 2º grau (rotina /varredura-2grau): lista o que ler e recebe a leitura. Mesma permissão da varredura.
 integracoesExternasRouter.get('/v1/segundo-grau/base', exigePermissao('despachos'), criarBaseSegundoGrau(db));
 integracoesExternasRouter.post('/v1/segundo-grau/varredura', exigePermissao('despachos'), criarGravacaoSegundoGrau(db));
+
+// Precatório assinado sem número do TJPB: a rotina pergunta quais são e devolve o número lido no ofício.
+integracoesExternasRouter.get('/v1/precatorios/sem-numero', exigePermissao('despachos'), criarListaSemNumero(db));
+integracoesExternasRouter.post('/v1/precatorios/numeros', exigePermissao('despachos'), criarGravacaoNumeros(db));
 
 // Arquivos da varredura (PDF das folhas e planilhas), um por chamada, para download na tela.
 integracoesExternasRouter.post(

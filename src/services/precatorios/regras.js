@@ -42,6 +42,8 @@ export function grupoExercicio(p) {
 // O que a ficha cobra de quem acompanha. `anoAtual` vem de fora para a regra ser testável.
 export function pendencias(p, anoAtual) {
   const itens = [];
+  // Ficha criada pela varredura quando o juiz assina: o número do TJPB entra depois.
+  if (!p.numero) itens.push({ tipo: 'sem_numero', texto: 'Assinado pelo juiz: falta o número do precatório no TJPB.' });
   for (const [campo, nome] of SOCIOS) {
     if (p[campo] === 'pendente') itens.push({ tipo: 'habilitacao', texto: `Habilitar o ${nome} (petição e procuração para assinatura).` });
     if (p[campo] === 'protocolada') itens.push({ tipo: 'habilitacao_conferir', texto: `Habilitação do ${nome} protocolada: conferir se já consta no cadastro do processo.` });

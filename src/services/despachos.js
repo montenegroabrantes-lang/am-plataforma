@@ -2,6 +2,7 @@
 // A rotina grava pela API externa (chave com a permissão "despachos"); a equipe só consulta.
 import { registrarAuditoria } from '../middleware/auditoria.js';
 import { filtroVisibilidade } from '../utils/visibilidade.js';
+import { numeroPrecatorioValido, registrarAssinados } from './precatorios/formacao.js';
 
 // 'diligencia' = trabalho interno do escritório, exibido separado das folhas do balcão.
 export const FOLHAS = ['assinaturas', 'gabinete', 'cartorio', 'outros', 'diligencia'];
@@ -71,7 +72,11 @@ export function validarVarredura(corpo) {
   for (const sItem of (Array.isArray(corpo.saidas) ? corpo.saidas : []).slice(0, MAX_ITENS)) {
     const numero = texto(sItem?.numero, 30);
     if (!numero || !NUMERO_CNJ.test(numero)) continue;
-    saidas.push({ numero, de: FOLHAS.includes(sItem.de) ? sItem.de : null, bloco: texto(sItem.bloco, 120), motivo: texto(sItem.motivo, 200) });
+    const saida = { numero, de: FOLHAS.includes(sItem.de) ? sItem.de : null, bloco: texto(sItem.bloco, 120), motivo: texto(sItem.motivo, 200) };
+    // Número do precatório no TJPB, quando a rotina o leu no ofício requisitório.
+    const precatorio = texto(sItem.precatorio_numero, 30);
+    if (precatorio && numeroPrecatorioValido(precatorio)) saida.precatorio_numero = precatorio;
+    saidas.push(saida);
   }
   const lidos = Number(corpo.processos_lidos);
   return {
@@ -139,7 +144,10 @@ export function criarGravacaoVarredura(conexao) {
           ip: req._ip,
         }, tx);
 
-        return { varredura_id: varredura.id, itens: itens.length, ignorados, acervos_atualizados: acervosAtualizados };
+        // Juiz assinou o precatório: a ficha nasce sozinha, ligada ao processo de origem.
+        const assinados = await registrarAssinados(tx, dados.saidas, { ip: req._ip });
+
+        return { varredura_id: varredura.id, itens: itens.length, ignorados, acervos_atualizados: acervosAtualizados, ...assinados };
       });
       return res.json({ ok: true, ...resultado });
     } catch (err) {

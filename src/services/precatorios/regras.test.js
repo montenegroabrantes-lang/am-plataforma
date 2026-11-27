@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { grupoExercicio, pendencias, resumoPorGrupo, lerValor, numeroCnjValido, etapaValida } from './regras.js';
 
-const base = { etapa: 'incluido_orcamento', exercicio: 2027, regime_especial: false, habilitacao_ramon: 'habilitado', habilitacao_luciano: 'habilitado', processo_origem_id: 'x' };
+const base = { numero: '0800001-11.2026.8.15.0000', etapa: 'incluido_orcamento', exercicio: 2027, regime_especial: false, habilitacao_ramon: 'habilitado', habilitacao_luciano: 'habilitado', processo_origem_id: 'x' };
 const tipos = (p, ano = 2026) => pendencias(p, ano).map(i => i.tipo);
 
 test('grupo: regime especial vence o exercício; sem os dois é "sem decisão"', () => {

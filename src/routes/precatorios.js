@@ -11,6 +11,7 @@ import {
   ETAPAS, PRIORIDADES, HABILITACOES, SOCIOS, etapaValida, numeroCnjValido, lerValor,
   grupoExercicio, pendencias, resumoPorGrupo,
 } from '../services/precatorios/regras.js';
+import { criarConsultaFormacao } from '../services/precatorios/formacao.js';
 
 const SQL_LISTA = (extra = '') => `
   SELECT pr.id, pr.numero, pr.credor_nome, pr.devedor, pr.cliente_id, pr.processo_origem_id, pr.numero_origem,
@@ -24,7 +25,7 @@ const SQL_LISTA = (extra = '') => `
     LEFT JOIN clientes c ON c.id = pr.cliente_id
     LEFT JOIN LATERAL (SELECT a.data, a.texto FROM precatorio_andamentos a WHERE a.precatorio_id = pr.id ORDER BY a.data DESC, a.criado_em DESC LIMIT 1) ult ON true
    WHERE 1=1 ${extra}
-   ORDER BY pr.regime_especial, pr.exercicio NULLS LAST, pr.credor_nome
+   ORDER BY (pr.numero IS NOT NULL), pr.regime_especial, pr.exercicio NULLS LAST, pr.credor_nome
    LIMIT 1000`;
 
 const texto = (v, max) => String(v ?? '').trim().slice(0, max);
@@ -117,6 +118,9 @@ export function criarPrecatoriosRouter({ banco = db, auditar = registrarAuditori
          FROM segundo_grau_varreduras ORDER BY executada_em DESC LIMIT 1`);
     res.json({ ok: true, precatorios: lista, resumo: resumoPorGrupo(lista), etapas: ETAPAS, leitura_2grau: leitura || null });
   });
+
+  // Faixas "em formação" e "alvarás a receber", pela última varredura do PJe.
+  router.get('/formacao', criarConsultaFormacao(banco));
 
   router.get('/:id', async (req, res) => {
     if (!uuidValido(req.params.id)) return res.status(400).json({ ok: false, erro: 'Id inválido.' });
