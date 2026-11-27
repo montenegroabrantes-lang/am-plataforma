@@ -103,7 +103,35 @@ const bancoHoje = {
   return linhas;
 } };
 app.use('/api/hoje', (q, _r, n) => { q.user = user; n(); }, criarHojeRouter({ banco: bancoHoje, auditar: async () => {}, apagarEvento: async () => {} }));
-app.get('/api/processos', (q, r) => r.json({ ok: true, processos: [{ id: PROC, numero: '0800001-11.2026.8.15.2001', cliente_nome: 'Ana Beatriz Lima (fictício)', polo_passivo: 'Município de João Pessoa', status: 'ativo' }] }));
+// Lista de Processos: 48 linhas fictícias para ver o desenho da tabela (nomes inventados).
+const NOMES_FIC = ['ANA BEATRIZ LIMA', 'CARLOS EDUARDO NOBREGA', 'MARIANA SOUTO DE ALBUQUERQUE', 'JOSE RICARDO ALVES', 'FERNANDA QUEIROZ DA COSTA', 'PAULO HENRIQUE DANTAS', 'LUCIANA FARIAS', 'ROBERTO MAIA DOS SANTOS', 'TEREZA CRISTINA BRITO', 'ANTONIO MARCOS DE OLIVEIRA E SILVA'];
+const VARAS_FIC = ['1º Juizado Especial da Fazenda Pública da Região Metropolitana da Capital', '2º Juizado Especial da Fazenda Pública da Região Metropolitana da Capital', '1ª Vara de Fazenda Pública da Capital', '3ª Vara de Fazenda Pública da Capital', 'Núcleo de Justiça 4.0 de Cumprimento de Sentença Fazendário da Capital'];
+const MOVS_FIC = ['Conclusos para julgamento', 'Juntada de Petição de petição', 'Recebida a emenda à inicial', 'Juntada de Petição de impugnação ao cumprimento de sentença', 'Expedição de Outros documentos', 'Decorrido prazo do Município', 'Publicado despacho', 'Juntada de ofício requisitório de precatório'];
+const ETAPAS_FIC = ['Inicial', 'Cumprimento de Sentença', 'Recurso', 'Contestação', 'Sem classificação', 'Precatório', 'Minuta de Precatório'];
+const TESES_FIC = ['FGTS', 'FERIAS 45 DIAS', 'PISO SALARIAL - MAGISTÉRIO', 'ADICIONAL NOTURNO'];
+const CARGOS_FIC = ['Professor', 'Médico', 'Técnico de Enfermagem', 'Servidor Municipal'];
+const PARADOS_FIC = [0, 0, 1, 3, 15, 28, 61, 95, 140, 210, 400];
+const processosFic = Array.from({ length: 48 }, (_, i) => ({
+  id: i === 0 ? PROC : `00000000-0000-4000-9100-${String(i).padStart(12, '0')}`,
+  numero: `08${String(1234 + i * 613).padStart(5, '0')}-${String(11 + (i * 7) % 88).padStart(2, '0')}.${2023 + (i % 4)}.8.15.2001`,
+  cliente_nome: NOMES_FIC[i % NOMES_FIC.length] + ' (FICTÍCIO)', cliente_cargo: CARGOS_FIC[i % CARGOS_FIC.length], produto_nome: TESES_FIC[i % TESES_FIC.length],
+  vara: VARAS_FIC[i % VARAS_FIC.length], polo_passivo: i % 3 === 0 ? 'Estado da Paraíba' : i % 7 === 0 ? 'AUTARQUIA ESPECIAL DE LIMPEZA URBANA-EMLUR E OUTROS' : 'Município de João Pessoa',
+  status: 'ativo', urgente: i === 0 || i === 5, tem_cessao: i === 9, requer_revisao: i === 3, visibilidade: i === 12 ? 'restrito' : 'normal',
+  data_distribuicao: `${2023 + (i % 4)}-0${1 + (i % 9)}-15`, dias_parado: PARADOS_FIC[i % PARADOS_FIC.length],
+  ultima_atualizacao: ha(PARADOS_FIC[i % PARADOS_FIC.length]), ultima_atualizacao_origem: i % 6 === 2 ? 'publicacao' : 'movimentacao',
+  ultima_mov_texto: MOVS_FIC[i % MOVS_FIC.length], ultima_pub_resumo: 'Intimação para manifestação sobre os cálculos apresentados',
+  etapa: ETAPAS_FIC[i % ETAPAS_FIC.length], etapa_atual: i % 8 === 4 ? 'Expedir RPV' : null, situacao_atual: i % 5 === 1 ? 'calculos_homologados' : null, classif_valores: {},
+}));
+const contar = campo => Object.entries(processosFic.reduce((a, p) => { a[p[campo]] = (a[p[campo]] || 0) + 1; return a; }, {})).map(([k, total]) => ({ k, total })).sort((a, b) => b.total - a.total);
+app.get('/api/processos/sync-status', (q, r) => r.json({ ok: true, em_andamento: false, ultima_execucao: { concluido_em: ha(0.1), via_datajud: 3, novas_movimentacoes: 0, falhas: 37 } }));
+app.get('/api/processos', (q, r) => { const pp = Number(q.query.por_pagina) || 30, pg = Number(q.query.pagina) || 1; r.json({ ok: true, total: 883, processos: processosFic.slice((pg - 1) * pp, pg * pp) }); });
+app.get('/api/triagem', (q, r) => r.json({ ok: true, stats: { movimentacao_pendente: 1, cessoes_credito: 1,
+  por_etapa: contar('etapa').map(x => ({ etapa: x.k, total: x.total * 18 })), por_funcao: contar('cliente_cargo').map(x => ({ funcao: x.k, total: x.total * 18 })),
+  por_vara: contar('vara').map(x => ({ vara: x.k, total: x.total * 18 })), por_produto: contar('produto_nome').map(x => ({ produto: x.k, total: x.total * 18 })),
+  por_polo_passivo: contar('polo_passivo').map(x => ({ polo_passivo: x.k, total: x.total * 18 })), por_tempo: [{ faixa: 'até 30 dias', total: 512 }, { faixa: '31 a 90 dias', total: 201 }, { faixa: '91 a 180 dias', total: 96 }, { faixa: 'mais de 180 dias', total: 74 }] } }));
+app.get('/api/classif', (q, r) => r.json({ ok: true, campos: [] }));
+app.get('/api/produtos', (q, r) => r.json({ ok: true, produtos: [] }));
+app.get('/api/polos-passivos', (q, r) => r.json({ ok: true, polos: [] }));
 app.get('/api/clientes', (q, r) => r.json({ ok: true, clientes: [{ id: O(9), nome: 'Ana Beatriz Lima (fictício)', cpf: '***.456.789-**' }] }));
 app.get('/api/acervo/teses', (q, r) => r.json({ ok: true, teses: [{ slug: 'fgts-nulidade', label: 'FGTS por nulidade da contratação temporária', situacao: 'ativa' }, { slug: 'piso', label: 'Piso do magistério', situacao: 'em_risco' }] }));
 app.get('/api/acervo', (q, r) => r.json({ ok: true, pecas: [{ id: 'pc1', titulo: 'Inicial · FGTS de temporário · Município (fictício)', cliente_nome: 'Ana Beatriz Lima', processo_numero: '0800001-11.2026.8.15.2001' }], precedentes: [{ id: 'pr1', processo_numero: 'RE 765.320', orgao: 'STF', ratio: 'FGTS devido na contratação temporária nula (Tema 916).' }] }));
