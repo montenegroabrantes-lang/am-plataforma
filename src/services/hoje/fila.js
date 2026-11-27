@@ -3,6 +3,8 @@
 //   assinar    → folha "Assinaturas" da última varredura do PJe
 //   protocolar → tarefas de protocolo abertas
 //   decisao    → sentenças, decisões e acórdãos publicados nos últimos dias e ainda não lidos
+import { hojeEscritorio } from '../../utils/feriadosNacionais.js';
+
 export const POR_GRUPO = 8;          // itens de cada grupo na fila
 export const DIAS_PRAZO_PROXIMO = 7; // prazo "vencendo" = até este tanto de dias
 export const DIAS_DECISAO = 7;       // janela das decisões novas
@@ -30,7 +32,8 @@ export function tipoDecisao(tipoDocumento) {
 
 // avaliacoes: Map(id da tarefa → resultado de avaliarPrazo), quando a rota calculou; sem ele, nada é sugerido.
 export function montarHoje({ tarefas = [], assinaturas = [], publicacoes = [], agora = new Date(), avaliacoes = new Map() }) {
-  const hoje = soData(agora);
+  // O dia de hoje é o de Brasília: o servidor roda em UTC e, das 21h às 24h, já estaria no dia seguinte.
+  const hoje = soData(hojeEscritorio(agora));
 
   const prazos = tarefas.filter(t => t.tipo === 'prazo').map(t => {
     const data = soData(t.prazo_data);

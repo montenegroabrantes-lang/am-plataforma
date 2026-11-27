@@ -71,3 +71,12 @@ test('fila de prazos: os 8 mais urgentes e, além deles, todo prazo com petiçã
   assert.deepEqual([r.resumo[0].total, r.resumo[0].com_peticao], [12, 2]);
   assert.equal(POR_GRUPO, 8);
 });
+
+test('depois das 21h de Brasília ainda é o mesmo dia (o servidor em UTC já virou)', () => {
+  const noite = new Date('2026-11-27T01:30:00Z'); // 22h30 de 26/11 em Brasília
+  const r = montarHoje({ agora: noite, tarefas: [
+    { id: 1, tipo: 'prazo', prazo_data: '2026-11-27' }, { id: 2, tipo: 'prazo', prazo_data: '2026-11-26' }, { id: 3, tipo: 'prazo', prazo_data: '2026-11-25' },
+  ] });
+  assert.deepEqual(r.fila.map(i => i.quando), ['venceu há 1 dia', 'vence hoje', 'vence amanhã']);
+  assert.equal(r.resumo[0].nota, '1 vencido · 2 em 7 dias');
+});

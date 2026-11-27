@@ -132,3 +132,9 @@ test('sem nada a concluir não grava nem audita', async () => {
   assert.equal(r.concluidas, 0);
   assert.equal(banco.chamadas.some(c => /^(UPDATE|INSERT)/.test(c.sql)), false);
 });
+
+test('audiência de hoje não fecha às 22h de Brasília, só no dia seguinte', () => {
+  const tarefa = { descricao: 'Audiência — X', prazo_data: '2026-11-26' };
+  assert.equal(avaliarPrazo({ tarefa, hoje: new Date('2026-11-27T01:30:00Z') }).acao, 'nada');
+  assert.equal(avaliarPrazo({ tarefa, hoje: new Date('2026-11-27T10:00:00Z') }).acao, 'concluir');
+});

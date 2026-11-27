@@ -5,6 +5,8 @@
 //     tal data") para a pessoa confirmar com um clique. Só fecha sozinho quando há também uma
 //     peça nossa no acervo, do mesmo processo, feita depois da publicação e antes da juntada.
 // Nenhuma baixa automática apaga o evento da agenda do Google.
+import { hojeEscritorio } from '../../utils/feriadosNacionais.js';
+
 export const TOLERANCIA_DIAS = 5; // juntada ou peça contam até este tanto de dias depois do prazo
 
 const DIA = 86_400_000;
@@ -18,7 +20,7 @@ export const ehJuntadaDePeticao = texto => semAcento(texto).includes('peticao');
 // tarefa: { descricao, prazo_data }   inicio: data da publicação (ou da criação da tarefa)
 // juntadas: [{ data, texto }]         pecas: [{ titulo, tipo_peca, criado_em }]
 export function avaliarPrazo({ tarefa, inicio, juntadas = [], pecas = [], hoje = new Date() }) {
-  const dia = soData(hoje);
+  const dia = soData(hojeEscritorio(new Date(hoje))); // dia de Brasília, não o do servidor (UTC)
   const prazo = soData(tarefa?.prazo_data);
   const desde = soData(inicio);
   if (!prazo) return { acao: 'nada' };
