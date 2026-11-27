@@ -28,7 +28,17 @@ export const PASSOS_ALVARA = [
   { chave: 'intimacao_pessoal', nome: 'Intimação pessoal exigida', quem: 'Escritório', blocos: [BLOCO_INTIMACAO_ALVARA] },
   { chave: 'assinar', nome: 'Assinar no BRBJus', quem: 'Juiz', blocos: ['Assinar alvará no BRBJus'] },
 ];
-export const BLOCOS_DAS_FAIXAS = [...new Set([...PASSOS_PRECATORIO, ...PASSOS_ALVARA].flatMap(p => p.blocos))];
+// RPV: paga no próprio processo. O bloco antigo "RPV ou precatório sem pagamento" é misto: entra aqui
+// só o processo que não é origem de um precatório cadastrado (esse já é acompanhado pela ficha).
+export const BLOCO_MISTO_SEM_PAGAMENTO = 'Conferir RPV ou precatório sem pagamento';
+export const PASSOS_RPV = [
+  { chave: 'expedir', nome: 'Expedir RPV', quem: 'Cartório', blocos: ['Expedir RPV'], folhas: ['cartorio', 'outros'] },
+  { chave: 'concluso', nome: 'Concluso para expedir', quem: 'Juiz', blocos: ['Expedir RPV'], folhas: ['gabinete'] },
+  { chave: 'sem_pagamento', nome: 'Expedida, sem pagamento', quem: 'Fazenda', blocos: ['Conferir RPV sem pagamento', BLOCO_MISTO_SEM_PAGAMENTO] },
+  { chave: 'vencida', nome: 'Depósito vencido', quem: 'Escritório', blocos: ['Conferir depósito de RPV vencida'] },
+];
+export const itensDeRpv = itens => itens.filter(i => !(i.bloco === BLOCO_MISTO_SEM_PAGAMENTO && i.tem_precatorio));
+export const BLOCOS_DAS_FAIXAS = [...new Set([...PASSOS_PRECATORIO, ...PASSOS_ALVARA, ...PASSOS_RPV].flatMap(p => p.blocos))];
 
 const passoDe = (passos, item) => passos.find(p => p.blocos.includes(item.bloco) && (!p.folhas || p.folhas.includes(item.folha)));
 
@@ -145,7 +155,8 @@ export function criarConsultaFormacao(conexao) {
     try {
       const varredura = await conexao.queryOne(`SELECT id, executada_em FROM despachos_varreduras ORDER BY executada_em DESC, criado_em DESC LIMIT 1`);
       const itens = varredura ? await conexao.query(
-        `SELECT p.id AS processo_id, p.numero, c.nome AS cliente_nome, d.folha, d.local, d.bloco, d.observacao, d.concluso, d.dias_parado
+        `SELECT p.id AS processo_id, p.numero, c.nome AS cliente_nome, d.folha, d.local, d.bloco, d.observacao, d.concluso, d.dias_parado,
+                EXISTS (SELECT 1 FROM precatorios pr WHERE pr.processo_origem_id = p.id) AS tem_precatorio
            FROM despachos_itens d JOIN processos p ON p.id = d.processo_id LEFT JOIN clientes c ON c.id = p.cliente_id
           WHERE d.varredura_id = $1 AND d.bloco = ANY($2) ${filtroVisibilidade(req.user, 'p')}`, [varredura.id, BLOCOS_DAS_FAIXAS]) : [];
       // Assinados à espera do número do tribunal: fichas criadas pela varredura.
@@ -162,7 +173,7 @@ export function criarConsultaFormacao(conexao) {
       const precatorios = montarFaixa(PASSOS_PRECATORIO, itens);
       precatorios.push({ chave: 'aguardando_numero', nome: 'Assinado, sem número', quem: 'Tribunal', total: semNumero.length,
         itens: semNumero.map(f => ({ precatorio_id: f.precatorio_id, processo_id: f.processo_id, numero: f.numero, cliente_nome: f.cliente_nome, local: null, observacao: null, concluso: null, dias_parado: null })) });
-      return res.json({ ok: true, lida_em: varredura?.executada_em || null, precatorios, alvaras: montarFaixa(PASSOS_ALVARA, itens), alvaras_pagos_30d: pagos?.total || 0 });
+      return res.json({ ok: true, lida_em: varredura?.executada_em || null, precatorios, rpv: montarFaixa(PASSOS_RPV, itensDeRpv(itens)), alvaras: montarFaixa(PASSOS_ALVARA, itens), alvaras_pagos_30d: pagos?.total || 0 });
     } catch (err) {
       console.error('[Precatórios] Falha ao montar as faixas:', err.message);
       return res.status(500).json({ ok: false, erro: 'Não foi possível carregar os precatórios em formação.' });

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { montarFaixa, PASSOS_PRECATORIO, PASSOS_ALVARA, BLOCO_INTIMACAO_ALVARA, ehAssinaturaDePrecatorio, ehAlvaraPago,
-  numeroPrecatorioValido, registrarAssinados, criarGravacaoNumeros, mesmoCredor } from './formacao.js';
+  numeroPrecatorioValido, registrarAssinados, criarGravacaoNumeros, mesmoCredor, PASSOS_RPV, itensDeRpv, BLOCO_MISTO_SEM_PAGAMENTO } from './formacao.js';
 import { validarVarredura } from '../despachos.js';
 import { aplicarPrecatorioSemNumero } from '../../db/migracoes/precatorioSemNumero.js';
 import { pendencias } from './regras.js';
@@ -144,4 +144,13 @@ test('dois precatórios da mesma origem (credor e honorários): com número, cad
   const r = await registrarAssinados(b.tx, [{ numero: O1, motivo: 'lido no 2º grau', precatorio_numero: T1 }, { numero: O1, motivo: 'lido no 2º grau', precatorio_numero: T2 }].map(x => ({ ...x, motivo: 'ofício requisitório de precatório (' + x.motivo + ')' })), { auditar: b.auditar });
   assert.deepEqual(r, { fichas_criadas: 2, numeros_preenchidos: 0, origens_vinculadas: 0 });
   assert.deepEqual(b.fichas.map(f => [f.numero, f.etapa]), [[T1, 'autuado'], [T2, 'autuado']]);
+});
+
+test('faixa do RPV: expedir no cartório ou concluso, sem pagamento e depósito vencido; o misto que já é precatório fica de fora', () => {
+  const itens = [item('a', 'Expedir RPV', 'cartorio'), item('b', 'Expedir RPV', 'gabinete'), item('c', 'Conferir depósito de RPV vencida', 'diligencia'),
+    item('d', BLOCO_MISTO_SEM_PAGAMENTO, 'diligencia'), item('e', BLOCO_MISTO_SEM_PAGAMENTO, 'diligencia', { tem_precatorio: true }), item('f', 'Conferir RPV sem pagamento', 'diligencia'),
+    item('g', 'Expedir alvará', 'gabinete')];
+  const f = montarFaixa(PASSOS_RPV, itensDeRpv(itens));
+  assert.deepEqual(f.map(p => [p.chave, p.quem, p.total]), [['expedir', 'Cartório', 1], ['concluso', 'Juiz', 1], ['sem_pagamento', 'Fazenda', 2], ['vencida', 'Escritório', 1]]);
+  assert.deepEqual(f[2].itens.map(i => i.numero).sort(), ['d', 'f']);
 });

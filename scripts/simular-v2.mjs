@@ -37,6 +37,10 @@ const itensVarredura = [
   it(12, 'Lauro Pires', 'gabinete', '4ª Vara da Fazenda', 'Expedir alvará', { concluso: '10/11 Conclusos para despacho', dias_parado: 17 }),
   it(13, 'Marta Dias', 'diligencia', '2º JEFP', 'Cumprir intimação pessoal para o alvará', { observacao: 'Juiz exigiu intimação pessoal em 20/11', dias_parado: 7 }),
   it(14, 'Nilo Rocha', 'assinaturas', '3º JEFP', 'Assinar alvará no BRBJus', { observacao: 'Alvará juntado em 10/11', dias_parado: 17 }),
+  it(15, 'Olga Farias', 'cartorio', '1º JEFP', 'Expedir RPV', { observacao: 'Homologado em 04/11', dias_parado: 23 }), it(16, 'Paulo Lira', 'cartorio', '2º JEFP', 'Expedir RPV', { dias_parado: 9 }),
+  it(17, 'Quitéria Melo', 'gabinete', '3º JEFP', 'Expedir RPV', { concluso: '18/11 Conclusos para despacho', dias_parado: 9 }),
+  it(18, 'Raul Sena', 'diligencia', '2º JEFP', 'Conferir RPV ou precatório sem pagamento', { observacao: 'RPV expedida em 02/10', dias_parado: 56 }),
+  it(19, 'Sônia Vidal', 'diligencia', '4º JEFP', 'Conferir depósito de RPV vencida', { observacao: 'RPV 24/07/26, 117 dias · conferir depósito', dias_parado: 117 }),
 ];
 const comOrigem = l => ({ ...l, origem_numero: l.processo_origem_id ? l.numero_origem : null, origem_visibilidade: 'normal', cliente_nome: null });
 
