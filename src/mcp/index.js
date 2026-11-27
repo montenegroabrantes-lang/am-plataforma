@@ -92,7 +92,7 @@ const RESULTADOS = ['pendente','procedente','parcialmente-procedente','improcede
 const TIPOS = ['inicial','emenda-inicial','impugnacao-contestacao','especificacao-provas','recurso-inominado','contrarrazoes','embargos-declaracao','apelacao','agravo','recurso-especial','recurso-extraordinario','memorial','cumprimento-sentenca','alvara','precatorio','cessao-credito','peticao-diversa'];
 
 function construirServidor(token) {
-  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.16.0' });
+  const s = new McpServer({ name: 'acervo-am-advogados', version: '1.17.0' });
   if (ehChaveExterna(token)) {
     // Modo chave: ferramentas de fora do acervo não são registradas (chamar() também as recusa).
     const registrar = s.registerTool.bind(s);
@@ -351,10 +351,30 @@ function construirServidor(token) {
     annotations: escrita,
   }, async ({ id, ...b }) => saida(await chamar('PATCH', `/acervo/argumentos/${id}`, token, b)));
 
+  // Leitura por id (26/11/2026): o registro completo antes de editar. A busca não traz os argumentos
+  // usados nem os precedentes citados, e em atualizar_peca essas listas substituem as atuais.
+  s.registerTool('ler_peca', {
+    title: 'Ler peça do acervo',
+    description: 'Uma peça completa pelo id: campos, teses, argumentos usados e precedentes citados (ids). '
+      + 'Use ANTES de atualizar_peca quando for mexer em teses, argumentos ou precedentes, porque essas listas '
+      + 'substituem as atuais: envie a lista inteira, com os itens que ficam.',
+    inputSchema: { id: z.string().uuid() },
+    annotations: leitura,
+  }, async ({ id }) => saida(await chamar('GET', `/acervo/pecas/${id}`, token)));
+
+  s.registerTool('ler_precedente', {
+    title: 'Ler precedente do acervo',
+    description: 'Um precedente completo pelo id: ratio, ementa, fonte primária, conferência e teses. '
+      + 'Use ANTES de atualizar_precedente para partir do texto atual.',
+    inputSchema: { id: z.string().uuid() },
+    annotations: leitura,
+  }, async ({ id }) => saida(await chamar('GET', `/acervo/precedentes/${id}`, token)));
+
   s.registerTool('atualizar_peca', {
     title: 'Atualizar peça do acervo',
     description: 'Corrige ou completa uma peça: teses (lista substitui), data de protocolo, Drive, modelo aprovado, '
       + 'argumentos usados e precedentes citados (listas substituem), data da decisão e resultado por pedido. '
+      + 'Antes de mexer numa lista, leia a peça com ler_peca e envie a lista inteira. '
       + 'Para só o resultado geral, use atualizar_resultado_peca. Fica na auditoria com o valor anterior.',
     inputSchema: {
       id: z.string().uuid(),
@@ -390,7 +410,8 @@ function construirServidor(token) {
   s.registerTool('atualizar_precedente', {
     title: 'Atualizar precedente',
     description: 'Corrige um precedente. Mudar conteúdo material (órgão, tribunal, instância, data, ratio, ementa, '
-      + 'resultado, vinculante, fonte) tira o selo de conferido até nova conferência com a fonte primária.',
+      + 'resultado, vinculante, fonte) tira o selo de conferido até nova conferência com a fonte primária. '
+      + 'A lista de teses substitui a atual: leia antes com ler_precedente.',
     inputSchema: {
       id: z.string().uuid(),
       teses: z.array(z.string()).min(1).optional(),

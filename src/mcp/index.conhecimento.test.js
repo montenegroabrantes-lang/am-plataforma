@@ -54,9 +54,11 @@ test('lista as ferramentas novas; leitura marcada como somente leitura e arquiva
   for (const nome of ['criar_tese', 'atualizar_tese', 'listar_argumentos', 'ler_argumento', 'criar_argumento', 'atualizar_argumento', 'atualizar_peca', 'atualizar_precedente', 'arquivar_peca', 'arquivar_precedente', 'impacto_tese', 'listar_vigilancia', 'ler_vigilancia', 'criar_vigilancia', 'atualizar_vigilancia', 'listar_orgaos', 'ler_orgao', 'criar_orgao', 'atualizar_orgao', 'painel_acervo', 'contexto_redacao', 'impacto_precedente', 'registrar_decisao_peca', 'relatorio_acervo', 'decisoes_publicacoes', 'cobertura_acervo', 'produtos_acervo', 'ligar_produto_tese', 'cadastrar_retroativas']) {
     assert.ok(f[nome], nome);
   }
-  for (const nome of ['listar_argumentos', 'ler_argumento', 'impacto_tese', 'listar_vigilancia', 'ler_vigilancia', 'listar_orgaos', 'ler_orgao', 'painel_acervo', 'contexto_redacao', 'impacto_precedente', 'relatorio_acervo', 'cobertura_acervo', 'produtos_acervo']) assert.equal(f[nome].annotations.readOnlyHint, true, nome);
+  for (const nome of ['ler_peca', 'ler_precedente', 'listar_argumentos', 'ler_argumento', 'impacto_tese', 'listar_vigilancia', 'ler_vigilancia', 'listar_orgaos', 'ler_orgao', 'painel_acervo', 'contexto_redacao', 'impacto_precedente', 'relatorio_acervo', 'cobertura_acervo', 'produtos_acervo']) assert.equal(f[nome].annotations.readOnlyHint, true, nome);
   for (const nome of ['arquivar_peca', 'arquivar_precedente']) assert.equal(f[nome].annotations.destructiveHint, true, nome);
   assert.deepEqual(f.criar_argumento.inputSchema.required.sort(), ['tese', 'tipo', 'titulo']);
+  assert.match(f.atualizar_peca.description, /ler_peca/);
+  assert.match(f.atualizar_precedente.description, /ler_precedente/);
 });
 
 test('cada ferramenta chama a rota certa, com o mesmo token e só os campos enviados', async () => {
@@ -79,6 +81,8 @@ test('cada ferramenta chama a rota certa, com o mesmo token e só os campos envi
     ['criar_orgao', { nome: '1º JEFP', tribunal: 'TJPB', instancia: '1grau' }, 'POST', '/api/acervo/orgaos', { nome: '1º JEFP', tribunal: 'TJPB', instancia: '1grau' }],
     ['atualizar_orgao', { id: ID, notas: 'nega reflexo no 13º' }, 'PATCH', `/api/acervo/orgaos/${ID}`, { notas: 'nega reflexo no 13º' }],
     ['ler_orgao', { id: ID }, 'GET', `/api/acervo/orgaos/${ID}`, null],
+    ['ler_peca', { id: ID }, 'GET', `/api/acervo/pecas/${ID}`, null],
+    ['ler_precedente', { id: ID }, 'GET', `/api/acervo/precedentes/${ID}`, null],
     ['listar_orgaos', { tribunal: 'TJPB' }, 'GET', '/api/acervo/orgaos', null],
     ['painel_acervo', {}, 'GET', '/api/acervo/painel', null],
     ['relatorio_acervo', { mes: '2026-10' }, 'GET', '/api/acervo/relatorio', null],
