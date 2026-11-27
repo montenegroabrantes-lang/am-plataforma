@@ -225,7 +225,7 @@ export function criarConsultaDespachos(conexao) {
       if (!varredura) return res.json({ ok: true, varredura: null, itens: [] });
       const itens = await conexao.query(
         `SELECT p.id AS processo_id, p.numero, d.folha, d.local, d.acervo, d.bloco, d.observacao,
-                d.dias_parado, d.concluso, d.ultimo_andamento, d.lido_no_pje, p.tribunal, p.grau, p.pje_id_processo
+                d.dias_parado, d.concluso, d.ultimo_andamento, d.lido_no_pje, p.tribunal, p.grau, p.pje_id_processo, p.polo_passivo
            FROM despachos_itens d
            JOIN processos p ON p.id = d.processo_id
           WHERE d.varredura_id = $1 ${filtroVisibilidade(req.user, 'p')}
