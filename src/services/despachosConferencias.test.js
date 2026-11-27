@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   aplicarConferencias, aplicarResposta, conferenciaDoItem, criarListaConferenciasExterna, criarReaberturaConferencia,
-  criarRespostaConferencia, detectarConferencia, referenciaCheia, validarConferencia,
+  criarRespostaConferencia, detectarConferencia, expirarConferencias, TIPOS_COM_VALIDADE, paraTela, referenciaCheia, referenciaTexto, validarConferencia,
 } from './despachosConferencias.js';
 import { validarVarredura } from './despachos.js';
 
@@ -203,7 +203,115 @@ test('reabrir: marca a resposta como desfeita, devolve a linha ao que era e audi
 test('rotina: recebe só as respostas em vigor', async () => {
   let sql = '';
   const res = respostaFake();
-  await criarListaConferenciasExterna({ async query(s) { sql = s; return [{ numero: '0880640-03.2025.8.15.2001', tipo: 'rpv_sentenca', referencia: '03/11/2026', resposta: 'confirmado' }]; } })({}, res);
+  await criarListaConferenciasExterna({ async execute() { return { rowCount: 0 }; }, async query(s) { sql = s; return [{ numero: '0880640-03.2025.8.15.2001', tipo: 'rpv_sentenca', referencia: '03/11/2026', resposta: 'confirmado' }]; } })({}, res);
   assert.match(sql, /desfeito_em IS NULL/);
   assert.equal(res.body.respostas.length, 1);
+});
+
+test('bloco "Conferir antes de despachar": botões em todo item do balcão; a referência é o texto da linha', async () => {
+  const it = { processo_id: PROC, folha: 'cartorio', local: '1º JEFP', bloco: 'Conferir antes de despachar', observacao: 'Certificar o trânsito em julgado' };
+  const c = detectarConferencia(it.observacao, BASE, it);
+  assert.equal(c.tipo, 'antes_despachar');
+  assert.match(c.referencia, /^t:[0-9a-f]{12}$/);
+  assert.deepEqual(validarConferencia({ tipo: 'antes_despachar', referencia: c.referencia }), { tipo: 'antes_despachar', referencia: c.referencia, pendente: true });
+  // Trechos que entram e saem sozinhos não mudam a referência; texto novo (fato novo) muda.
+  assert.equal(referenciaTexto('Certificar  o trânsito em julgado · Novo em 26/11: Juntada de petição · novo no rodízio'), c.referencia);
+  assert.notEqual(referenciaTexto('Certificar o trânsito em julgado · Não consta concluso no PJe'), c.referencia);
+  assert.match(referenciaTexto(null), /^t:/);
+  // Só o balcão; a pergunta pontual tem preferência; sem o item, vale só o texto.
+  assert.equal(detectarConferencia(it.observacao, BASE, { ...it, folha: 'diligencia' }), null);
+  assert.equal(detectarConferencia(it.observacao, BASE, { ...it, bloco: 'Expedir RPV' }), null);
+  assert.equal(detectarConferencia(it.observacao, BASE), null);
+  assert.equal(detectarConferencia('Prazo do Município decorrido em 23/11 após nossa petição de 26/10: conferir se é cumprimento e pedir conclusão', BASE, it).tipo, 'cumprimento_conclusao');
+  assert.equal(detectarConferencia(null, BASE, { ...it, folha: 'gabinete' }).tipo, 'antes_despachar');
+
+  assert.deepEqual(aplicarResposta(it, 'antes_despachar', 'confirmado'), { folha: 'cartorio', local: '1º JEFP', bloco: 'Despachar (conferido)', observacao: 'Certificar o trânsito em julgado' });
+  assert.deepEqual(aplicarResposta(it, 'antes_despachar', 'descartado'),
+    { folha: 'diligencia', local: '1º JEFP', bloco: 'Analisar: conferência descartada', observacao: 'Certificar o trânsito em julgado · conferido: não é para despachar' });
+  assert.equal(aplicarResposta({ ...it, observacao: null }, 'antes_despachar', 'descartado').observacao, 'conferido: não é para despachar');
+  for (const r of ['confirmado', 'descartado']) { const d = aplicarResposta(it, 'antes_despachar', r); assert.equal(detectarConferencia(d.observacao, BASE, d), null); }
+
+  // Varredura nova com o mesmo texto: a resposta é reaplicada; com texto diferente, a pergunta volta.
+  const tx = { async query() { return [{ id: RESP, processo_id: PROC, tipo: 'antes_despachar', referencia: c.referencia, resposta: 'confirmado' }]; } };
+  const [igual] = await aplicarConferencias(tx, [{ ...it }], BASE);
+  assert.deepEqual([igual.bloco, igual.conferencia_id], ['Despachar (conferido)', RESP]);
+  const [mudou] = await aplicarConferencias(tx, [{ ...it, observacao: 'Certificar o trânsito em julgado · Não consta concluso no PJe' }], BASE);
+  assert.deepEqual([mudou.bloco, mudou.conferencia_tipo, mudou.conferencia_id], ['Conferir antes de despachar', 'antes_despachar', undefined]);
+
+  assert.equal(paraTela({ tipo: 'antes_despachar', referencia: c.referencia, resposta: 'confirmado' }).descricao, 'Antes de despachar: Conferido: pode despachar');
+  assert.equal(paraTela({ tipo: 'rpv_sentenca', referencia: '03/11/2026', resposta: 'descartado' }).descricao, 'Sentença de 03/11/2026: Não é caso de RPV');
+});
+
+test('blocos "Conferir…" da Diligência: cada resposta leva ao destino combinado; prazo da Fazenda fica sem botões', () => {
+  const dil = (bloco, extra = {}) => ({ folha: 'diligencia', local: '1º JEFP', bloco, observacao: 'texto', ...extra });
+  const destino = (it, r) => { const c = detectarConferencia(it.observacao, BASE, it); const d = aplicarResposta(it, c.tipo, r); return [c.tipo, d.folha, d.local, d.bloco]; };
+  assert.deepEqual(destino(dil('Conferir trânsito sem ato posterior'), 'confirmado'), ['transito_sem_ato', 'diligencia', '1º JEFP', 'Iniciar cumprimento']);
+  assert.equal(destino(dil('Conferir trânsito sem ato posterior'), 'descartado')[1], 'sai');
+  assert.deepEqual(destino(dil('Conferir processo arquivado com pendência'), 'confirmado').slice(1), ['diligencia', '1º JEFP', 'Desarquivar e agir']);
+  assert.deepEqual(destino(dil('Conferir processo arquivado com pendência', { folha: 'cartorio' }), 'confirmado').slice(0, 2), ['arquivado_pendencia', 'cartorio']);
+  assert.equal(destino(dil('Conferir processo arquivado com pendência'), 'descartado')[1], 'sai');
+  assert.deepEqual(destino(dil('Conferir depósito de RPV vencida'), 'confirmado').slice(1), ['diligencia', '1º JEFP', 'Cobrar depósito da RPV']);
+  assert.deepEqual(destino(dil('Conferir depósito de RPV vencida'), 'descartado').slice(1), ['cartorio', '1º JEFP', 'Pedir conclusão para determinar alvará']);
+  assert.deepEqual(destino(dil('Conferir depósito de RPV vencida', { local: '2ª Vara da Fazenda' }), 'descartado').slice(1, 3), ['outros', 'Núcleo 4.0']);
+  for (const b of ['Conferir RPV ou precatório sem pagamento', 'Conferir RPV sem pagamento', 'Conferir precatório sem pagamento', 'Conferir recurso ou sentença']) {
+    assert.deepEqual(destino(dil(b), 'confirmado').slice(1), ['diligencia', '1º JEFP', b]);
+    assert.equal(destino(dil(b), 'descartado')[1], 'sai');
+  }
+  assert.deepEqual(destino(dil('Conferir fase dos cálculos'), 'confirmado').slice(1), ['diligencia', '1º JEFP', 'Fazer formulário de precatório/RPV']);
+  assert.deepEqual(destino(dil('Conferir fase dos cálculos'), 'descartado').slice(1), ['diligencia', '1º JEFP', 'Conferir fase dos cálculos']);
+  assert.deepEqual(destino(dil('Conferir cumprimento antes da conclusão'), 'confirmado').slice(1), ['cartorio', '1º JEFP', 'Pedir conclusão para homologar o cumprimento']);
+  assert.equal(destino(dil('Conferir cumprimento antes da conclusão'), 'descartado')[1], 'sai');
+  assert.equal(aplicarResposta(dil('Conferir depósito de RPV vencida'), 'rpv_deposito', 'descartado').observacao, 'texto · conferido: RPV depositada');
+  // Minuta do precatório é ato do cartório (Juizado) ou do Núcleo 4.0 (vara comum).
+  assert.deepEqual(destino(dil('Fazer minuta de precatório'), 'confirmado'), ['minuta_precatorio', 'cartorio', '1º JEFP', 'Expedir minuta de precatório']);
+  assert.deepEqual(destino(dil('Fazer minuta de precatório', { local: '3ª Vara da Fazenda' }), 'confirmado').slice(1), ['outros', 'Núcleo 4.0', 'Expedir minuta de precatório']);
+  assert.deepEqual(destino(dil('Fazer minuta de precatório'), 'descartado').slice(1), ['diligencia', '1º JEFP', 'Fazer formulário de precatório/RPV']);
+  // Espera com data: a rotina resolve sozinha.
+  assert.equal(detectarConferencia('Fazenda intimada em 01/11 · prazo aberto até 30/11', BASE, dil('Conferir prazo da Fazenda')), null);
+  // Bloco do balcão não vale na Diligência e vice-versa.
+  assert.equal(detectarConferencia('x', BASE, { folha: 'gabinete', bloco: 'Conferir trânsito sem ato posterior' }), null);
+});
+
+test('"tirar da lista": apaga a linha ao responder, não grava na varredura nova e a reabertura a recria', async () => {
+  const it = { id: 'i9', folha: 'diligencia', local: '1º JEFP', bloco: 'Conferir trânsito sem ato posterior', observacao: 'Trânsito em 01/10', concluso: null, acervo: null, dias_parado: 57, ultimo_andamento: 'x', lido_no_pje: true, conferencia_tipo: null, conferencia_ref: null, conferencia_id: null };
+  const ref = referenciaTexto(it.observacao);
+  const { chamadas, conexao } = bancoFake({ itens: [it] });
+  const res = respostaFake();
+  await criarRespostaConferencia(conexao, async () => {})(pedido({ tipo: 'transito_sem_ato', referencia: ref }), res);
+  assert.equal(res.body.resultado.folha, 'sai');
+  assert.deepEqual(chamadas.find(c => /DELETE FROM despachos_itens/.test(c.sql)).params, ['i9']);
+  assert.equal(chamadas.some(c => /UPDATE despachos_itens/.test(c.sql)), false);
+  assert.equal(JSON.parse(chamadas.find(c => /INSERT INTO despachos_conferencias/.test(c.sql)).params[6]).dias_parado, 57);
+
+  const tx = { async query() { return [{ id: RESP, processo_id: PROC, tipo: 'transito_sem_ato', referencia: ref, resposta: 'descartado' }]; } };
+  const [novo] = await aplicarConferencias(tx, [{ ...it, processo_id: PROC }], BASE);
+  assert.equal(novo.folha, 'sai');
+
+  // Reabrir: nenhuma linha para restaurar, então recria a partir do estado guardado.
+  const chamadas2 = [];
+  const tx2 = {
+    async queryOne(sql) { if (/FROM despachos_varreduras/.test(sql)) return { id: 'v1', executada_em: BASE };
+      return { id: RESP, processo_id: PROC, tipo: 'transito_sem_ato', referencia: ref, resposta: 'descartado', resultado: { folha: 'sai' }, estado_anterior: { folha: 'diligencia', local: '1º JEFP', bloco: it.bloco, observacao: it.observacao, dias_parado: 57 } }; },
+    async execute(sql, params) { chamadas2.push({ sql, params }); return { rowCount: /INSERT INTO despachos_itens/.test(sql) ? 1 : 0 }; },
+  };
+  const res2 = respostaFake();
+  await criarReaberturaConferencia({ transaction: fn => fn(tx2) }, async () => {})({ params: { id: RESP }, user: {} }, res2);
+  assert.equal(res2.body.itens_restaurados, 1);
+  const ins = chamadas2.find(c => /INSERT INTO despachos_itens/.test(c.sql));
+  assert.match(ins.sql, /WHERE NOT EXISTS/);
+  assert.deepEqual([ins.params[2], ins.params[5], ins.params[7], ins.params[11], ins.params[12]], ['diligencia', it.bloco, 57, 'transito_sem_ato', ref]);
+});
+
+test('respostas sobre dinheiro a receber valem 30 dias; depois a pergunta volta', async () => {
+  assert.deepEqual(TIPOS_COM_VALIDADE.sort(), ['rpv_deposito', 'sem_pagamento']);
+  const chamadas = []; const auditorias = [];
+  const n = await expirarConferencias({ async execute(sql, params) { chamadas.push({ sql, params }); return { rowCount: 2 }; } }, async a => { auditorias.push(a); });
+  assert.equal(n, 2);
+  assert.match(chamadas[0].sql, /desfeito_em IS NULL AND resposta = 'confirmado' AND tipo = ANY\(\$1\)/);
+  assert.deepEqual(chamadas[0].params[1], 30);
+  assert.equal(auditorias[0].acao, 'expirar_conferencias_despacho');
+  // Nada vencido: não gera registro de auditoria.
+  const vazio = [];
+  await expirarConferencias({ async execute() { return { rowCount: 0 }; } }, async a => { vazio.push(a); });
+  assert.equal(vazio.length, 0);
 });

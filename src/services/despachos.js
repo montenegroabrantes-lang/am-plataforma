@@ -4,7 +4,7 @@ import { registrarAuditoria } from '../middleware/auditoria.js';
 import { filtroVisibilidade } from '../utils/visibilidade.js';
 import { obterAcessoTribunal } from './acessoTribunal.js';
 import { numeroPrecatorioValido, registrarAssinados } from './precatorios/formacao.js';
-import { aplicarConferencias, conferenciaDoItem, listarRespondidas, paraTela, validarConferencia } from './despachosConferencias.js';
+import { aplicarConferencias, conferenciaDoItem, expirarConferencias, listarRespondidas, paraTela, validarConferencia } from './despachosConferencias.js';
 
 // 'diligencia' = trabalho interno do escritório, exibido separado das folhas do balcão.
 export const FOLHAS = ['assinaturas', 'gabinete', 'cartorio', 'outros', 'diligencia'];
@@ -109,17 +109,21 @@ export function criarGravacaoVarredura(conexao) {
         const itens = dados.itens.filter(i => idPorNumero.has(i.numero));
         const ignorados = dados.itens.length - itens.length;
 
+        await expirarConferencias(tx);
+        // Respostas já dadas pelo escritório às conferências valem também para a varredura nova;
+        // item que a resposta tirou da lista não é gravado.
+        const prontos = (await aplicarConferencias(tx, itens.map(i => ({ ...i, processo_id: idPorNumero.get(i.numero), numero: undefined })), dados.executada_em))
+          .filter(i => i.folha !== 'sai');
+
         const varredura = await tx.queryOne(
           `INSERT INTO despachos_varreduras (executada_em, corte, processos_lidos, itens_total, ignorados, alertas, chave_id, saidas)
            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::jsonb) RETURNING id`,
-          [dados.executada_em, dados.corte, dados.processos_lidos, itens.length, ignorados,
+          [dados.executada_em, dados.corte, dados.processos_lidos, prontos.length, ignorados,
             JSON.stringify(dados.alertas), req.integracao?.id || null,
             JSON.stringify(dados.saidas.filter(x => idPorNumero.has(x.numero)))],
         );
 
-        if (itens.length) {
-          // Respostas já dadas pelo escritório às conferências valem também para a varredura nova.
-          const prontos = await aplicarConferencias(tx, itens.map(i => ({ ...i, processo_id: idPorNumero.get(i.numero), numero: undefined })), dados.executada_em);
+        if (prontos.length) {
           await tx.execute(
             `INSERT INTO despachos_itens
                (varredura_id, processo_id, folha, local, acervo, bloco, observacao, dias_parado, concluso, ultimo_andamento, lido_no_pje,
@@ -149,14 +153,14 @@ export function criarGravacaoVarredura(conexao) {
           acao: 'gravar_varredura_despachos',
           entidade: 'despachos_varredura',
           entidadeId: varredura.id,
-          valorDepois: { itens: itens.length, ignorados, acervos_atualizados: acervosAtualizados, chave_id: req.integracao?.id || null },
+          valorDepois: { itens: prontos.length, ignorados, acervos_atualizados: acervosAtualizados, chave_id: req.integracao?.id || null },
           ip: req._ip,
         }, tx);
 
         // Juiz assinou o precatório: a ficha nasce sozinha, ligada ao processo de origem.
         const assinados = await registrarAssinados(tx, dados.saidas, { ip: req._ip });
 
-        return { varredura_id: varredura.id, itens: itens.length, ignorados, acervos_atualizados: acervosAtualizados, ...assinados };
+        return { varredura_id: varredura.id, itens: prontos.length, ignorados, acervos_atualizados: acervosAtualizados, ...assinados };
       });
       return res.json({ ok: true, ...resultado });
     } catch (err) {

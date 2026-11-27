@@ -155,7 +155,10 @@ test('faixa do RPV: expedir no cartório ou concluso, sem pagamento e depósito 
     item('d', BLOCO_MISTO_SEM_PAGAMENTO, 'diligencia'), item('e', BLOCO_MISTO_SEM_PAGAMENTO, 'diligencia', { tem_precatorio: true }), item('f', 'Conferir RPV sem pagamento', 'diligencia'),
     item('g', 'Expedir alvará', 'gabinete')];
   const f = montarFaixa(PASSOS_RPV, itensDeRpv(itens));
-  assert.deepEqual(f.map(p => [p.chave, p.nome, p.quem, p.total]), [['determinar', 'Determinar RPV', 'Juiz', 1], ['expedir', 'Expedir RPV', 'Cartório', 1], ['sem_pagamento', 'Expedida, sem pagamento', 'Fazenda', 2], ['vencida', 'Depósito vencido', 'Escritório', 1]]);
+  assert.deepEqual(f.map(p => [p.chave, p.nome, p.quem, p.total]), [['determinar', 'Determinar RPV', 'Juiz', 1], ['expedir', 'Expedir RPV', 'Cartório', 1], ['intimar', 'Intimar a Fazenda', 'Cartório', 0], ['sem_pagamento', 'Expedida, sem pagamento', 'Fazenda', 2], ['vencida', 'Depósito vencido', 'Escritório', 1]]);
+  // Blocos novos: sem intimação da Fazenda (cartório), no prazo de pagamento e depósito cobrado pelo escritório.
+  const g = montarFaixa(PASSOS_RPV, [item('p', 'Intimar a Fazenda da RPV', 'cartorio'), item('q', 'RPV no prazo de pagamento', 'diligencia'), item('r', 'Cobrar depósito da RPV', 'diligencia')]);
+  assert.deepEqual(g.map(p => p.total), [0, 0, 1, 1, 1]);
   assert.equal(montarFaixa(PASSOS_RPV, [item('z', 'Determinar RPV', 'gabinete')])[0].total, 1);
-  assert.deepEqual(f[2].itens.map(i => i.numero).sort(), ['d', 'f']);
+  assert.deepEqual(f[3].itens.map(i => i.numero).sort(), ['d', 'f']);
 });

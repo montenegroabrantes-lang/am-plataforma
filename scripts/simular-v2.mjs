@@ -182,6 +182,16 @@ const pedidosFic = [
   { folha: 'cartorio', local: '2º JEFP/A', bloco: 'Expedir alvará', observacao: 'Juiz despachou em 24/11 · cartório expedir o alvará no BRBJus (conferir o despacho)' },
 ];
 pedidosFic.forEach((x, k) => Object.assign(itensDespachos[k], x, { dias_parado: 12 + k * 9 }));
+// Bloco inteiro "Conferir antes de despachar": todo item ganha os botões.
+['Certificar o trânsito em julgado', 'Despachar a petição pendente · Não consta concluso no PJe', 'Recurso inominado juntado em 28/09 · não certificar trânsito', 'Certificar o trânsito em julgado']
+  .forEach((observacao, k) => Object.assign(itensDespachos[6 + k], { folha: 'cartorio', local: k % 2 ? '2º JEFP/A' : 'Núcleo 4.0', bloco: 'Conferir antes de despachar', observacao }));
+// Blocos "Conferir…" da Diligência interna (e o prazo da Fazenda, que fica sem botões).
+[['Conferir trânsito sem ato posterior', 'Trânsito em 02/10 · sem petição nossa depois'], ['Conferir trânsito sem ato posterior', 'Trânsito em 15/09 · sem petição nossa depois'], ['Conferir processo arquivado com pendência', 'RPV sem pagamento · Arquivado em 03/11'],
+  ['Conferir depósito de RPV vencida', 'RPV vencida – conferir depósito'], ['Conferir RPV sem pagamento', 'RPV expedida em 12/08'], ['Conferir recurso ou sentença', 'Sentença cita alvará – conferir'],
+  ['Conferir fase dos cálculos', 'Cálculos da contadoria juntados em 20/11'], ['Conferir cumprimento antes da conclusão', 'Cumprimento em 01/11'], ['Conferir prazo da Fazenda', 'Fazenda intimada em 10/11 · prazo aberto até 10/12'],
+  ['RPV no prazo de pagamento', 'RPV expedida em 20/10 · Fazenda intimada em 03/11 · prazo de pagamento até 03/01'], ['Conferir depósito de RPV vencida', 'RPV expedida em 01/08 · Fazenda intimada em 10/08 · prazo de pagamento vencido em 10/10']]
+  .forEach(([bloco, observacao], k) => Object.assign(itensDespachos[12 + k], { folha: 'diligencia', local: k % 2 ? '2º JEFP/A' : '1º JEFP', bloco, observacao }));
+Object.assign(itensDespachos[24], { folha: 'cartorio', local: '2º JEFP/A', bloco: 'Intimar a Fazenda da RPV', observacao: 'RPV expedida em 12/11 · Fazenda ainda não intimada: o prazo de pagamento não começou' });
 const respostasFic = [];
 const agora = () => new Date().toISOString();
 app.get('/api/despachos', (q, r) => {
@@ -194,11 +204,12 @@ app.post('/api/despachos/conferencias', (q, r) => {
   const { processo_id, tipo, referencia, resposta } = q.body || {};
   const item = itensDespachos.find(i => i.processo_id === processo_id && !i.conferencia_id && conferenciaDoItem(i, new Map(), agora())?.tipo === tipo);
   if (!item) return r.status(404).json({ ok: false, erro: 'Este pedido de conferência não está mais na folha. Atualize a tela.' });
-  const anterior = { folha: item.folha, local: item.local, bloco: item.bloco, observacao: item.observacao };
+  const anterior = { ...item };
   const resultado = aplicarResposta(item, tipo, resposta);
   const nova = { id: `c0000000-0000-4000-9000-${String(respostasFic.length + 1).padStart(12, '0')}`, processo_id, numero: item.numero, tipo, referencia, resposta, usuario_nome: user.nome, respondido_em: agora(), estado_anterior: anterior, resultado };
   respostasFic.push(nova);
-  Object.assign(item, resultado, { conferencia_tipo: tipo, conferencia_ref: referencia, conferencia_id: nova.id });
+  if (resultado.folha === 'sai') itensDespachos.splice(itensDespachos.indexOf(item), 1);
+  else Object.assign(item, resultado, { conferencia_tipo: tipo, conferencia_ref: referencia, conferencia_id: nova.id });
   r.json({ ok: true, id: nova.id, resultado });
 });
 app.delete('/api/despachos/conferencias/:id', (q, r) => {
@@ -207,6 +218,7 @@ app.delete('/api/despachos/conferencias/:id', (q, r) => {
   const [c] = respostasFic.splice(k, 1);
   const item = itensDespachos.find(i => i.conferencia_id === c.id);
   if (item) Object.assign(item, c.estado_anterior, { conferencia_id: null });
+  else if (c.resultado.folha === 'sai') itensDespachos.push({ ...c.estado_anterior, conferencia_id: null });
   r.json({ ok: true, id: c.id, itens_restaurados: item ? 1 : 0 });
 });
 app.use((q, r) => r.json({ ok: true }));

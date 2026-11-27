@@ -20,7 +20,7 @@ export const BLOCO_INTIMACAO_ALVARA = 'Cumprir intimação pessoal para o alvar�
 // ("Expedir alvará" no gabinete etc.) continuam aceitos para as varreduras gravadas antes da troca.
 export const PASSOS_PRECATORIO = [
   { chave: 'formulario', nome: 'Fazer o formulário', quem: 'Escritório', blocos: ['Fazer formulário de precatório/RPV', 'Fazer minuta de precatório'] },
-  { chave: 'falta_minuta', nome: 'Falta a minuta', quem: 'Cartório', blocos: ['Formulário juntado: falta a minuta do precatório'] },
+  { chave: 'falta_minuta', nome: 'Expedir a minuta', quem: 'Cartório', blocos: ['Expedir minuta de precatório', 'Formulário juntado: falta a minuta do precatório'] },
   { chave: 'concordancia', nome: 'Juntar concordância', quem: 'Escritório', blocos: ['Juntar concordância', 'Confirmar minuta de precatório'] },
   { chave: 'determinar', nome: 'Concluso para determinar', quem: 'Juiz', blocos: ['Determinar precatório/RPV', 'Expedir precatório/RPV'], folhas: ['gabinete'] },
   { chave: 'certidao_sapre', nome: 'Certificar envio ao SAPRE', quem: 'Cartório', blocos: ['Certificar o envio ao SAPRE'] },
@@ -39,8 +39,11 @@ export const BLOCO_MISTO_SEM_PAGAMENTO = 'Conferir RPV ou precatório sem pagame
 export const PASSOS_RPV = [
   { chave: 'determinar', nome: 'Determinar RPV', quem: 'Juiz', blocos: ['Determinar RPV', 'Expedir RPV'], folhas: ['gabinete'] },
   { chave: 'expedir', nome: 'Expedir RPV', quem: 'Cartório', blocos: ['Expedir RPV'], folhas: ['cartorio', 'outros'] },
-  { chave: 'sem_pagamento', nome: 'Expedida, sem pagamento', quem: 'Fazenda', blocos: ['Conferir RPV sem pagamento', BLOCO_MISTO_SEM_PAGAMENTO] },
-  { chave: 'vencida', nome: 'Depósito vencido', quem: 'Escritório', blocos: ['Conferir depósito de RPV vencida'] },
+  // O prazo de pagamento só começa com a intimação da Fazenda (aba Expedientes do PJe): sem ela, a pendência é do cartório.
+  { chave: 'intimar', nome: 'Intimar a Fazenda', quem: 'Cartório', blocos: ['Intimar a Fazenda da RPV'] },
+  { chave: 'sem_pagamento', nome: 'Expedida, sem pagamento', quem: 'Fazenda', blocos: ['RPV no prazo de pagamento', 'Conferir RPV sem pagamento', BLOCO_MISTO_SEM_PAGAMENTO] },
+  // "Cobrar depósito da RPV" = o escritório conferiu que não houve depósito; a RPV continua vencida.
+  { chave: 'vencida', nome: 'Depósito vencido', quem: 'Escritório', blocos: ['Conferir depósito de RPV vencida', 'Cobrar depósito da RPV'] },
 ];
 export const itensDeRpv = itens => itens.filter(i => !(i.bloco === BLOCO_MISTO_SEM_PAGAMENTO && i.tem_precatorio));
 export const BLOCOS_DAS_FAIXAS = [...new Set([...PASSOS_PRECATORIO, ...PASSOS_ALVARA, ...PASSOS_RPV].flatMap(p => p.blocos))];
