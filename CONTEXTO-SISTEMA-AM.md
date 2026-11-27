@@ -4121,7 +4121,7 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Curadoria depois da carga:**
   - 739 peças sem data de protocolo e sem órgão;
   - 454 sem pasta do Drive (o cliente não tem `drive_pasta_url`).
-- **A corrigir no código:** "Município de X" no TJPB vira `municipio-outro-pb` mesmo quando X é de outro estado.
+- **A corrigir no código:** "Município de X" no TJPB vira `municipio-outro-pb` mesmo quando X é de outro estado. **Corrigido no PR #48 (26/11/2026).**
 
 ### 25/11/2026 — Peças que faltam no acervo: correção do DataJud no cadastro e primeira carga (PUBLICADO, PR #45)
 
@@ -4399,3 +4399,14 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Defeito antigo (desde a etapa 4):** `montarHoje` tirava o dia de hoje da data UTC do servidor; das 21h às 24h de Brasília a tela já contava o dia seguinte ("vence amanhã" virava "vence hoje", e o vencido de hoje aparecia como vencido).
 - **Correção publicada com aprovação do usuário:** `src/services/hoje/fila.js` e `src/services/prazos/baixa.js` passam a usar `hojeEscritorio()` (`utils/feriadosNacionais.js`, America/Sao_Paulo). Com isso a audiência de hoje também não fecha antes da virada do dia em Brasília. Dois testes novos (22h30 de Brasília). Só o backend mudou.
 - **Não alterado:** "aberta há N dias" dos protocolos e a idade das decisões ainda comparam com a data UTC do registro; uma tarefa criada depois das 21h pode contar um dia a menos por algumas horas.
+
+### 25–26/11/2026 — Acervo: município de outro estado no TJPB não vira município da Paraíba (PUBLICADO, PR #48)
+- **Problema:** em `enteDoPoloPassivo` (`src/services/coberturaAcervo.js`), todo réu "Município de X" num processo do TJPB virava `municipio-outro-pb`, mesmo com X de outro estado (Recife, Fortaleza).
+- **Correção:**
+  - lista nova `src/services/municipiosPB.js` com os 223 municípios da PB (IBGE, nomes normalizados: sem acento, maiúsculas, "MAE D AGUA");
+  - `municipioDaParaiba(texto)` procura o nome mais longo da lista logo depois de "MUNICIPIO DE";
+  - achou: `municipio-outro-pb` com `detalhe` = nome oficial;
+  - não achou: ente nulo, com o motivo "município fora da Paraíba" (fica para o usuário).
+- **Testes:** Recife, Fortaleza, Santa Rita, São José de Piranhas, Campina Grande, Mãe d'Água e o tamanho da lista (223). Suíte no main depois do merge: 1176 passando, 0 falhas (o `backup.worker` trava sem Redis, como sempre).
+- **Publicado:** merge `5bddd9d` (aprovado pelo usuário: "Pode mesclar o #48"); deploy do Railway 04728de7 com SUCCESS; `/health` 200.
+- **Dados:** nada muda no que já foi gravado. Os dois casos (Recife e Fortaleza) já estavam fora da carga e seguem entre os 67 pendentes.
