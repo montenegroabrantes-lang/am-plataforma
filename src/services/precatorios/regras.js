@@ -2,6 +2,8 @@
 // O caminho é o do plano aprovado em 25/11/2026: da minuta no processo de origem ao repasse ao cliente.
 export const ETAPAS = [
   { chave: 'minuta_juntada',            nome: 'Minuta juntada' },
+  // 26/11/2026: o juiz só consegue assinar depois que o cartório certifica o envio ao SAPRE.
+  { chave: 'enviado_sapre',             nome: 'Enviado ao SAPRE' },
   { chave: 'assinado',                  nome: 'Assinado' },
   { chave: 'remetido',                  nome: 'Remetido ao tribunal' },
   { chave: 'autuado',                   nome: 'Autuado no TJPB' },

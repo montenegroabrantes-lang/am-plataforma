@@ -14,6 +14,6 @@ test('migração de precatórios: aditiva, idempotente, número único e etapas 
   assert.match(tudo, /CREATE TABLE IF NOT EXISTS precatorios \(/);
   assert.match(tudo, /CONSTRAINT precatorios_numero_unico UNIQUE \(numero\)/);
   assert.match(tudo, /processo_origem_id UUID REFERENCES processos\(id\) ON DELETE SET NULL/);
-  assert.match(tudo, /etapa IN \('minuta_juntada','assinado','remetido','autuado','incluido_orcamento','aguardando_pagamento','pagamento_disponibilizado','alvara_levantado','repasse_cliente'\)/);
+  assert.match(tudo, /etapa IN \('minuta_juntada','enviado_sapre','assinado','remetido','autuado','incluido_orcamento','aguardando_pagamento','pagamento_disponibilizado','alvara_levantado','repasse_cliente'\)/);
   assert.match(tudo, /precatorio_id UUID NOT NULL REFERENCES precatorios\(id\) ON DELETE CASCADE/);
 });
