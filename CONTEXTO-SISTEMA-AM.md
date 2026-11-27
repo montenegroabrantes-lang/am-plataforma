@@ -4557,3 +4557,7 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Conferido em produção:** Despachos (folha aberta) com 69 botões, todos com abertura direta; Processos com 30 de 30. **Teste real no PJe de 1º grau** com um processo: o endereço abriu os autos direto, na tela clássica, sem verificação de segurança.
 - **Achado para a rotina:** esse endereço abre a tela clássica, que a leitura automática consegue ler — caminho provável para a varredura voltar a ler os autos (anotado na skill `varredura-despachos`; ainda não validado com a função de leitura).
 - Testes: backend 1.261 (0 falhas, 1 pulado), site 166; `next build` ok. Não incluído: botão no quadro "O que mudou desde a véspera".
+
+### 27/11/2026 — Vitrine da tela de entrada atualizada com as entregas do dia
+- **Pedido do usuário ("lembre de atualizar a tela de abertura").** Site `0aa9841` (deploy SUCCESS 09:22): cartão "Ativos a receber" passa a dizer "Precatórios, RPV e alvarás em abas, com relatório e atalho para o PJe."; saiu de "em andamento" o item já entregue (ficha criada quando o juiz assina) e entrou "Alvará: sinal quando o juiz exige intimação pessoal". Progresso segue 6 de 7. Conferido no HTML de `/login`. Testes 166; `next build` ok.
+- **Regra de trabalho:** toda entrega visível atualiza a vitrine no mesmo pacote (`src/lib/novidadesV2.mjs`).
