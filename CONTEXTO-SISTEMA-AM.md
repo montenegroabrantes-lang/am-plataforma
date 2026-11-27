@@ -4447,3 +4447,10 @@ permitir que ela entre). Novo arquivo `src/middleware/perfilJunior.js` concentra
 - **Comportamento:** a sequência é a ordem em que as telas foram abertas; voltar a uma tela já aberta acende a seta dela onde está, sem mudar a ordem. Em telas estreitas (até 860px) a faixa fica escondida.
 - **Conferido em produção, logado:** faixa presente; Hoje → Processos → ficha (aba com o número do processo); voltar pela seta encaixada e pelo botão ‹ devolveu a lista com rolagem 700 e 30 linhas; sem dupla rolagem na lista.
 - **Limites:** filtros voltam só nas telas que os guardam no endereço (Processos) ou na memória própria (Despachos); Tarefas, Publicações e Estimativas voltam com a rolagem, mas sem os filtros. Testes do site: 151; `next build` ok.
+
+### 26/11/2026 — Tela de entrada: login que o navegador lembra (PUBLICADO)
+- **Pedido do usuário:** facilitar o login e a senha da equipe sem quebrar a segurança. Das quatro opções apresentadas (navegador lembra a senha; "manter conectado" por 30 dias; entrar com Google; biometria), ele escolheu **só a primeira**.
+- **Frontend `011eb33` (deploy SUCCESS 23:09):** em `src/app/login/page.js`, os campos ganharam `name`, `id`/`htmlFor` e `autoComplete` (`username`, `current-password`, `new-password` com o e-mail em campo oculto no primeiro acesso, `one-time-code` e teclado numérico no código do autenticador), além de uma linha de orientação sob o botão Entrar. O backend não mudou: o sistema continua sem guardar senha, e a sessão segue em até 7 dias (cookie de renovação).
+- **Situação medida no dia:** 6 usuários ativos (5 Master, 1 Júnior), nenhum com verificação em duas etapas ligada.
+- **Conferido em produção:** os dois campos com as marcas certas e a orientação visível; a sessão aberta seguiu válida. **Não conferido:** o navegador oferecer salvar e preencher a senha (não digito senhas); o usuário foi orientado a sair e entrar uma vez.
+- **Ficou como sugestão, sem decisão:** "manter conectado" por 30 dias com "sair de todos os aparelhos", e verificação em duas etapas para os Master com "lembrar este aparelho".
